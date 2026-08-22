@@ -9,6 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_inappwebview: ^6.1.5
+  flutter_web_auth_2: ^5.1.0
+  http: ^1.6.0
+  media_kit: ^1.2.6
+  media_kit_libs_video: ^1.0.7
+  media_kit_video: ^2.0.1
+  screen_brightness: ^2.1.11
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:
