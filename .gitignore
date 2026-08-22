@@ -1,0 +1,12 @@
+.dart_tool/
+.idea/
+*.iml
+build/
+.flutter-plugins-dependencies
+android/local.properties
+android/.gradle/
+android/key.properties
+*.jks
+
+# FVM Version Cache
+.fvm/
