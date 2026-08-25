@@ -1,0 +1,509 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+
+import 'anilist.dart';
+import 'cloudflare.dart';
+import 'hls_proxy.dart';
+import 'sources.dart';
+
+/// Full-screen player with Dantotsu-style gestures: double-tap seek, swipe seek,
+/// brightness (left) / volume (right) swipes, hold for 2×, lock, server & speed pickers, skip intro.
+class PlayerScreen extends StatefulWidget {
+  const PlayerScreen({
+    super.key,
+    required this.media,
+    required this.source,
+    required this.episodes,
+    required this.index,
+    required this.dub,
+  });
+
+  final Map media;
+  final Source source;
+  final List<Episode> episodes;
+  final int index;
+  final bool dub;
+
+  @override
+  State<PlayerScreen> createState() => _PlayerScreenState();
+}
+
+class _PlayerScreenState extends State<PlayerScreen> {
+  final player = Player();
+  late final controller = VideoController(player);
+  late int index = widget.index;
+  List<VideoStream> streams = [];
+  VideoStream? current;
+  String? error, hint;
+  bool controls = true, locked = false, cover = false, synced = false;
+  double rate = 1, brightness = .5, volume = 100, doubleTapX = 0;
+  Duration? seekTarget;
+  Timer? _hideTimer, _hintTimer;
+  late final List<StreamSubscription> _subs;
+
+  Episode get episode => widget.episodes[index];
+  bool get hasNext => index + 1 < widget.episodes.length;
+
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setPreferredOrientations([DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    ScreenBrightness().application.then((v) => brightness = v).ignore();
+    _subs = [
+      player.stream.position.listen(_onPosition),
+      player.stream.playing.listen((_) => _refresh()),
+      player.stream.buffering.listen((_) => _refresh()),
+      player.stream.completed.listen((done) {
+        if (done && hasNext) _load(index + 1);
+      }),
+    ];
+    _load(index);
+    _scheduleHide();
+  }
+
+  @override
+  void dispose() {
+    for (final sub in _subs) {
+      sub.cancel();
+    }
+    _hideTimer?.cancel();
+    _hintTimer?.cancel();
+    player.dispose();
+    ScreenBrightness().resetApplicationScreenBrightness();
+    SystemChrome.setPreferredOrientations([]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _load(int i) async {
+    setState(() {
+      index = i;
+      streams = [];
+      current = null;
+      error = null;
+      synced = false;
+    });
+    try {
+      final found = await withCloudflare(
+        context,
+        () => widget.source.streams(widget.media, widget.episodes[i], dub: widget.dub),
+      );
+      if (!mounted || index != i) return;
+      if (found.isEmpty) throw Exception('No playable servers for this episode on ${widget.source.name}');
+      streams = found;
+      await _play(found.first);
+    } catch (e) {
+      if (mounted && index == i) setState(() => error = '$e'.replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _play(VideoStream stream, {Duration? at}) async {
+    setState(() => current = stream);
+    await player.open(Media(await HlsProxy.url(stream.url, stream.headers)));
+    if (at != null) await player.seek(at);
+    if (stream.subtitle != null) {
+      await player.setSubtitleTrack(SubtitleTrack.uri(stream.subtitle!, title: 'English', language: 'en'));
+    }
+    await player.setRate(rate);
+  }
+
+  void _onPosition(Duration position) {
+    final duration = player.state.duration;
+    if (!synced && duration > Duration.zero && position.inMilliseconds > duration.inMilliseconds * .85) {
+      synced = true;
+      _syncProgress();
+    }
+    _refresh();
+  }
+
+  Future<void> _syncProgress() async {
+    final number = episode.number.toInt();
+    final entry = widget.media['mediaListEntry'] as Map?;
+    if (AniList.token == null || number <= (entry?['progress'] as int? ?? 0)) return;
+    try {
+      await AniList.saveProgress(widget.media, number);
+      widget.media['mediaListEntry'] = {...?entry, 'progress': number, 'status': entry?['status'] ?? 'CURRENT'};
+      _hint('AniList updated · Episode $number');
+    } catch (e) {
+      _hint('AniList sync failed');
+    }
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && player.state.playing) setState(() => controls = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => controls = !controls);
+    if (controls) _scheduleHide();
+  }
+
+  void _hint(String text, {bool sticky = false}) {
+    _hintTimer?.cancel();
+    if (!mounted) return;
+    setState(() => hint = text);
+    if (!sticky) {
+      _hintTimer = Timer(const Duration(milliseconds: 900), () => mounted ? setState(() => hint = null) : null);
+    }
+  }
+
+  Duration _clamp(Duration t) {
+    final duration = player.state.duration;
+    if (t < Duration.zero) return Duration.zero;
+    return duration > Duration.zero && t > duration ? duration : t;
+  }
+
+  void _seekBy(int seconds) {
+    player.seek(_clamp(player.state.position + Duration(seconds: seconds)));
+    _hint(seconds > 0 ? '+${seconds}s' : '${seconds}s');
+  }
+
+  void _verticalDrag(DragUpdateDetails d, Size size) {
+    final delta = -d.delta.dy / (size.height * .8);
+    if (d.localPosition.dx < size.width / 2) {
+      brightness = (brightness + delta).clamp(0.0, 1.0);
+      ScreenBrightness().setApplicationScreenBrightness(brightness);
+      _hint('☀  ${(brightness * 100).round()}%', sticky: true);
+    } else {
+      volume = (volume + delta * 100).clamp(0.0, 100.0);
+      player.setVolume(volume);
+      _hint('🔊  ${volume.round()}%', sticky: true);
+    }
+  }
+
+  void _clearHint([Object? _]) => _hint(hint ?? '');
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final position = player.state.position;
+    final intro = current?.intro;
+    final inIntro = intro != null && position.inSeconds >= intro.$1 && position.inSeconds < intro.$2 - 1;
+    final loading = error == null && (current == null || player.state.buffering);
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Video(
+            controller: controller,
+            controls: NoVideoControls,
+            fit: cover ? BoxFit.cover : BoxFit.contain,
+            subtitleViewConfiguration: const SubtitleViewConfiguration(
+              style: TextStyle(fontSize: 22, color: Colors.white, shadows: [Shadow(blurRadius: 8)]),
+            ),
+          ),
+          IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: controls && !locked ? 1 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xCC000000), Color(0x33000000), Color(0x33000000), Color(0xDD000000)],
+                    stops: [0, .3, .65, 1],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleControls,
+            onDoubleTapDown: locked ? null : (d) => doubleTapX = d.localPosition.dx,
+            onDoubleTap: locked ? null : () => _seekBy(doubleTapX < size.width / 2 ? -10 : 10),
+            onLongPressStart: locked
+                ? null
+                : (_) {
+                    player.setRate(2);
+                    _hint('2× speed', sticky: true);
+                  },
+            onLongPressEnd: locked
+                ? null
+                : (_) {
+                    player.setRate(rate);
+                    _clearHint();
+                  },
+            onVerticalDragUpdate: locked ? null : (d) => _verticalDrag(d, size),
+            onVerticalDragEnd: locked ? null : _clearHint,
+            onHorizontalDragStart: locked ? null : (_) => seekTarget = player.state.position,
+            onHorizontalDragUpdate: locked
+                ? null
+                : (d) {
+                    seekTarget = _clamp(seekTarget! + Duration(milliseconds: (d.delta.dx * 250).round()));
+                    final diff = (seekTarget! - position).inSeconds;
+                    _hint('${_fmt(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)', sticky: true);
+                  },
+            onHorizontalDragEnd: locked
+                ? null
+                : (_) {
+                    player.seek(seekTarget!);
+                    seekTarget = null;
+                    _clearHint();
+                  },
+          ),
+          if (loading) const IgnorePointer(child: Center(child: CircularProgressIndicator(color: Colors.white))),
+          if (hint != null)
+            IgnorePointer(
+              child: Align(
+                alignment: const Alignment(0, -.62),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(color: Colors.black.withValues(alpha: .7), borderRadius: BorderRadius.circular(24)),
+                  child: Text(hint!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          IgnorePointer(
+            ignoring: !controls,
+            child: AnimatedOpacity(
+              opacity: controls ? 1 : 0,
+              duration: const Duration(milliseconds: 200),
+              child: locked ? _lockedOverlay() : _overlay(position, loading),
+            ),
+          ),
+          if (inIntro && !locked)
+            Positioned(
+              right: 32,
+              bottom: 110,
+              child: FilledButton.icon(
+                onPressed: () => player.seek(Duration(seconds: intro.$2)),
+                icon: const Icon(Icons.fast_forward_rounded),
+                label: const Text('Skip intro'),
+              ),
+            ),
+          if (error != null) _errorView(),
+        ],
+      ),
+    );
+  }
+
+  Widget _lockedOverlay() => SafeArea(
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: IconButton.filledTonal(
+              iconSize: 28,
+              icon: const Icon(Icons.lock_rounded),
+              onPressed: () {
+                setState(() => locked = false);
+                _scheduleHide();
+              },
+            ),
+          ),
+        ),
+      );
+
+  Widget _overlay(Duration position, bool loading) {
+    final duration = player.state.duration;
+    final shown = seekTarget ?? position;
+    final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);
+    final title = episode.title;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => Navigator.pop(context)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Episode ${epNumber(episode.number)}${title == null ? '' : ' · $title'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        '${titleOf(widget.media)} · ${widget.source.name}${current == null ? '' : ' · ${current!.label}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                if (streams.length > 1)
+                  PopupMenuButton<VideoStream>(
+                    tooltip: 'Server',
+                    icon: const Icon(Icons.dns_rounded),
+                    initialValue: current,
+                    onSelected: (s) => _play(s, at: player.state.position),
+                    itemBuilder: (_) => [for (final s in streams) PopupMenuItem(value: s, child: Text(s.label))],
+                  ),
+                PopupMenuButton<double>(
+                  tooltip: 'Speed',
+                  icon: const Icon(Icons.speed_rounded),
+                  initialValue: rate,
+                  onSelected: (r) {
+                    setState(() => rate = r);
+                    player.setRate(r);
+                  },
+                  itemBuilder: (_) => [
+                    for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0]) PopupMenuItem(value: r, child: Text('$r×')),
+                  ],
+                ),
+                IconButton(
+                  tooltip: cover ? 'Fit' : 'Fill',
+                  icon: Icon(cover ? Icons.fit_screen_rounded : Icons.crop_free_rounded),
+                  onPressed: () => setState(() => cover = !cover),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _RoundButton(Icons.skip_previous_rounded, index > 0 ? () => _load(index - 1) : null),
+                const SizedBox(width: 28),
+                _RoundButton(Icons.replay_10_rounded, () => _seekBy(-10)),
+                const SizedBox(width: 28),
+                loading
+                    ? const SizedBox(width: 80, height: 80)
+                    : _RoundButton(
+                        player.state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        () {
+                          player.playOrPause();
+                          _scheduleHide();
+                        },
+                        big: true,
+                      ),
+                const SizedBox(width: 28),
+                _RoundButton(Icons.forward_10_rounded, () => _seekBy(10)),
+                const SizedBox(width: 28),
+                _RoundButton(Icons.skip_next_rounded, hasNext ? () => _load(index + 1) : null),
+              ],
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Text(_fmt(shown), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                      overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                      secondaryActiveTrackColor: Colors.white38,
+                      inactiveTrackColor: Colors.white12,
+                    ),
+                    child: Slider(
+                      max: max,
+                      value: shown.inMilliseconds.toDouble().clamp(0, max),
+                      secondaryTrackValue: player.state.buffer.inMilliseconds.toDouble().clamp(0, max),
+                      onChangeStart: (_) => _hideTimer?.cancel(),
+                      onChanged: (v) => setState(() => seekTarget = Duration(milliseconds: v.round())),
+                      onChangeEnd: (v) {
+                        player.seek(Duration(milliseconds: v.round()));
+                        seekTarget = null;
+                        _scheduleHide();
+                      },
+                    ),
+                  ),
+                ),
+                Text(_fmt(duration), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
+              ],
+            ),
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Lock',
+                  icon: const Icon(Icons.lock_open_rounded),
+                  onPressed: () => setState(() => locked = true),
+                ),
+                TextButton.icon(
+                  onPressed: () => _seekBy(85),
+                  icon: const Icon(Icons.double_arrow_rounded),
+                  label: const Text('+85s'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                ),
+                const Spacer(),
+                if (hasNext)
+                  FilledButton.tonalIcon(
+                    onPressed: () => _load(index + 1),
+                    icon: const Icon(Icons.skip_next_rounded),
+                    label: const Text('Next episode'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _errorView() => ColoredBox(
+        color: Colors.black87,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline_rounded, size: 40, color: Colors.white54),
+                const SizedBox(height: 12),
+                Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70)),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  children: [
+                    OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text('Back')),
+                    FilledButton(onPressed: () => _load(index), child: const Text('Retry')),
+                    if (hasNext) FilledButton.tonal(onPressed: () => _load(index + 1), child: const Text('Next episode')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+}
+
+class _RoundButton extends StatelessWidget {
+  const _RoundButton(this.icon, this.onPressed, {this.big = false});
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool big;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        onPressed: onPressed,
+        iconSize: big ? 48 : 28,
+        padding: EdgeInsets.all(big ? 16 : 10),
+        style: IconButton.styleFrom(
+          backgroundColor: Colors.white.withValues(alpha: big ? .16 : .08),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: Colors.white24,
+        ),
+        icon: Icon(icon),
+      );
+}
+
+String _fmt(Duration d) {
+  final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+  final m = d.inMinutes.remainder(60);
+  return d.inHours > 0 ? '${d.inHours}:${m.toString().padLeft(2, '0')}:$s' : '$m:$s';
+}
