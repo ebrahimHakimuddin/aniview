@@ -25,7 +25,7 @@ class AniList {
   static Future<void> login() async {
     final callback = await FlutterWebAuth2.authenticate(
       url: 'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
-      callbackUrlScheme: 'animeapp',
+      callbackUrlScheme: 'aniview',
     );
     final value = Uri.splitQueryString(Uri.parse(callback).fragment)['access_token'];
     if (value == null) throw Exception('AniList did not return a token');
