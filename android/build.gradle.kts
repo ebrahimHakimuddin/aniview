@@ -18,6 +18,13 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
+// Third-party plugins still compile with Java 8 source/target and deprecated APIs;
+// hide javac's obsolete-option warnings and deprecation notes we can't fix from here.
+subprojects {
+    tasks.withType<JavaCompile>().configureEach {
+        options.compilerArgs.addAll(listOf("-Xlint:-options", "-XDsuppressNotes"))
+    }
+}
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
