@@ -23,7 +23,7 @@ class App extends StatelessWidget {
       brightness: Brightness.dark,
     ).copyWith(surface: background);
     return MaterialApp(
-      title: 'Anime',
+      title: 'AniView',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: scheme,

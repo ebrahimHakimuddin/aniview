@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:anime_app/hls_proxy.dart';
-import 'package:anime_app/sources.dart';
+import 'package:aniview/hls_proxy.dart';
+import 'package:aniview/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

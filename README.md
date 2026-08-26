@@ -1,4 +1,4 @@
-# anime_app
+# AniView
 
 Flutter (Android) app for watching and tracking anime. Tracking is AniList (SSO); episodes and
 streams come from third-party sites.

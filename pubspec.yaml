@@ -1,5 +1,5 @@
-name: anime_app
-description: "A new Flutter project."
+name: aniview
+description: "AniView: watch and track anime with AniList."
 publish_to: 'none'
 version: 0.1.0+1
 

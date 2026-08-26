@@ -149,11 +149,11 @@ class _TopBar extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                'ANIME',
+                'AniView',
                 style: TextStyle(
-                  fontSize: 20,
+                  fontSize: 22,
                   fontWeight: FontWeight.w900,
-                  letterSpacing: 5,
+                  letterSpacing: .5,
                   color: Theme.of(context).colorScheme.primary,
                 ),
               ),

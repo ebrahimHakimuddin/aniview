@@ -1,4 +1,4 @@
-package com.kidfury.anime_app
+package com.kidfury.aniview
 
 import io.flutter.embedding.android.FlutterActivity
 
