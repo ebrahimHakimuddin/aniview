@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,13 +23,12 @@ class AniList {
     token = (await SharedPreferences.getInstance()).getString('anilist_token');
   }
 
-  static Future<void> login() async {
-    final callback = await FlutterWebAuth2.authenticate(
-      url: 'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
-      callbackUrlScheme: 'aniview',
+  /// Shows AniList's authorize page in-app and captures the token from the `aniview://auth#access_token=…` redirect.
+  static Future<void> login(BuildContext context) async {
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => const _LoginPage()),
     );
-    final value = Uri.splitQueryString(Uri.parse(callback).fragment)['access_token'];
-    if (value == null) throw Exception('AniList did not return a token');
+    if (value == null) return; // closed without authorizing
     token = value;
     await (await SharedPreferences.getInstance()).setString('anilist_token', value);
   }
@@ -92,8 +92,45 @@ class AniList {
     return out;
   }
 
+  static Future<int> progressOf(int mediaId) async =>
+      (await query(r'query($id:Int){Media(id:$id){mediaListEntry{progress}}}', {'id': mediaId}))['Media']
+          ['mediaListEntry']?['progress'] ??
+      0;
+
   static Future<void> saveProgress(Map media, int progress) => query(
         r'mutation($id:Int,$p:Int,$s:MediaListStatus){SaveMediaListEntry(mediaId:$id,progress:$p,status:$s){id}}',
         {'id': media['id'], 'p': progress, 's': progress == media['episodes'] ? 'COMPLETED' : 'CURRENT'},
+      );
+}
+
+class _LoginPage extends StatefulWidget {
+  const _LoginPage();
+
+  @override
+  State<_LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<_LoginPage> {
+  bool _done = false;
+
+  NavigationActionPolicy _intercept(WebUri? url) {
+    if (url == null || url.scheme != 'aniview') return NavigationActionPolicy.ALLOW;
+    if (!_done) {
+      _done = true;
+      Navigator.pop(context, Uri.splitQueryString(url.fragment)['access_token']);
+    }
+    return NavigationActionPolicy.CANCEL;
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Sign in with AniList')),
+        body: InAppWebView(
+          initialUrlRequest: URLRequest(
+            url: WebUri('https://anilist.co/api/v2/oauth/authorize?client_id=${AniList.clientId}&response_type=token'),
+          ),
+          initialSettings: InAppWebViewSettings(useShouldOverrideUrlLoading: true),
+          shouldOverrideUrlLoading: (_, action) async => _intercept(action.request.url),
+        ),
       );
 }
