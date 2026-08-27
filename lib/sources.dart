@@ -2,12 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'cloudflare.dart';
+import 'metadata.dart';
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
-
-/// Per-host cookie + matching User-Agent captured after the user clears a Cloudflare challenge.
-final cfHeaders = <String, Map<String, String>>{};
 
 /// Top 3 anime streaming sites from everythingmoe, fetched once on app start.
 Future<List<Source>> sites = topSources();
@@ -20,38 +21,88 @@ class CloudflareChallenge implements Exception {
 }
 
 class Episode {
-  const Episode(this.number, {this.title, this.thumbnail, required this.ref});
+  const Episode(this.number, {this.title, this.thumbnail, this.overview, required this.ref});
   final num number;
-  final String? title, thumbnail;
+  final String? title, thumbnail, overview;
   final Object ref; // site-specific handle used to resolve streams
+
+  Episode withInfo(EpisodeInfo? info) => info == null
+      ? this
+      : Episode(
+          number,
+          // Sites often fill in placeholder titles like "Episode 1"; prefer the real one when ani.zip has it.
+          title: title == null || RegExp(r'^Episode \d+$').hasMatch(title!) ? info.title ?? title : title,
+          thumbnail: info.image ?? thumbnail,
+          overview: overview ?? info.overview,
+          ref: ref,
+        );
+}
+
+class Subtitle {
+  const Subtitle(this.label, this.url);
+  final String label, url;
 }
 
 class VideoStream {
-  const VideoStream(this.label, this.url, this.headers, {this.subtitle, this.intro});
+  const VideoStream(this.label, this.url, this.headers, {this.subtitles = const [], this.skips = const []});
   final String label, url;
   final Map<String, String> headers;
-  final String? subtitle;
-  final (int start, int end)? intro; // seconds
+  final List<Subtitle> subtitles; // soft subs, picked in the player
+  final List<SkipTime> skips; // intro/outro times the site itself provides
+}
+
+/// A show as listed on a site, used to fix a wrong automatic match.
+class SearchResult {
+  const SearchResult(this.id, this.title, {this.image, this.info});
+  final String id, title;
+  final String? image, info;
 }
 
 abstract class Source {
   Source(this.name, this.base);
   final String name, base;
-  Future<List<Episode>> episodes(Map media);
+
+  Future<List<SearchResult>> search(String query);
+
+  /// The site's id for [media] when it can be matched confidently, else null.
+  Future<String?> match(Map media);
+
+  Future<List<Episode>> episodesOf(String id);
+
   Future<List<VideoStream>> streams(Map media, Episode episode, {required bool dub});
 }
 
 String epNumber(num n) => n % 1 == 0 ? '${n.toInt()}' : '$n';
 
+String _matchKey(Source source, Map media) => 'match:${source.name}:${media['id']}';
+
+/// Episodes of [media] on [source] — the user's manual pick first, else the automatic match —
+/// with titles and artwork from ani.zip.
+Future<List<Episode>> loadEpisodes(Source source, Map media) async {
+  final info = episodeInfo(media['id']);
+  final prefs = await SharedPreferences.getInstance();
+  final id = prefs.getString(_matchKey(source, media)) ?? await source.match(media);
+  if (id == null) return [];
+  final episodes = await source.episodesOf(id);
+  final art = await info;
+  return [for (final e in episodes) e.withInfo(art[epNumber(e.number)])];
+}
+
+Future<void> setMatch(Source source, Map media, String id) async =>
+    (await SharedPreferences.getInstance()).setString(_matchKey(source, media), id);
+
+Future<void> clearMatches() async {
+  final prefs = await SharedPreferences.getInstance();
+  for (final key in prefs.getKeys().where((k) => k.startsWith('match:')).toList()) {
+    await prefs.remove(key);
+  }
+}
+
 final _client = http.Client();
 
 Future<String> fetch(String url, {Map<String, String>? headers}) async {
   final uri = Uri.parse(url);
-  final res = await _client.get(uri, headers: {'User-Agent': userAgent, ...?cfHeaders[uri.host], ...?headers});
-  // Managed challenges set cf-mitigated; bot-score blocks only show Cloudflare's "Attention Required" page.
-  if ((res.statusCode == 403 || res.statusCode == 503) && res.headers['server'] == 'cloudflare') {
-    throw CloudflareChallenge(url);
-  }
+  final res = await _client.get(uri, headers: {'User-Agent': userAgent, ...?headers});
   if (res.statusCode != 200) throw HttpException('HTTP ${res.statusCode}', uri: uri);
   return res.body;
 }
@@ -86,7 +137,16 @@ Iterable<String> _searchTitles(Map media) =>
 Map<String, String> _dataAttrs(String tag) =>
     {for (final m in RegExp(r'data-([\w-]+)="([^"]*)"').allMatches(tag)) m[1]!: m[2]!};
 
-/// megaplay embed -> plain HLS via getSourcesNew (no decryption needed).
+String _decodeHtml(String s) => s
+    .replaceAll('&#039;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+
+String _info(List<Object?> parts) => parts.whereType<Object>().join(' · ');
+
+/// megaplay embed -> plain HLS via getSourcesNew (no decryption needed), with every subtitle track.
 Future<List<VideoStream>> megaplay(String label, String embed, {required String referer}) async {
   final page = await fetch(embed, headers: {'Referer': referer});
   final id = RegExp(r'data-id="(\d+)"').firstMatch(page)?[1];
@@ -100,41 +160,75 @@ Future<List<VideoStream>> megaplay(String label, String embed, {required String 
   final sources = json['sources'];
   final file = (sources is List ? sources.firstOrNull : sources)?['file'] as String?;
   if (file == null) return [];
-  final subtitle = (json['tracks'] as List? ?? []).where((t) => t['kind'] == 'captions').firstOrNull?['file'];
-  final intro = json['intro'];
   return [
     VideoStream(
       label,
       file,
       {'Referer': '${uri.origin}/', 'User-Agent': userAgent},
-      subtitle: subtitle,
-      intro: intro == null || intro['end'] == 0 ? null : ((intro['start'] as num).toInt(), (intro['end'] as num).toInt()),
+      subtitles: [
+        for (final track in json['tracks'] as List? ?? const [])
+          if (track['kind'] == 'captions' && track['file'] is String) Subtitle('${track['label'] ?? 'Unknown'}', track['file']),
+      ],
+      skips: [
+        if (_range(json['intro']) case (final start, final end)) SkipTime(SkipType.intro, start, end),
+        if (_range(json['outro']) case (final start, final end)) SkipTime(SkipType.outro, start, end),
+      ],
     ),
   ];
+}
+
+(Duration, Duration)? _range(Object? json) {
+  if (json is! Map || json['start'] is! num || json['end'] is! num || json['end'] == 0) return null;
+  return (Duration(seconds: (json['start'] as num).toInt()), Duration(seconds: (json['end'] as num).toInt()));
 }
 
 class Anikoto extends Source {
   Anikoto(super.name, super.base);
 
+  final _episodes = <String, List<Episode>>{};
+
   Map<String, String> get _ajax => {'X-Requested-With': 'XMLHttpRequest', 'Referer': '$base/'};
 
   @override
-  Future<List<Episode>> episodes(Map media) async {
+  Future<List<SearchResult>> search(String query) async {
+    final html = await fetch('$base/filter?keyword=${Uri.encodeQueryComponent(query)}');
+    return [
+      for (final item in html.split('<div class="item ').skip(1))
+        if (RegExp(r'<a class="name d-title" href="([^"]+)"[^>]*>([^<]+)</a>').firstMatch(item) case final m?)
+          SearchResult(
+            m[1]!,
+            _decodeHtml(m[2]!.trim()),
+            image: RegExp(r'<img src="([^"]+)"').firstMatch(item)?[1],
+            info: RegExp(r'<div class="right">([^<]+)</div>').firstMatch(item)?[1]?.trim(),
+          ),
+    ];
+  }
+
+  @override
+  Future<String?> match(Map media) async {
     for (final title in _searchTitles(media)) {
-      final search = await fetch('$base/filter?keyword=${Uri.encodeQueryComponent(title)}');
-      final candidates = RegExp(r'<a class="name d-title" href="([^"]+)"').allMatches(search).take(5);
-      for (final candidate in candidates) {
-        final page = await fetch(candidate[1]!);
-        final id = RegExp(r'id="watch-main"[^>]*?data-id="(\d+)"').firstMatch(page)?[1];
-        if (id == null) continue;
-        final html = jsonDecode(await fetch('$base/ajax/episode/list/$id', headers: _ajax))['result'] as String;
-        final attrs = RegExp(r'<a [^>]*data-num="[^>]*>').allMatches(html).map((m) => _dataAttrs(m[0]!)).toList();
-        // Each episode carries its MAL id, so we only accept the right show.
-        if (attrs.isEmpty || (media['idMal'] != null && attrs.first['mal'] != '${media['idMal']}')) continue;
-        return [for (final a in attrs) Episode(num.tryParse(a['num'] ?? '') ?? 0, ref: a)];
+      for (final result in (await search(title)).take(5)) {
+        final episodes = await episodesOf(result.id);
+        // Each episode carries its MAL id, so only the right show is accepted.
+        final mal = episodes.firstOrNull?.ref as Map?;
+        if (mal != null && (media['idMal'] == null || mal['mal'] == '${media['idMal']}')) return result.id;
       }
     }
-    return [];
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    if (_episodes[id] case final cached?) return cached;
+    final page = await fetch(id);
+    final showId = RegExp(r'id="watch-main"[^>]*?data-id="(\d+)"').firstMatch(page)?[1];
+    if (showId == null) return [];
+    final html = jsonDecode(await fetch('$base/ajax/episode/list/$showId', headers: _ajax))['result'] as String;
+    return _episodes[id] = RegExp(r'<a [^>]*data-num="[^>]*>')
+        .allMatches(html)
+        .map((m) => _dataAttrs(m[0]!))
+        .map((a) => Episode(num.tryParse(a['num'] ?? '') ?? 0, ref: a))
+        .toList();
   }
 
   @override
@@ -161,91 +255,129 @@ class ReAnime extends Source {
   ReAnime(super.name, super.base);
 
   @override
-  Future<List<Episode>> episodes(Map media) async {
+  Future<List<SearchResult>> search(String query) async {
+    final json = jsonDecode(await fetch('$base/api/v1/search?limit=20&q=${Uri.encodeQueryComponent(query)}'));
+    return [
+      for (final r in json['results'] as List? ?? const [])
+        // The id keeps the entry's AniList id too, so streams follow a manual pick.
+        SearchResult(
+          '${r['anime_id']}|${r['anilist_id'] ?? ''}',
+          '${r['title']?['english'] ?? r['title']?['romaji'] ?? r['anime_id']}',
+          image: r['cover_image']?['large'],
+          info: _info([r['format'], r['season_year'], if (r['episodes'] != null) '${r['episodes']} eps']),
+        ),
+    ];
+  }
+
+  @override
+  Future<String?> match(Map media) async {
     for (final title in _searchTitles(media)) {
-      final search = jsonDecode(await fetch('$base/api/v1/search?limit=10&q=${Uri.encodeQueryComponent(title)}'));
-      final hit = (search['results'] as List? ?? []).where((r) => r['anilist_id'] == media['id']).firstOrNull;
-      if (hit == null) continue;
-      final data = jsonDecode(await fetch('$base/api/v1/anime/${hit['anime_id']}/episodes?limit=5000'))['data'] as List;
-      return [
-        for (final e in data)
-          Episode(
-            e['episode_number'],
-            title: (e['title'] as String?)?.nullIfEmpty,
-            thumbnail: (e['thumbnail'] as String?)?.nullIfEmpty,
-            ref: e,
-          ),
-      ];
+      final hit = (await search(title)).where((r) => r.id.endsWith('|${media['id']}')).firstOrNull;
+      if (hit != null) return hit.id;
     }
-    return [];
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    final [animeId, anilistId] = id.split('|');
+    final data = jsonDecode(await fetch('$base/api/v1/anime/$animeId/episodes?limit=5000'))['data'] as List? ?? const [];
+    return [
+      for (final e in data)
+        Episode(
+          e['episode_number'],
+          title: (e['title'] as String?)?.nullIfEmpty,
+          thumbnail: (e['thumbnail'] as String?)?.nullIfEmpty,
+          ref: anilistId,
+        ),
+    ];
   }
 
   // Re:ANIME's own flixcloud servers ship encrypted payloads; megaplay serves the same episode by AniList id.
   @override
   Future<List<VideoStream>> streams(Map media, Episode episode, {required bool dub}) => megaplay(
         'Megaplay',
-        'https://megaplay.buzz/stream/ani/${media['id']}/${epNumber(episode.number)}/${dub ? 'dub' : 'sub'}',
+        'https://megaplay.buzz/stream/ani/${(episode.ref as String).nullIfEmpty ?? media['id']}'
+            '/${epNumber(episode.number)}/${dub ? 'dub' : 'sub'}',
         referer: '$base/',
       );
 }
 
-/// Sits behind Cloudflare: [fetch] throws [CloudflareChallenge] until the user clears it once.
+/// animepahe and its kwik player sit behind Cloudflare, which rejects Dart's HTTP client even with a clearance
+/// cookie, so every request goes through the in-app browser ([browserFetch]).
 class AnimePahe extends Source {
   AnimePahe(super.name, super.base);
 
+  Future<dynamic> _api(String query) async => jsonDecode(await browserFetch('$base/api?$query', text: true));
+
   @override
-  Future<List<Episode>> episodes(Map media) async {
-    String? session;
-    search:
+  Future<List<SearchResult>> search(String query) async {
+    final json = await _api('m=search&q=${Uri.encodeQueryComponent(query)}');
+    return [
+      for (final r in json['data'] as List? ?? const [])
+        SearchResult(
+          '${r['session']}',
+          '${r['title']}',
+          image: r['poster'],
+          info: _info([r['type'], r['year'], if (r['episodes'] != null) '${r['episodes']} eps']),
+        ),
+    ];
+  }
+
+  @override
+  Future<String?> match(Map media) async {
+    final links = RegExp('anilist\\.co/anime/${media['id']}\\b|myanimelist\\.net/anime/${media['idMal'] ?? 'none'}\\b');
     for (final title in _searchTitles(media)) {
-      final results = jsonDecode(await fetch('$base/api?m=search&q=${Uri.encodeQueryComponent(title)}'))['data'];
-      for (final result in (results as List? ?? []).take(3)) {
-        final page = await fetch('$base/anime/${result['session']}');
-        if (RegExp('anilist\\.co/anime/${media['id']}\\b').hasMatch(page)) {
-          session = result['session'];
-          break search;
-        }
+      for (final result in (await search(title)).take(3)) {
+        if (links.hasMatch(await browserFetch('$base/anime/${result.id}'))) return result.id;
       }
     }
-    if (session == null) return [];
+    return null;
+  }
 
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
     final raw = <Map>[];
     for (var page = 1, last = 1; page <= last; page++) {
-      final json = jsonDecode(await fetch('$base/api?m=release&id=$session&sort=episode_asc&page=$page'));
+      final json = await _api('m=release&id=$id&sort=episode_asc&page=$page');
       last = json['last_page'] ?? 1;
-      raw.addAll((json['data'] as List? ?? []).cast<Map>());
+      raw.addAll((json['data'] as List? ?? const []).cast<Map>());
     }
     if (raw.isEmpty) return [];
     // animepahe keeps counting across seasons (S2 starts at 13); renumber from 1.
     final offset = ((raw.first['episode'] as num) - 1).clamp(0, double.infinity);
     return [
-      for (final e in raw)
-        Episode((e['episode'] as num) - offset, thumbnail: e['snapshot'], ref: '$session/${e['session']}'),
+      for (final e in raw) Episode((e['episode'] as num) - offset, thumbnail: e['snapshot'], ref: '$id/${e['session']}'),
     ];
   }
 
   @override
   Future<List<VideoStream>> streams(Map media, Episode episode, {required bool dub}) async {
-    final play = await fetch('$base/play/${episode.ref}', headers: {'Referer': '$base/'});
+    final play = await browserFetch('$base/play/${episode.ref}', referer: '$base/');
     final buttons = RegExp(r'<button[^>]*data-src="[^"]*"[^>]*>')
         .allMatches(play)
         .map((m) => _dataAttrs(m[0]!))
         .where((b) => (b['audio'] == 'eng') == dub)
         .toList()
       ..sort((a, b) => (int.tryParse(b['resolution'] ?? '') ?? 0).compareTo(int.tryParse(a['resolution'] ?? '') ?? 0));
-    final out = <VideoStream>[];
-    for (final button in buttons) {
-      final kwik = Uri.parse(button['src']!);
-      final html = await fetch('$kwik', headers: {'Referer': '$base/'});
-      final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''').firstMatch(unpack(html))?[0];
-      if (m3u8 == null) continue;
-      out.add(VideoStream(
-        '${button['fansub'] ?? 'Kwik'} ${button['resolution']}p',
-        m3u8,
-        {'Referer': '${kwik.origin}/', 'User-Agent': cfHeaders[kwik.host]?['User-Agent'] ?? userAgent},
-      ));
-    }
-    return out;
+    final resolved = await Future.wait(buttons.map((button) async {
+      try {
+        final kwik = Uri.parse(button['src']!);
+        final html = await browserFetch('$kwik', referer: '$base/');
+        final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''').firstMatch(unpack(html))?[0];
+        if (m3u8 == null) return null;
+        return VideoStream(
+          '${button['fansub'] ?? 'Kwik'} ${button['resolution']}p',
+          m3u8,
+          {'Referer': '${kwik.origin}/', 'User-Agent': userAgent},
+        );
+      } on CloudflareChallenge {
+        rethrow;
+      } catch (_) {
+        return null;
+      }
+    }));
+    return resolved.nonNulls.toList();
   }
 }
 
