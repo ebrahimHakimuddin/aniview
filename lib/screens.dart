@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'anilist.dart';
 import 'cloudflare.dart';
+import 'history.dart';
 import 'player.dart';
 import 'sources.dart';
 
@@ -29,14 +30,19 @@ class _HomeScreenState extends State<HomeScreen> {
   late Future<Map<String, dynamic>?> viewer = AniList.viewer();
   late Future<Map<String, List>> lists = AniList.lists();
   late Future<List> trending = AniList.trending();
+  late Future<Map<String, dynamic>?> lastWatched = WatchHistory.latest();
 
-  void _reloadLists() => setState(() => lists = AniList.lists());
+  void _reloadLists() => setState(() {
+        lists = AniList.lists();
+        lastWatched = WatchHistory.latest();
+      });
 
   Future<void> _refresh() async {
     setState(() {
       viewer = AniList.viewer();
       lists = AniList.lists();
       trending = AniList.trending();
+      lastWatched = WatchHistory.latest();
     });
     try {
       await Future.wait([lists, trending]);
@@ -80,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     } else {
       try {
-        await AniList.login();
+        await AniList.login(context);
       } catch (e) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
         return;
@@ -92,6 +98,21 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
         backgroundColor: background,
+        floatingActionButton: FutureBuilder(
+          future: lastWatched,
+          builder: (context, snap) {
+            final record = snap.data;
+            if (record == null) return const SizedBox.shrink();
+            return ContinueFab(
+              title: 'Continue EP ${epNumber(record['episode'])}',
+              subtitle: titleOf(record['media']),
+              onPressed: () async {
+                await resumeWatching(context, record);
+                if (mounted) _reloadLists();
+              },
+            );
+          },
+        ),
         body: RefreshIndicator(
           onRefresh: _refresh,
           child: ListView(
@@ -128,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context, snap) =>
                     snap.hasData ? _Shelf('Trending now', snap.data!, onBack: _reloadLists) : const SizedBox(),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 96), // room for the continue-watching button
             ],
           ),
         ),
@@ -548,6 +569,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Object? sitesError;
   Source? source;
   Future<List<Episode>>? episodes;
+  late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
   bool dub = false, expanded = false;
 
   Map get media => widget.media;
@@ -592,6 +614,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     return Scaffold(
       backgroundColor: background,
+      floatingActionButton: _continueButton(progress),
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
@@ -709,11 +732,54 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           ),
           _episodeList(progress),
-          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          const SliverToBoxAdapter(child: SizedBox(height: 96)),
         ],
       ),
     );
   }
+
+  /// Resume the saved spot for this show, else continue after the AniList progress on the selected source.
+  Widget _continueButton(int progress) => FutureBuilder(
+        future: record,
+        builder: (context, saved) {
+          final r = saved.data;
+          if (r != null) {
+            final at = Duration(milliseconds: r['position'] as int? ?? 0);
+            return ContinueFab(
+              title: '${at > Duration.zero ? 'Resume' : 'Continue'} EP ${epNumber(r['episode'])}',
+              subtitle: '${r['source']}${at > Duration.zero ? ' · ${formatDuration(at)}' : ''}',
+              onPressed: () async {
+                final loaded = r['source'] == source?.name ? await episodes : null;
+                if (!context.mounted) return;
+                await resumeWatching(context, r, loaded: loaded);
+                if (mounted) setState(() => record = WatchHistory.of(media));
+              },
+            );
+          }
+          return FutureBuilder(
+            future: episodes,
+            builder: (context, snap) {
+              final list = snap.data;
+              final next = list?.indexWhere((e) => e.number > progress) ?? -1;
+              if (list == null || next == -1) return const SizedBox.shrink();
+              final current = source!;
+              return ContinueFab(
+                title: progress == 0 ? 'Start watching' : 'Continue EP ${epNumber(list[next].number)}',
+                subtitle: current.name,
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PlayerScreen(media: media, source: current, episodes: list, index: next, dub: dub),
+                    ),
+                  );
+                  if (mounted) setState(() => record = WatchHistory.of(media));
+                },
+              );
+            },
+          );
+        },
+      );
 
   Widget _sourcePicker() {
     if (sitesError != null) {
@@ -792,7 +858,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   builder: (_) => PlayerScreen(media: media, source: current, episodes: list, index: i, dub: dub),
                 ),
               );
-              if (mounted) setState(() {}); // progress may have changed
+              if (mounted) setState(() => record = WatchHistory.of(media)); // progress and resume point changed
             },
           ),
         );
@@ -923,6 +989,84 @@ class _EpisodeTile extends StatelessWidget {
       ),
     );
   }
+}
+
+// ───────────────────────────── Continue watching ─────────────────────────────
+
+/// Reopens the player where a [WatchHistory] record left off.
+Future<void> resumeWatching(BuildContext context, Map<String, dynamic> record, {List<Episode>? loaded}) async {
+  final media = record['media'] as Map;
+  final source = (await sites).where((s) => s.name == record['source']).firstOrNull;
+  if (source == null) throw Exception('${record['source']} is no longer one of the top sites');
+  if (!context.mounted) return;
+  final episodes = loaded ?? await withCloudflare<List<Episode>>(context, () => source.episodes(media));
+  final index = episodes.indexWhere((e) => e.number == record['episode']);
+  if (index == -1) throw Exception('Episode ${epNumber(record['episode'])} is not on ${source.name} yet');
+  if (!context.mounted) return;
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => PlayerScreen(
+        media: media,
+        source: source,
+        episodes: episodes,
+        index: index,
+        dub: record['dub'] == true,
+        start: Duration(milliseconds: record['position'] as int? ?? 0),
+      ),
+    ),
+  );
+}
+
+class ContinueFab extends StatefulWidget {
+  const ContinueFab({super.key, required this.title, required this.subtitle, required this.onPressed});
+
+  final String title, subtitle;
+  final Future<void> Function() onPressed;
+
+  @override
+  State<ContinueFab> createState() => _ContinueFabState();
+}
+
+class _ContinueFabState extends State<ContinueFab> {
+  bool busy = false;
+
+  Future<void> _run() async {
+    setState(() => busy = true);
+    try {
+      await widget.onPressed();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))));
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FloatingActionButton.extended(
+        onPressed: busy ? null : _run,
+        icon: busy
+            ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
+            : const Icon(Icons.play_arrow_rounded, size: 28),
+        label: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 200),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              Text(
+                widget.subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w400),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 // ───────────────────────────── Shared bits ─────────────────────────────

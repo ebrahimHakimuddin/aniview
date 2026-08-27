@@ -8,6 +8,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 
 import 'anilist.dart';
 import 'cloudflare.dart';
+import 'history.dart';
 import 'hls_proxy.dart';
 import 'sources.dart';
 
@@ -21,6 +22,7 @@ class PlayerScreen extends StatefulWidget {
     required this.episodes,
     required this.index,
     required this.dub,
+    this.start,
   });
 
   final Map media;
@@ -28,6 +30,7 @@ class PlayerScreen extends StatefulWidget {
   final List<Episode> episodes;
   final int index;
   final bool dub;
+  final Duration? start; // resume point for the first episode
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -44,6 +47,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   double rate = 1, brightness = .5, volume = 100, doubleTapX = 0;
   Duration? seekTarget;
   Timer? _hideTimer, _hintTimer;
+  Duration _savedAt = Duration.zero;
   late final List<StreamSubscription> _subs;
 
   Episode get episode => widget.episodes[index];
@@ -63,12 +67,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (done && hasNext) _load(index + 1);
       }),
     ];
-    _load(index);
+    _load(index, at: widget.start);
     _scheduleHide();
   }
 
   @override
   void dispose() {
+    _saveHistory();
     for (final sub in _subs) {
       sub.cancel();
     }
@@ -85,7 +90,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _load(int i) async {
+  Future<void> _load(int i, {Duration? at}) async {
     setState(() {
       index = i;
       streams = [];
@@ -101,7 +106,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted || index != i) return;
       if (found.isEmpty) throw Exception('No playable servers for this episode on ${widget.source.name}');
       streams = found;
-      await _play(found.first);
+      await _play(found.first, at: at);
     } catch (e) {
       if (mounted && index == i) setState(() => error = '$e'.replaceFirst('Exception: ', ''));
     }
@@ -123,14 +128,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
       synced = true;
       _syncProgress();
     }
+    if ((position - _savedAt).abs() >= const Duration(seconds: 10)) {
+      _savedAt = position;
+      _saveHistory();
+    }
     _refresh();
+  }
+
+  void _saveHistory() {
+    final position = player.state.position, duration = player.state.duration;
+    if (current == null || position < const Duration(seconds: 5)) return;
+    final finished = duration > Duration.zero && position.inMilliseconds > duration.inMilliseconds * .9;
+    if (finished && !hasNext) {
+      WatchHistory.remove(widget.media);
+    } else {
+      WatchHistory.save(
+        widget.media,
+        source: widget.source.name,
+        episode: finished ? widget.episodes[index + 1].number : episode.number,
+        position: finished ? Duration.zero : position,
+        dub: widget.dub,
+      );
+    }
   }
 
   Future<void> _syncProgress() async {
     final number = episode.number.toInt();
     final entry = widget.media['mediaListEntry'] as Map?;
-    if (AniList.token == null || number <= (entry?['progress'] as int? ?? 0)) return;
+    if (AniList.token == null) return;
     try {
+      // Ask AniList itself: cached media (e.g. from resume history) may be behind and must not roll progress back.
+      if (number <= await AniList.progressOf(widget.media['id'])) return;
       await AniList.saveProgress(widget.media, number);
       widget.media['mediaListEntry'] = {...?entry, 'progress': number, 'status': entry?['status'] ?? 'CURRENT'};
       _hint('AniList updated · Episode $number');
@@ -248,7 +276,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 : (d) {
                     seekTarget = _clamp(seekTarget! + Duration(milliseconds: (d.delta.dx * 250).round()));
                     final diff = (seekTarget! - position).inSeconds;
-                    _hint('${_fmt(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)', sticky: true);
+                    _hint('${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)', sticky: true);
                   },
             onHorizontalDragEnd: locked
                 ? null
@@ -399,7 +427,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             const Spacer(),
             Row(
               children: [
-                Text(_fmt(shown), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
+                Text(formatDuration(shown), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
                 Expanded(
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(
@@ -423,7 +451,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 ),
-                Text(_fmt(duration), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
+                Text(formatDuration(duration), style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()])),
               ],
             ),
             Row(
@@ -502,7 +530,7 @@ class _RoundButton extends StatelessWidget {
       );
 }
 
-String _fmt(Duration d) {
+String formatDuration(Duration d) {
   final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
   final m = d.inMinutes.remainder(60);
   return d.inHours > 0 ? '${d.inHours}:${m.toString().padLeft(2, '0')}:$s' : '$m:$s';
