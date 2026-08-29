@@ -33,6 +33,8 @@ class WatchHistory {
   static Future<void> remove(Map media) async =>
       _write((await all()).where((r) => r['media']['id'] != media['id']).toList());
 
+  static Future<void> clear() => _write(const []);
+
   static Future<void> _write(List<Map> entries) async =>
       (await SharedPreferences.getInstance()).setString(_key, jsonEncode(entries));
 }
