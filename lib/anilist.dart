@@ -68,6 +68,23 @@ class AniList {
       (await query('query{Page(perPage:20){media(type:ANIME,sort:TRENDING_DESC,isAdult:false){$_media}}}'))['Page']
           ['media'];
 
+  /// AniList season name and year for today (WINTER = Jan–Mar, SPRING, SUMMER, FALL).
+  static (String, int) get currentSeason {
+    final now = DateTime.now();
+    return (const ['WINTER', 'SPRING', 'SUMMER', 'FALL'][(now.month - 1) ~/ 3], now.year);
+  }
+
+  /// Most popular shows of the current season.
+  static Future<List> season() async {
+    final (season, year) = currentSeason;
+    return (await query(
+      r'query($s:MediaSeason,$y:Int){Page(perPage:20){media(type:ANIME,season:$s,seasonYear:$y,'
+      r'sort:POPULARITY_DESC,isAdult:false){'
+      '$_media}}}',
+      {'s': season, 'y': year},
+    ))['Page']['media'];
+  }
+
   static Future<List> search(String text) async => (await query(
         r'query($s:String){Page(perPage:40){media(search:$s,type:ANIME,isAdult:false,sort:SEARCH_MATCH){'
         '$_media}}}',

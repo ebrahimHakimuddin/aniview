@@ -6,9 +6,12 @@ import 'anilist.dart';
 import 'cloudflare.dart';
 import 'history.dart';
 import 'player.dart';
+import 'settings.dart';
 import 'sources.dart';
+import 'states.dart';
 
 const background = Color(0xFF0A0A0F);
+const _sheet = Color(0xFF14141C);
 
 Future<void> openDetails(BuildContext context, Map media, {VoidCallback? onBack}) async {
   await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailsScreen(media)));
@@ -16,6 +19,13 @@ Future<void> openDetails(BuildContext context, Map media, {VoidCallback? onBack}
 }
 
 Color? _hex(String? hex) => hex == null || hex.length != 7 ? null : Color(int.parse('FF${hex.substring(1)}', radix: 16));
+
+const _posterGrid = SliverGridDelegateWithMaxCrossAxisExtent(
+  maxCrossAxisExtent: 150,
+  childAspectRatio: .46,
+  crossAxisSpacing: 14,
+  mainAxisSpacing: 16,
+);
 
 // ───────────────────────────── Home ─────────────────────────────
 
@@ -30,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late Future<Map<String, dynamic>?> viewer = AniList.viewer();
   late Future<Map<String, List>> lists = AniList.lists();
   late Future<List> trending = AniList.trending();
+  late Future<List> season = AniList.season();
   late Future<Map<String, dynamic>?> lastWatched = WatchHistory.latest();
 
   void _reloadLists() => setState(() {
@@ -42,125 +53,158 @@ class _HomeScreenState extends State<HomeScreen> {
       viewer = AniList.viewer();
       lists = AniList.lists();
       trending = AniList.trending();
+      season = AniList.season();
       lastWatched = WatchHistory.latest();
     });
     try {
-      await Future.wait([lists, trending]);
-    } catch (_) {}
+      await Future.wait([lists, trending, season]);
+    } catch (_) {} // each section shows its own error state
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+    if (mounted) _refresh();
   }
 
   Future<void> _account() async {
-    if (AniList.token != null) {
-      final logout = await showModalBottomSheet<bool>(
-        context: context,
-        backgroundColor: const Color(0xFF14141C),
-        builder: (context) => SafeArea(
-          child: FutureBuilder(
-            future: viewer,
-            builder: (context, snap) => Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: snap.data?['avatar']?['large'] == null
-                      ? const Icon(Icons.account_circle_rounded)
-                      : CircleAvatar(backgroundImage: NetworkImage(snap.data!['avatar']['large'])),
-                  title: Text(snap.data?['name'] ?? 'AniList'),
-                  subtitle: const Text('Signed in with AniList'),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.logout_rounded),
-                  title: const Text('Sign out'),
-                  onTap: () => Navigator.pop(context, true),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-      if (logout != true) return;
-      await AniList.logout();
-    } else if (AniList.clientId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Build with --dart-define=ANILIST_CLIENT_ID=<your AniList client id>')),
-      );
+    if (AniList.token != null) return _openSettings();
+    if (AniList.clientId.isEmpty) {
+      showError(context, 'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)');
       return;
-    } else {
-      try {
-        await AniList.login(context);
-      } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
-        return;
-      }
+    }
+    try {
+      await AniList.login(context);
+      if (AniList.token == null) return; // closed without signing in
+      final me = await AniList.viewer();
+      if (mounted) showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
+    } catch (e) {
+      if (mounted) showError(context, e);
     }
     if (mounted) _refresh();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: background,
-        floatingActionButton: FutureBuilder(
-          future: lastWatched,
-          builder: (context, snap) {
-            final record = snap.data;
-            if (record == null) return const SizedBox.shrink();
-            return ContinueFab(
-              title: 'Continue EP ${epNumber(record['episode'])}',
-              subtitle: titleOf(record['media']),
-              onPressed: () async {
-                await resumeWatching(context, record);
-                if (mounted) _reloadLists();
-              },
-            );
-          },
-        ),
-        body: RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              FutureBuilder(
-                future: trending,
-                builder: (context, snap) => _Hero(
-                  items: snap.data?.take(6).toList() ?? const [],
-                  error: snap.error,
-                  header: _TopBar(viewer: viewer, onAccount: _account),
-                ),
+  Widget build(BuildContext context) {
+    final (name, year) = AniList.currentSeason;
+    final seasonTitle = 'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
+    return Scaffold(
+      backgroundColor: background,
+      floatingActionButton: FutureBuilder(
+        future: lastWatched,
+        builder: (context, snap) {
+          final record = snap.data;
+          if (record == null) return const SizedBox.shrink();
+          return ContinueFab(
+            title: 'Continue EP ${epNumber(record['episode'])}',
+            subtitle: titleOf(record['media']),
+            onPressed: () async {
+              await resumeWatching(context, record);
+              if (mounted) _reloadLists();
+            },
+          );
+        },
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            FutureBuilder(
+              future: trending,
+              builder: (context, snap) => _Hero(
+                items: snap.data?.take(6).toList() ?? const [],
+                loading: snap.connectionState != ConnectionState.done,
+                error: snap.error,
+                onRetry: _refresh,
+                header: _TopBar(viewer: viewer, onAccount: _account, onSettings: _openSettings),
               ),
+            ),
+            if (AniList.token == null)
+              _SignInCard(onTap: _account)
+            else
               FutureBuilder(
                 future: lists,
                 builder: (context, snap) {
-                  final data = snap.data ?? const <String, List>{};
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const ShelfSkeleton(title: 'Continue watching');
+                  }
+                  if (snap.hasError) {
+                    return _Section('Your AniList', child: ErrorState(snap.error!, compact: true, onRetry: _reloadLists));
+                  }
+                  final current = snap.data!['CURRENT'] ?? const [];
+                  final planning = snap.data!['PLANNING'] ?? const [];
+                  if (current.isEmpty && planning.isEmpty) {
+                    return EmptyState(
+                      compact: true,
+                      icon: Icons.video_library_outlined,
+                      title: 'Your list is empty',
+                      message: 'Shows you watch or plan to watch on AniList show up here.',
+                      action: FilledButton.tonalIcon(
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
+                        icon: const Icon(Icons.search_rounded),
+                        label: const Text('Find a show'),
+                      ),
+                    );
+                  }
                   return Column(
                     children: [
-                      if (AniList.token == null)
-                        _SignInCard(onTap: _account)
-                      else if (snap.hasError)
-                        _Notice('Could not load your AniList: ${snap.error}'),
-                      if (data['CURRENT']?.isNotEmpty ?? false)
-                        _Shelf('Continue watching', data['CURRENT']!, onBack: _reloadLists),
-                      if (data['PLANNING']?.isNotEmpty ?? false)
-                        _Shelf('Plan to watch', data['PLANNING']!, onBack: _reloadLists),
+                      if (current.isNotEmpty) _Shelf('Continue watching', current, onBack: _reloadLists),
+                      if (planning.isNotEmpty) _Shelf('Plan to watch', planning, onBack: _reloadLists),
                     ],
                   );
                 },
               ),
-              FutureBuilder(
-                future: trending,
-                builder: (context, snap) =>
-                    snap.hasData ? _Shelf('Trending now', snap.data!, onBack: _reloadLists) : const SizedBox(),
-              ),
-              const SizedBox(height: 96), // room for the continue-watching button
-            ],
-          ),
+            _shelf(seasonTitle, season, onRetry: () => setState(() => season = AniList.season())),
+            _shelf('Trending now', trending, onRetry: _refresh, showError: false), // the hero already shows it
+            const SizedBox(height: 96), // room for the continue-watching button
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _shelf(String title, Future<List> future, {required VoidCallback onRetry, bool showError = true}) =>
+      FutureBuilder(
+        future: future,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) return ShelfSkeleton(title: title);
+          if (snap.hasError) {
+            return showError
+                ? _Section(title, child: ErrorState(snap.error!, compact: true, onRetry: onRetry))
+                : const SizedBox.shrink();
+          }
+          if (snap.data!.isEmpty) {
+            return _Section(
+              title,
+              child: const Text('Nothing here yet.', style: TextStyle(color: Colors.white54)),
+            );
+          }
+          return _Shelf(title, snap.data!, onBack: _reloadLists);
+        },
+      );
+}
+
+class _Section extends StatelessWidget {
+  const _Section(this.title, {required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)), child],
         ),
       );
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.viewer, required this.onAccount});
+  const _TopBar({required this.viewer, required this.onAccount, required this.onSettings});
 
   final Future<Map<String, dynamic>?> viewer;
-  final VoidCallback onAccount;
+  final VoidCallback onAccount, onSettings;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -184,12 +228,13 @@ class _TopBar extends StatelessWidget {
                 icon: const Icon(Icons.search_rounded),
                 onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
               ),
+              IconButton(tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: onSettings),
               FutureBuilder(
                 future: viewer,
                 builder: (context, snap) {
                   final avatar = snap.data?['avatar']?['large'] as String?;
                   return IconButton(
-                    tooltip: 'Account',
+                    tooltip: AniList.token == null ? 'Sign in' : 'Account',
                     onPressed: onAccount,
                     icon: avatar == null
                         ? const Icon(Icons.account_circle_outlined)
@@ -204,10 +249,18 @@ class _TopBar extends StatelessWidget {
 }
 
 class _Hero extends StatefulWidget {
-  const _Hero({required this.items, required this.header, this.error});
+  const _Hero({
+    required this.items,
+    required this.header,
+    required this.loading,
+    required this.onRetry,
+    this.error,
+  });
 
   final List items;
   final Widget header;
+  final bool loading;
+  final VoidCallback onRetry;
   final Object? error;
 
   @override
@@ -231,11 +284,32 @@ class _HeroState extends State<_Hero> {
       height: MediaQuery.sizeOf(context).height * .6,
       child: Stack(
         children: [
-          if (widget.items.isEmpty)
-            Center(
-              child: widget.error == null
-                  ? const CircularProgressIndicator()
-                  : _Empty(Icons.cloud_off_rounded, 'AniList is unavailable right now\n${widget.error}'),
+          if (widget.loading) ...[
+            const Positioned.fill(child: Skeleton(radius: 0)),
+            const Positioned(
+              left: 20,
+              bottom: 40,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Skeleton(width: 130, height: 12, radius: 6),
+                  SizedBox(height: 12),
+                  Skeleton(width: 240, height: 30, radius: 8),
+                  SizedBox(height: 18),
+                  Skeleton(width: 140, height: 44, radius: 22),
+                ],
+              ),
+            ),
+          ] else if (widget.error != null)
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 48),
+                child: ErrorState(widget.error!, onRetry: widget.onRetry),
+              ),
+            )
+          else if (widget.items.isEmpty)
+            const Positioned.fill(
+              child: EmptyState(icon: Icons.local_fire_department_outlined, title: 'Nothing trending right now'),
             )
           else
             PageView.builder(
@@ -245,7 +319,7 @@ class _HeroState extends State<_Hero> {
               itemBuilder: (context, i) => _HeroPage(widget.items[i]),
             ),
           widget.header,
-          if (widget.items.length > 1)
+          if (!widget.loading && widget.items.length > 1)
             Positioned(
               left: 0,
               right: 0,
@@ -487,6 +561,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   Future<List>? results;
+  String query = '';
   Timer? _debounce;
 
   @override
@@ -497,9 +572,15 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _search(String text, {bool now = false}) {
     _debounce?.cancel();
-    if (text.trim().length < 2) return;
+    final q = text.trim();
+    if (q.length < 2) return;
     _debounce = Timer(now ? Duration.zero : const Duration(milliseconds: 450), () {
-      if (mounted) setState(() => results = AniList.search(text.trim()));
+      if (mounted) {
+        setState(() {
+          query = q;
+          results = AniList.search(q);
+        });
+      }
     });
   }
 
@@ -515,36 +596,39 @@ class _SearchScreenState extends State<SearchScreen> {
               textInputAction: TextInputAction.search,
               onChanged: _search,
               onSubmitted: (text) => _search(text, now: true),
-              decoration: InputDecoration(
-                hintText: 'Search anime',
-                isDense: true,
-                filled: true,
-                fillColor: Colors.white.withValues(alpha: .07),
-                prefixIcon: const Icon(Icons.search_rounded),
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(28), borderSide: BorderSide.none),
-              ),
+              decoration: _searchDecoration('Search anime'),
             ),
           ),
         ),
         body: results == null
-            ? const _Empty(Icons.travel_explore_rounded, 'Find something to watch')
+            ? const EmptyState(
+                icon: Icons.travel_explore_rounded,
+                title: 'Find your next show',
+                message: 'Search AniList by English or Japanese title',
+              )
             : FutureBuilder(
                 future: results,
                 builder: (context, snap) {
                   if (snap.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(20),
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: _posterGrid,
+                      itemCount: 9,
+                      itemBuilder: (_, _) => const PosterSkeleton(),
+                    );
                   }
-                  if (snap.hasError) return _Empty(Icons.error_outline_rounded, '${snap.error}');
-                  if (snap.data!.isEmpty) return const _Empty(Icons.search_off_rounded, 'No results');
+                  if (snap.hasError) return ErrorState(snap.error!, onRetry: () => _search(query, now: true));
+                  if (snap.data!.isEmpty) {
+                    return EmptyState(
+                      icon: Icons.search_off_rounded,
+                      title: 'No results for “$query”',
+                      message: 'Check the spelling or try the other title',
+                    );
+                  }
                   return GridView.builder(
                     padding: const EdgeInsets.all(20),
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                      maxCrossAxisExtent: 150,
-                      childAspectRatio: .46,
-                      crossAxisSpacing: 14,
-                      mainAxisSpacing: 16,
-                    ),
+                    gridDelegate: _posterGrid,
                     itemCount: snap.data!.length,
                     itemBuilder: (context, i) => PosterCard(snap.data![i]),
                   );
@@ -552,6 +636,17 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
       );
 }
+
+InputDecoration _searchDecoration(String hint, {Widget? suffix}) => InputDecoration(
+      hintText: hint,
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white.withValues(alpha: .07),
+      prefixIcon: const Icon(Icons.search_rounded),
+      suffixIcon: suffix,
+      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(28), borderSide: BorderSide.none),
+    );
 
 // ───────────────────────────── Details ─────────────────────────────
 
@@ -570,7 +665,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Source? source;
   Future<List<Episode>>? episodes;
   late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
-  bool dub = false, expanded = false;
+  bool dub = Settings.preferDub, expanded = false;
 
   Map get media => widget.media;
 
@@ -585,7 +680,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final found = await sites;
       if (!mounted) return;
       setState(() => sources = found);
-      if (found.isNotEmpty) _select(found.first);
+      final preferred = found.where((s) => s.name == Settings.preferredSource).firstOrNull ?? found.firstOrNull;
+      if (preferred != null) _select(preferred);
     } catch (e) {
       sites = topSources()..ignore(); // fresh attempt for the retry button
       if (mounted) setState(() => sitesError = e);
@@ -595,8 +691,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
   // Episodes load only for the chosen site, so a Cloudflare prompt appears only when that site needs one.
   void _select(Source s) => setState(() {
         source = s;
-        episodes = withCloudflare(context, () => s.episodes(media));
+        episodes = withCloudflare(context, () => loadEpisodes(s, media));
       });
+
+  Future<void> _fixMatch() async {
+    final current = source;
+    if (current == null) return;
+    final picked = await showModalBottomSheet<SearchResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: _sheet,
+      builder: (_) => _MatchSheet(source: current, query: titleOf(media)),
+    );
+    if (picked == null || !mounted) return;
+    await setMatch(current, media, picked.id);
+    if (!mounted) return;
+    _select(current);
+    showSuccess(context, 'Using “${picked.title}” on ${current.name}');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -727,7 +840,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
                 const SizedBox(height: 12),
                 _sourcePicker(),
-                const SizedBox(height: 8),
+                if (source != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _fixMatch,
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                      label: const Text('Wrong show? Pick the right one'),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -745,9 +866,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final r = saved.data;
           if (r != null) {
             final at = Duration(milliseconds: r['position'] as int? ?? 0);
+            final resumes = Settings.resume && at > Duration.zero;
             return ContinueFab(
-              title: '${at > Duration.zero ? 'Resume' : 'Continue'} EP ${epNumber(r['episode'])}',
-              subtitle: '${r['source']}${at > Duration.zero ? ' · ${formatDuration(at)}' : ''}',
+              title: '${resumes ? 'Resume' : 'Continue'} EP ${epNumber(r['episode'])}',
+              subtitle: '${r['source']}${resumes ? ' · ${formatDuration(at)}' : ''}',
               onPressed: () async {
                 final loaded = r['source'] == source?.name ? await episodes : null;
                 if (!context.mounted) return;
@@ -783,19 +905,34 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Widget _sourcePicker() {
     if (sitesError != null) {
-      return _Notice(
-        'Could not load sources from everythingmoe: $sitesError',
-        action: TextButton(
-          onPressed: () {
-            setState(() => sitesError = null);
-            _loadSites();
-          },
-          child: const Text('Retry'),
-        ),
+      return ErrorState(
+        sitesError!,
+        compact: true,
+        onRetry: () {
+          setState(() => sitesError = null);
+          _loadSites();
+        },
       );
     }
-    if (sources == null) return const LinearProgressIndicator(minHeight: 2);
-    if (sources!.isEmpty) return const _Notice('None of the top sites on everythingmoe are supported yet.');
+    if (sources == null) {
+      return const Row(
+        children: [
+          Skeleton(width: 96, height: 34, radius: 17),
+          SizedBox(width: 8),
+          Skeleton(width: 96, height: 34, radius: 17),
+          SizedBox(width: 8),
+          Skeleton(width: 96, height: 34, radius: 17),
+        ],
+      );
+    }
+    if (sources!.isEmpty) {
+      return const EmptyState(
+        compact: true,
+        icon: Icons.dns_outlined,
+        title: 'No supported sites',
+        message: "None of everythingmoe's top sites are supported yet.",
+      );
+    }
     return SizedBox(
       height: 40,
       child: ListView(
@@ -816,36 +953,38 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   Widget _episodeList(int progress) {
-    if (episodes == null) return const SliverToBoxAdapter();
+    final current = source;
+    if (episodes == null || current == null) return const SliverToBoxAdapter();
     return FutureBuilder(
       future: episodes,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
-          return const SliverToBoxAdapter(
-            child: Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
-          );
+          return SliverList.builder(itemCount: 6, itemBuilder: (_, _) => const EpisodeSkeleton());
         }
         if (snap.hasError) {
           return SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _Notice(
-                '${snap.error}',
-                action: TextButton(onPressed: () => _select(source!), child: const Text('Retry')),
-              ),
+              child: ErrorState(snap.error!, compact: true, onRetry: () => _select(current)),
             ),
           );
         }
         final list = snap.data!;
         if (list.isEmpty) {
           return SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _Notice('${titleOf(media)} was not found on ${source!.name}. Try another source.'),
+            child: EmptyState(
+              compact: true,
+              icon: Icons.search_off_rounded,
+              title: 'Not found on ${current.name}',
+              message: 'The site may list it under another name. Pick it manually or try another source.',
+              action: FilledButton.tonalIcon(
+                onPressed: _fixMatch,
+                icon: const Icon(Icons.manage_search_rounded),
+                label: const Text('Find it manually'),
+              ),
             ),
           );
         }
-        final current = source!;
         return SliverList.builder(
           itemCount: list.length,
           itemBuilder: (context, i) => _EpisodeTile(
@@ -865,6 +1004,139 @@ class _DetailsScreenState extends State<DetailsScreen> {
       },
     );
   }
+}
+
+/// Search the selected site and pick the right show when the automatic match is wrong or missing.
+class _MatchSheet extends StatefulWidget {
+  const _MatchSheet({required this.source, required this.query});
+
+  final Source source;
+  final String query;
+
+  @override
+  State<_MatchSheet> createState() => _MatchSheetState();
+}
+
+class _MatchSheetState extends State<_MatchSheet> {
+  late final controller = TextEditingController(text: widget.query);
+  late Future<List<SearchResult>> results = _run();
+
+  Future<List<SearchResult>> _run() => withCloudflare(context, () => widget.source.search(controller.text.trim()));
+
+  void _retry() => setState(() => results = _run());
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: .85,
+          minChildSize: .5,
+          maxChildSize: .95,
+          builder: (context, scroll) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pick the show on ${widget.source.name}',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Your choice is remembered for this show.',
+                      style: TextStyle(color: Colors.white54, fontSize: 13),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: controller,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => _retry(),
+                      decoration: _searchDecoration(
+                        'Search ${widget.source.name}',
+                        suffix: IconButton(icon: const Icon(Icons.arrow_forward_rounded), onPressed: _retry),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: FutureBuilder(
+                  future: results,
+                  builder: (context, snap) {
+                    if (snap.connectionState != ConnectionState.done) {
+                      return ListView.builder(controller: scroll, itemCount: 6, itemBuilder: (_, _) => const _ResultSkeleton());
+                    }
+                    if (snap.hasError) {
+                      return ListView(controller: scroll, children: [ErrorState(snap.error!, onRetry: _retry)]);
+                    }
+                    if (snap.data!.isEmpty) {
+                      return ListView(
+                        controller: scroll,
+                        children: const [
+                          EmptyState(
+                            compact: true,
+                            icon: Icons.search_off_rounded,
+                            title: 'No shows found',
+                            message: 'Try a shorter or alternative title',
+                          ),
+                        ],
+                      );
+                    }
+                    return ListView.builder(
+                      controller: scroll,
+                      itemCount: snap.data!.length,
+                      itemBuilder: (context, i) {
+                        final result = snap.data![i];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                          leading: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(width: 44, height: 62, child: _Img(result.image)),
+                          ),
+                          title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                          subtitle: result.info == null || result.info!.isEmpty ? null : Text(result.info!),
+                          onTap: () => Navigator.pop(context, result),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _ResultSkeleton extends StatelessWidget {
+  const _ResultSkeleton();
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: Row(
+          children: [
+            Skeleton(width: 44, height: 62, radius: 8),
+            SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [Skeleton(height: 14, radius: 6), SizedBox(height: 8), Skeleton(height: 11, width: 120, radius: 6)],
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _ProgressCard extends StatelessWidget {
@@ -932,11 +1204,13 @@ class _EpisodeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final thumbnail = episode.thumbnail;
     final title = episode.title;
+    final overview = episode.overview;
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
@@ -946,26 +1220,23 @@ class _EpisodeTile extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (thumbnail == null)
-                      ColoredBox(
-                        color: Colors.white.withValues(alpha: .05),
-                        child: Center(
-                          child: Text(
-                            epNumber(episode.number),
-                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white24),
-                          ),
+                    ColoredBox(
+                      color: Colors.white.withValues(alpha: .05),
+                      child: Center(
+                        child: Text(
+                          epNumber(episode.number),
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white24),
                         ),
-                      )
-                    else ...[
-                      _Img(thumbnail),
-                      if (!watched)
-                        Center(child: Icon(Icons.play_circle_fill_rounded, size: 30, color: Colors.white.withValues(alpha: .9))),
-                    ],
+                      ),
+                    ),
+                    if (thumbnail != null) _Img(thumbnail, transparent: true),
                     if (watched)
                       const ColoredBox(
                         color: Color(0x99000000),
                         child: Center(child: Icon(Icons.check_circle_rounded, color: Colors.white)),
-                      ),
+                      )
+                    else if (thumbnail != null)
+                      Center(child: Icon(Icons.play_circle_fill_rounded, size: 30, color: Colors.white.withValues(alpha: .9))),
                   ],
                 ),
               ),
@@ -980,7 +1251,14 @@ class _EpisodeTile extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.w700, color: watched ? Colors.white54 : Colors.white),
                   ),
                   if (title != null)
-                    Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                    Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                  if (overview != null)
+                    Text(
+                      overview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, color: Colors.white38, height: 1.3),
+                    ),
                 ],
               ),
             ),
@@ -999,7 +1277,7 @@ Future<void> resumeWatching(BuildContext context, Map<String, dynamic> record, {
   final source = (await sites).where((s) => s.name == record['source']).firstOrNull;
   if (source == null) throw Exception('${record['source']} is no longer one of the top sites');
   if (!context.mounted) return;
-  final episodes = loaded ?? await withCloudflare<List<Episode>>(context, () => source.episodes(media));
+  final episodes = loaded ?? await withCloudflare<List<Episode>>(context, () => loadEpisodes(source, media));
   final index = episodes.indexWhere((e) => e.number == record['episode']);
   if (index == -1) throw Exception('Episode ${epNumber(record['episode'])} is not on ${source.name} yet');
   if (!context.mounted) return;
@@ -1012,7 +1290,7 @@ Future<void> resumeWatching(BuildContext context, Map<String, dynamic> record, {
         episodes: episodes,
         index: index,
         dub: record['dub'] == true,
-        start: Duration(milliseconds: record['position'] as int? ?? 0),
+        start: Settings.resume ? Duration(milliseconds: record['position'] as int? ?? 0) : null,
       ),
     ),
   );
@@ -1036,9 +1314,7 @@ class _ContinueFabState extends State<ContinueFab> {
     try {
       await widget.onPressed();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))));
-      }
+      if (mounted) showError(context, e);
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -1072,17 +1348,18 @@ class _ContinueFabState extends State<ContinueFab> {
 // ───────────────────────────── Shared bits ─────────────────────────────
 
 class _Img extends StatelessWidget {
-  const _Img(this.url, {this.color, this.alignment = Alignment.center});
+  const _Img(this.url, {this.color, this.alignment = Alignment.center, this.transparent = false});
 
   final String? url;
   final String? color;
   final Alignment alignment;
+  final bool transparent; // draw over a placeholder instead of a filled box
 
   @override
   Widget build(BuildContext context) {
     final url = this.url;
     return ColoredBox(
-      color: _hex(color)?.withValues(alpha: .3) ?? const Color(0xFF1A1A24),
+      color: transparent ? Colors.transparent : _hex(color)?.withValues(alpha: .3) ?? const Color(0xFF1A1A24),
       child: url == null
           ? null
           : Image.network(
@@ -1119,48 +1396,6 @@ class _Score extends StatelessWidget {
             const SizedBox(width: 3),
             Text('$score%', style: TextStyle(fontSize: compact ? 11 : 13, fontWeight: FontWeight.w700)),
           ],
-        ),
-      );
-}
-
-class _Notice extends StatelessWidget {
-  const _Notice(this.text, {this.action});
-
-  final String text;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          children: [
-            const Icon(Icons.info_outline_rounded, size: 18, color: Colors.white38),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(color: Colors.white60, fontSize: 13))),
-            ?action,
-          ],
-        ),
-      );
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty(this.icon, this.text);
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 44, color: Colors.white24),
-              const SizedBox(height: 12),
-              Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54)),
-            ],
-          ),
         ),
       );
 }
