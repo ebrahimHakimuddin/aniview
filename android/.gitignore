@@ -1,7 +1,7 @@
 gradle-wrapper.jar
 /.gradle
 /captures/
-/gradlew
+# gradlew is committed: it carries --enable-native-access for newer JDKs (Flutter only generates missing files)
 /gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
