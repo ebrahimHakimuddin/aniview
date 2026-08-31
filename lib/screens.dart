@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'anilist.dart';
 import 'cloudflare.dart';
+import 'downloads.dart';
 import 'history.dart';
 import 'player.dart';
 import 'settings.dart';
@@ -13,12 +14,21 @@ import 'states.dart';
 const background = Color(0xFF0A0A0F);
 const _sheet = Color(0xFF14141C);
 
-Future<void> openDetails(BuildContext context, Map media, {VoidCallback? onBack}) async {
-  await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailsScreen(media)));
+Future<void> openDetails(
+  BuildContext context,
+  Map media, {
+  VoidCallback? onBack,
+}) async {
+  await Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => DetailsScreen(media)),
+  );
   onBack?.call();
 }
 
-Color? _hex(String? hex) => hex == null || hex.length != 7 ? null : Color(int.parse('FF${hex.substring(1)}', radix: 16));
+Color? _hex(String? hex) => hex == null || hex.length != 7
+    ? null
+    : Color(int.parse('FF${hex.substring(1)}', radix: 16));
 
 const _posterGrid = SliverGridDelegateWithMaxCrossAxisExtent(
   maxCrossAxisExtent: 150,
@@ -36,17 +46,47 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late Future<Map<String, dynamic>?> viewer = AniList.viewer();
   late Future<Map<String, List>> lists = AniList.lists();
   late Future<List> trending = AniList.trending();
   late Future<List> season = AniList.season();
   late Future<Map<String, dynamic>?> lastWatched = WatchHistory.latest();
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _syncPending();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _syncPending();
+  }
+
+  /// Pushes progress watched while offline once AniList is reachable again.
+  Future<void> _syncPending() async {
+    final synced = await AniList.syncPending();
+    if (synced > 0 && mounted) {
+      showSuccess(
+        context,
+        'Synced $synced offline ${synced == 1 ? 'update' : 'updates'} to AniList',
+      );
+      _reloadLists();
+    }
+  }
+
   void _reloadLists() => setState(() {
-        lists = AniList.lists();
-        lastWatched = WatchHistory.latest();
-      });
+    lists = AniList.lists();
+    lastWatched = WatchHistory.latest();
+  });
 
   Future<void> _refresh() async {
     setState(() {
@@ -56,27 +96,36 @@ class _HomeScreenState extends State<HomeScreen> {
       season = AniList.season();
       lastWatched = WatchHistory.latest();
     });
+    _syncPending();
     try {
       await Future.wait([lists, trending, season]);
     } catch (_) {} // each section shows its own error state
   }
 
   Future<void> _openSettings() async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
     if (mounted) _refresh();
   }
 
   Future<void> _account() async {
     if (AniList.token != null) return _openSettings();
     if (AniList.clientId.isEmpty) {
-      showError(context, 'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)');
+      showError(
+        context,
+        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
+      );
       return;
     }
     try {
       await AniList.login(context);
       if (AniList.token == null) return; // closed without signing in
       final me = await AniList.viewer();
-      if (mounted) showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
+      if (mounted) {
+        showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
+      }
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -86,7 +135,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final (name, year) = AniList.currentSeason;
-    final seasonTitle = 'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
+    final seasonTitle =
+        'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: FutureBuilder(
@@ -109,6 +159,27 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
+            _TopBar(
+              viewer: viewer,
+              onAccount: _account,
+              onSettings: _openSettings,
+            ),
+            if (AniList.token != null)
+              FutureBuilder(
+                future: lists,
+                builder: (context, snap) {
+                  const title = 'Continue watching · This season';
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const ShelfSkeleton(title: title);
+                  }
+                  final airing = (snap.data?['CURRENT'] ?? const [])
+                      .where(_airingNow)
+                      .toList();
+                  return airing.isEmpty
+                      ? const SizedBox.shrink()
+                      : _Shelf(title, airing, onBack: _reloadLists);
+                },
+              ),
             FutureBuilder(
               future: trending,
               builder: (context, snap) => _Hero(
@@ -116,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 loading: snap.connectionState != ConnectionState.done,
                 error: snap.error,
                 onRetry: _refresh,
-                header: _TopBar(viewer: viewer, onAccount: _account, onSettings: _openSettings),
               ),
             ),
             if (AniList.token == null)
@@ -129,18 +199,33 @@ class _HomeScreenState extends State<HomeScreen> {
                     return const ShelfSkeleton(title: 'Continue watching');
                   }
                   if (snap.hasError) {
-                    return _Section('Your AniList', child: ErrorState(snap.error!, compact: true, onRetry: _reloadLists));
+                    return _Section(
+                      'Your AniList',
+                      child: ErrorState(
+                        snap.error!,
+                        compact: true,
+                        onRetry: _reloadLists,
+                      ),
+                    );
                   }
-                  final current = snap.data!['CURRENT'] ?? const [];
+                  final watching = snap.data!['CURRENT'] ?? const [];
+                  final current = watching
+                      .where((m) => !_airingNow(m))
+                      .toList(); // airing ones are in the top row
                   final planning = snap.data!['PLANNING'] ?? const [];
-                  if (current.isEmpty && planning.isEmpty) {
+                  if (watching.isEmpty && planning.isEmpty) {
                     return EmptyState(
                       compact: true,
                       icon: Icons.video_library_outlined,
                       title: 'Your list is empty',
                       message: 'Shows you watch or plan to watch on AniList show up here.',
                       action: FilledButton.tonalIcon(
-                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SearchScreen(),
+                          ),
+                        ),
                         icon: const Icon(Icons.search_rounded),
                         label: const Text('Find a show'),
                       ),
@@ -148,14 +233,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                   return Column(
                     children: [
-                      if (current.isNotEmpty) _Shelf('Continue watching', current, onBack: _reloadLists),
-                      if (planning.isNotEmpty) _Shelf('Plan to watch', planning, onBack: _reloadLists),
+                      if (current.isNotEmpty)
+                        _Shelf(
+                          'Continue watching',
+                          current,
+                          onBack: _reloadLists,
+                        ),
+                      if (planning.isNotEmpty)
+                        _Shelf('Plan to watch', planning, onBack: _reloadLists),
                     ],
                   );
                 },
               ),
-            _shelf(seasonTitle, season, onRetry: () => setState(() => season = AniList.season())),
-            _shelf('Trending now', trending, onRetry: _refresh, showError: false), // the hero already shows it
+            _shelf(
+              seasonTitle,
+              season,
+              onRetry: () => setState(() => season = AniList.season()),
+            ),
+            _shelf(
+              'Trending now',
+              trending,
+              onRetry: _refresh,
+              showError: false,
+            ), // the hero already shows it
             const SizedBox(height: 96), // room for the continue-watching button
           ],
         ),
@@ -163,25 +263,44 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _shelf(String title, Future<List> future, {required VoidCallback onRetry, bool showError = true}) =>
-      FutureBuilder(
-        future: future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) return ShelfSkeleton(title: title);
-          if (snap.hasError) {
-            return showError
-                ? _Section(title, child: ErrorState(snap.error!, compact: true, onRetry: onRetry))
-                : const SizedBox.shrink();
-          }
-          if (snap.data!.isEmpty) {
-            return _Section(
-              title,
-              child: const Text('Nothing here yet.', style: TextStyle(color: Colors.white54)),
-            );
-          }
-          return _Shelf(title, snap.data!, onBack: _reloadLists);
-        },
-      );
+  Widget _shelf(
+    String title,
+    Future<List> future, {
+    required VoidCallback onRetry,
+    bool showError = true,
+  }) => FutureBuilder(
+    future: future,
+    builder: (context, snap) {
+      if (snap.connectionState != ConnectionState.done) {
+        return ShelfSkeleton(title: title);
+      }
+      if (snap.hasError) {
+        return showError
+            ? _Section(
+                title,
+                child: ErrorState(snap.error!, compact: true, onRetry: onRetry),
+              )
+            : const SizedBox.shrink();
+      }
+      if (snap.data!.isEmpty) {
+        return _Section(
+          title,
+          child: const Text(
+            'Nothing here yet.',
+            style: TextStyle(color: Colors.white54),
+          ),
+        );
+      }
+      return _Shelf(title, snap.data!, onBack: _reloadLists);
+    },
+  );
+}
+
+/// Airing now: still releasing, or from the current season.
+bool _airingNow(dynamic media) {
+  final (season, year) = AniList.currentSeason;
+  return media['status'] == 'RELEASING' ||
+      (media['season'] == season && media['seasonYear'] == year);
 }
 
 class _Section extends StatelessWidget {
@@ -192,73 +311,99 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)), child],
+    padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
         ),
-      );
+        child,
+      ],
+    ),
+  );
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.viewer, required this.onAccount, required this.onSettings});
+  const _TopBar({
+    required this.viewer,
+    required this.onAccount,
+    required this.onSettings,
+  });
 
   final Future<Map<String, dynamic>?> viewer;
   final VoidCallback onAccount, onSettings;
 
   @override
   Widget build(BuildContext context) => SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
-          child: Row(
-            children: [
-              Text(
-                'AniView',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: .5,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Search',
-                icon: const Icon(Icons.search_rounded),
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
-              ),
-              IconButton(tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: onSettings),
-              FutureBuilder(
-                future: viewer,
-                builder: (context, snap) {
-                  final avatar = snap.data?['avatar']?['large'] as String?;
-                  return IconButton(
-                    tooltip: AniList.token == null ? 'Sign in' : 'Account',
-                    onPressed: onAccount,
-                    icon: avatar == null
-                        ? const Icon(Icons.account_circle_outlined)
-                        : CircleAvatar(radius: 15, backgroundImage: NetworkImage(avatar)),
-                  );
-                },
-              ),
-            ],
+    bottom: false,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
+      child: Row(
+        children: [
+          Text(
+            'AniView',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .5,
+              color: Theme.of(context).colorScheme.primary,
+            ),
           ),
-        ),
-      );
+          const Spacer(),
+          IconButton(
+            tooltip: 'Search',
+            icon: const Icon(Icons.search_rounded),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SearchScreen()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Downloads',
+            icon: const Icon(Icons.download_for_offline_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const DownloadsScreen()),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: onSettings,
+          ),
+          FutureBuilder(
+            future: viewer,
+            builder: (context, snap) {
+              final avatar = snap.data?['avatar']?['large'] as String?;
+              return IconButton(
+                tooltip: AniList.token == null ? 'Sign in' : 'Account',
+                onPressed: onAccount,
+                icon: avatar == null
+                    ? const Icon(Icons.account_circle_outlined)
+                    : CircleAvatar(
+                        radius: 15,
+                        backgroundImage: NetworkImage(avatar),
+                      ),
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _Hero extends StatefulWidget {
   const _Hero({
     required this.items,
-    required this.header,
     required this.loading,
     required this.onRetry,
     this.error,
   });
 
   final List items;
-  final Widget header;
   final bool loading;
   final VoidCallback onRetry;
   final Object? error;
@@ -281,7 +426,7 @@ class _HeroState extends State<_Hero> {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     return SizedBox(
-      height: MediaQuery.sizeOf(context).height * .6,
+      height: MediaQuery.sizeOf(context).height * .52,
       child: Stack(
         children: [
           if (widget.loading) ...[
@@ -309,7 +454,10 @@ class _HeroState extends State<_Hero> {
             )
           else if (widget.items.isEmpty)
             const Positioned.fill(
-              child: EmptyState(icon: Icons.local_fire_department_outlined, title: 'Nothing trending right now'),
+              child: EmptyState(
+                icon: Icons.local_fire_department_outlined,
+                title: 'Nothing trending right now',
+              ),
             )
           else
             PageView.builder(
@@ -318,7 +466,6 @@ class _HeroState extends State<_Hero> {
               onPageChanged: (i) => setState(() => page = i),
               itemBuilder: (context, i) => _HeroPage(widget.items[i]),
             ),
-          widget.header,
           if (!widget.loading && widget.items.length > 1)
             Positioned(
               left: 0,
@@ -360,13 +507,22 @@ class _HeroPage extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          _Img(media['coverImage']['extraLarge'], color: media['coverImage']['color'], alignment: Alignment.topCenter),
+          _Img(
+            media['coverImage']['extraLarge'],
+            color: media['coverImage']['color'],
+            alignment: Alignment.topCenter,
+          ),
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xAA000000), Colors.transparent, Color(0xDD0A0A0F), background],
+                colors: [
+                  Color(0xAA000000),
+                  Colors.transparent,
+                  Color(0xDD0A0A0F),
+                  background,
+                ],
                 stops: [0, .3, .78, 1],
               ),
             ),
@@ -392,7 +548,11 @@ class _HeroPage extends StatelessWidget {
                   titleOf(media),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, height: 1.1),
+                  style: const TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -403,7 +563,8 @@ class _HeroPage extends StatelessWidget {
                       label: const Text('Watch now'),
                     ),
                     const SizedBox(width: 12),
-                    if (media['averageScore'] != null) _Score(media['averageScore']),
+                    if (media['averageScore'] != null)
+                      _Score(media['averageScore']),
                   ],
                 ),
               ],
@@ -434,7 +595,12 @@ class _SignInCard extends StatelessWidget {
           child: Ink(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [primary.withValues(alpha: .28), Colors.white.withValues(alpha: .03)]),
+              gradient: LinearGradient(
+                colors: [
+                  primary.withValues(alpha: .28),
+                  Colors.white.withValues(alpha: .03),
+                ],
+              ),
               border: Border.all(color: Colors.white10),
               borderRadius: BorderRadius.circular(18),
             ),
@@ -446,9 +612,18 @@ class _SignInCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Sign in with AniList', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                      Text(
+                        'Sign in with AniList',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
                       SizedBox(height: 2),
-                      Text('Track what you watch automatically', style: TextStyle(color: Colors.white60, fontSize: 13)),
+                      Text(
+                        'Track what you watch automatically',
+                        style: TextStyle(color: Colors.white60, fontSize: 13),
+                      ),
                     ],
                   ),
                 ),
@@ -471,24 +646,28 @@ class _Shelf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
-            child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          ),
-          SizedBox(
-            height: 272,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: items.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
-              itemBuilder: (context, i) => SizedBox(width: 136, child: PosterCard(items[i], onBack: onBack)),
-            ),
-          ),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
+        child: Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+      ),
+      SizedBox(
+        height: 272,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 14),
+          itemBuilder: (context, i) =>
+              SizedBox(width: 136, child: PosterCard(items[i], onBack: onBack)),
+        ),
+      ),
+    ],
+  );
 }
 
 class PosterCard extends StatelessWidget {
@@ -501,7 +680,8 @@ class PosterCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final progress = media['mediaListEntry']?['progress'] as int?;
     final aired = media['nextAiringEpisode']?['episode'] as int?;
-    final total = media['episodes'] as int? ?? (aired == null ? null : aired - 1);
+    final total =
+        media['episodes'] as int? ?? (aired == null ? null : aired - 1);
     return GestureDetector(
       onTap: () => openDetails(context, media, onBack: onBack),
       child: Column(
@@ -514,9 +694,16 @@ class PosterCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _Img(media['coverImage']['extraLarge'], color: media['coverImage']['color']),
+                  _Img(
+                    media['coverImage']['extraLarge'],
+                    color: media['coverImage']['color'],
+                  ),
                   if (media['averageScore'] != null)
-                    Positioned(top: 8, right: 8, child: _Score(media['averageScore'], compact: true)),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: _Score(media['averageScore'], compact: true),
+                    ),
                   if (progress != null && total != null && total > 0)
                     Positioned(
                       left: 0,
@@ -537,7 +724,11 @@ class PosterCard extends StatelessWidget {
             titleOf(media),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.25),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
+            ),
           ),
           if (progress != null)
             Text(
@@ -574,70 +765,79 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounce?.cancel();
     final q = text.trim();
     if (q.length < 2) return;
-    _debounce = Timer(now ? Duration.zero : const Duration(milliseconds: 450), () {
-      if (mounted) {
-        setState(() {
-          query = q;
-          results = AniList.search(q);
-        });
-      }
-    });
+    _debounce = Timer(
+      now ? Duration.zero : const Duration(milliseconds: 450),
+      () {
+        if (mounted) {
+          setState(() {
+            query = q;
+            results = AniList.search(q);
+          });
+        }
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: background,
-        appBar: AppBar(
-          titleSpacing: 0,
-          title: Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: TextField(
-              autofocus: true,
-              textInputAction: TextInputAction.search,
-              onChanged: _search,
-              onSubmitted: (text) => _search(text, now: true),
-              decoration: _searchDecoration('Search anime'),
-            ),
-          ),
+    backgroundColor: background,
+    appBar: AppBar(
+      titleSpacing: 0,
+      title: Padding(
+        padding: const EdgeInsets.only(right: 16),
+        child: TextField(
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          onChanged: _search,
+          onSubmitted: (text) => _search(text, now: true),
+          decoration: _searchDecoration('Search anime'),
         ),
-        body: results == null
-            ? const EmptyState(
-                icon: Icons.travel_explore_rounded,
-                title: 'Find your next show',
-                message: 'Search AniList by English or Japanese title',
-              )
-            : FutureBuilder(
-                future: results,
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return GridView.builder(
-                      padding: const EdgeInsets.all(20),
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: _posterGrid,
-                      itemCount: 9,
-                      itemBuilder: (_, _) => const PosterSkeleton(),
-                    );
-                  }
-                  if (snap.hasError) return ErrorState(snap.error!, onRetry: () => _search(query, now: true));
-                  if (snap.data!.isEmpty) {
-                    return EmptyState(
-                      icon: Icons.search_off_rounded,
-                      title: 'No results for “$query”',
-                      message: 'Check the spelling or try the other title',
-                    );
-                  }
-                  return GridView.builder(
-                    padding: const EdgeInsets.all(20),
-                    gridDelegate: _posterGrid,
-                    itemCount: snap.data!.length,
-                    itemBuilder: (context, i) => PosterCard(snap.data![i]),
-                  );
-                },
-              ),
-      );
+      ),
+    ),
+    body: results == null
+        ? const EmptyState(
+            icon: Icons.travel_explore_rounded,
+            title: 'Find your next show',
+            message: 'Search AniList by English or Japanese title',
+          )
+        : FutureBuilder(
+            future: results,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return GridView.builder(
+                  padding: const EdgeInsets.all(20),
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: _posterGrid,
+                  itemCount: 9,
+                  itemBuilder: (_, _) => const PosterSkeleton(),
+                );
+              }
+              if (snap.hasError) {
+                return ErrorState(
+                  snap.error!,
+                  onRetry: () => _search(query, now: true),
+                );
+              }
+              if (snap.data!.isEmpty) {
+                return EmptyState(
+                  icon: Icons.search_off_rounded,
+                  title: 'No results for “$query”',
+                  message: 'Check the spelling or try the other title',
+                );
+              }
+              return GridView.builder(
+                padding: const EdgeInsets.all(20),
+                gridDelegate: _posterGrid,
+                itemCount: snap.data!.length,
+                itemBuilder: (context, i) => PosterCard(snap.data![i]),
+              );
+            },
+          ),
+  );
 }
 
-InputDecoration _searchDecoration(String hint, {Widget? suffix}) => InputDecoration(
+InputDecoration _searchDecoration(String hint, {Widget? suffix}) =>
+    InputDecoration(
       hintText: hint,
       isDense: true,
       filled: true,
@@ -645,7 +845,10 @@ InputDecoration _searchDecoration(String hint, {Widget? suffix}) => InputDecorat
       prefixIcon: const Icon(Icons.search_rounded),
       suffixIcon: suffix,
       contentPadding: const EdgeInsets.symmetric(vertical: 12),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(28), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(28),
+        borderSide: BorderSide.none,
+      ),
     );
 
 // ───────────────────────────── Details ─────────────────────────────
@@ -680,7 +883,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final found = await sites;
       if (!mounted) return;
       setState(() => sources = found);
-      final preferred = found.where((s) => s.name == Settings.preferredSource).firstOrNull ?? found.firstOrNull;
+      final preferred =
+          found.where((s) => s.name == Settings.preferredSource).firstOrNull ??
+          found.firstOrNull;
       if (preferred != null) _select(preferred);
     } catch (e) {
       sites = topSources()..ignore(); // fresh attempt for the retry button
@@ -690,9 +895,51 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   // Episodes load only for the chosen site, so a Cloudflare prompt appears only when that site needs one.
   void _select(Source s) => setState(() {
-        source = s;
-        episodes = withCloudflare(context, () => loadEpisodes(s, media));
-      });
+    source = s;
+    episodes = withCloudflare(context, () => loadEpisodes(s, media));
+  });
+
+  Future<void> _editEntry() async {
+    final entry = media['mediaListEntry'] as Map?;
+    final result =
+        await showModalBottomSheet<
+          ({String status, int progress, bool remove})
+        >(
+          context: context,
+          showDragHandle: true,
+          isScrollControlled: true,
+          backgroundColor: _sheet,
+          builder: (_) => _EntrySheet(
+            status: entry?['status'],
+            progress: entry?['progress'] as int? ?? 0,
+            total: media['episodes'] as int?,
+            inList: entry != null,
+          ),
+        );
+    if (result == null || !mounted) return;
+    try {
+      if (result.remove) {
+        await AniList.removeFromList(media['id']);
+        media['mediaListEntry'] = null;
+        if (mounted) showSuccess(context, 'Removed from your list');
+      } else {
+        media['mediaListEntry'] = await AniList.saveEntry(
+          media['id'],
+          status: result.status,
+          progress: result.progress,
+        );
+        if (mounted) {
+          showSuccess(
+            context,
+            'Saved as ${_ProgressCard.labels[result.status]} · ${result.progress} watched',
+          );
+        }
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
 
   Future<void> _fixMatch() async {
     final current = source;
@@ -713,7 +960,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = _hex(media['coverImage']['color']) ?? Theme.of(context).colorScheme.primary;
+    final accent =
+        _hex(media['coverImage']['color']) ??
+        Theme.of(context).colorScheme.primary;
     final entry = media['mediaListEntry'] as Map?;
     final progress = entry?['progress'] as int? ?? 0;
     final total = media['episodes'] as int?;
@@ -723,7 +972,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       if (total != null) '$total eps',
       (media['status'] as String?)?.replaceAll('_', ' '),
     ].whereType<Object>().join('  ·  ');
-    final description = (media['description'] as String? ?? '').replaceAll(RegExp(r'<[^>]*>'), '').trim();
+    final description = (media['description'] as String? ?? '')
+        .replaceAll(RegExp(r'<[^>]*>'), '')
+        .trim();
 
     return Scaffold(
       backgroundColor: background,
@@ -738,13 +989,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _Img(media['bannerImage'] ?? media['coverImage']['extraLarge'], color: media['coverImage']['color']),
+                  _Img(
+                    media['bannerImage'] ?? media['coverImage']['extraLarge'],
+                    color: media['coverImage']['color'],
+                  ),
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Color(0x88000000), Colors.transparent, background],
+                        colors: [
+                          Color(0x88000000),
+                          Colors.transparent,
+                          background,
+                        ],
                         stops: [0, .4, 1],
                       ),
                     ),
@@ -766,20 +1024,44 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
-                        boxShadow: [BoxShadow(color: accent.withValues(alpha: .4), blurRadius: 28, offset: const Offset(0, 10))],
+                        boxShadow: [
+                          BoxShadow(
+                            color: accent.withValues(alpha: .4),
+                            blurRadius: 28,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
-                      child: _Img(media['coverImage']['extraLarge'], color: media['coverImage']['color']),
+                      child: _Img(
+                        media['coverImage']['extraLarge'],
+                        color: media['coverImage']['color'],
+                      ),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(titleOf(media), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, height: 1.15)),
+                          Text(
+                            titleOf(media),
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              height: 1.15,
+                            ),
+                          ),
                           const SizedBox(height: 6),
-                          Text(meta, style: const TextStyle(fontSize: 11, letterSpacing: 1, color: Colors.white54)),
+                          Text(
+                            meta,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              letterSpacing: 1,
+                              color: Colors.white54,
+                            ),
+                          ),
                           const SizedBox(height: 10),
-                          if (media['averageScore'] != null) _Score(media['averageScore']),
+                          if (media['averageScore'] != null)
+                            _Score(media['averageScore']),
                         ],
                       ),
                     ),
@@ -787,7 +1069,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
                 if (AniList.token != null) ...[
                   const SizedBox(height: 20),
-                  _ProgressCard(progress: progress, total: total, status: entry?['status'], accent: accent),
+                  _ProgressCard(
+                    progress: progress,
+                    total: total,
+                    status: entry?['status'],
+                    accent: accent,
+                    onTap: _editEntry,
+                  ),
                 ],
                 if ((media['genres'] as List).isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -816,7 +1104,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         description,
                         maxLines: expanded ? null : 4,
                         overflow: expanded ? null : TextOverflow.fade,
-                        style: const TextStyle(color: Colors.white70, height: 1.5),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          height: 1.5,
+                        ),
                       ),
                     ),
                   ),
@@ -824,7 +1115,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 const SizedBox(height: 28),
                 Row(
                   children: [
-                    const Text('Episodes', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                    const Text(
+                      'Episodes',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const Spacer(),
                     SegmentedButton<bool>(
                       segments: const [
@@ -833,7 +1130,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       ],
                       selected: {dub},
                       showSelectedIcon: false,
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact,
+                      ),
                       onSelectionChanged: (s) => setState(() => dub = s.first),
                     ),
                   ],
@@ -861,47 +1160,57 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// Resume the saved spot for this show, else continue after the AniList progress on the selected source.
   Widget _continueButton(int progress) => FutureBuilder(
-        future: record,
-        builder: (context, saved) {
-          final r = saved.data;
-          if (r != null) {
-            final at = Duration(milliseconds: r['position'] as int? ?? 0);
-            final resumes = Settings.resume && at > Duration.zero;
-            return ContinueFab(
-              title: '${resumes ? 'Resume' : 'Continue'} EP ${epNumber(r['episode'])}',
-              subtitle: '${r['source']}${resumes ? ' · ${formatDuration(at)}' : ''}',
-              onPressed: () async {
-                final loaded = r['source'] == source?.name ? await episodes : null;
-                if (!context.mounted) return;
-                await resumeWatching(context, r, loaded: loaded);
-                if (mounted) setState(() => record = WatchHistory.of(media));
-              },
-            );
-          }
-          return FutureBuilder(
-            future: episodes,
-            builder: (context, snap) {
-              final list = snap.data;
-              final next = list?.indexWhere((e) => e.number > progress) ?? -1;
-              if (list == null || next == -1) return const SizedBox.shrink();
-              final current = source!;
-              return ContinueFab(
-                title: progress == 0 ? 'Start watching' : 'Continue EP ${epNumber(list[next].number)}',
-                subtitle: current.name,
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PlayerScreen(media: media, source: current, episodes: list, index: next, dub: dub),
-                    ),
-                  );
-                  if (mounted) setState(() => record = WatchHistory.of(media));
-                },
+    future: record,
+    builder: (context, saved) {
+      final r = saved.data;
+      if (r != null) {
+        final at = Duration(milliseconds: r['position'] as int? ?? 0);
+        final resumes = Settings.resume && at > Duration.zero;
+        return ContinueFab(
+          title:
+              '${resumes ? 'Resume' : 'Continue'} EP ${epNumber(r['episode'])}',
+          subtitle:
+              '${r['source']}${resumes ? ' · ${formatDuration(at)}' : ''}',
+          onPressed: () async {
+            final loaded = r['source'] == source?.name ? await episodes : null;
+            if (!context.mounted) return;
+            await resumeWatching(context, r, loaded: loaded);
+            if (mounted) setState(() => record = WatchHistory.of(media));
+          },
+        );
+      }
+      return FutureBuilder(
+        future: episodes,
+        builder: (context, snap) {
+          final list = snap.data;
+          final next = list?.indexWhere((e) => e.number > progress) ?? -1;
+          if (list == null || next == -1) return const SizedBox.shrink();
+          final current = source!;
+          return ContinueFab(
+            title: progress == 0
+                ? 'Start watching'
+                : 'Continue EP ${epNumber(list[next].number)}',
+            subtitle: current.name,
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PlayerScreen(
+                    media: media,
+                    source: current,
+                    episodes: list,
+                    index: next,
+                    dub: dub,
+                  ),
+                ),
               );
+              if (mounted) setState(() => record = WatchHistory.of(media));
             },
           );
         },
       );
+    },
+  );
 
   Widget _sourcePicker() {
     if (sitesError != null) {
@@ -952,22 +1261,108 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
+  Widget _episodeSliver(List<Episode> list, int progress, Source? site) =>
+      SliverList.builder(
+        itemCount: list.length,
+        itemBuilder: (context, i) => _EpisodeTile(
+          list[i],
+          watched: list[i].number <= progress,
+          trailing: site == null
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Icon(
+                    Icons.download_done_rounded,
+                    color: Colors.white54,
+                  ),
+                )
+              : _DownloadButton(
+                  media: media,
+                  source: site,
+                  episode: list[i],
+                  dub: dub,
+                ),
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PlayerScreen(
+                  media: media,
+                  source: site,
+                  sourceName:
+                      site?.name ??
+                      Downloads.instance.forMedia(media).firstOrNull?.source,
+                  episodes: list,
+                  index: i,
+                  dub: dub,
+                ),
+              ),
+            );
+            if (mounted) {
+              setState(
+                () => record = WatchHistory.of(media),
+              ); // progress and resume point changed
+            }
+          },
+        ),
+      );
+
+  /// Downloaded episodes, shown when the site can't be reached.
+  Widget? _offlineList(int progress) {
+    final downloaded = [
+      for (final d in Downloads.instance.forMedia(media)) d.episode,
+    ];
+    if (downloaded.isEmpty) return null;
+    return SliverMainAxisGroup(
+      slivers: [
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Row(
+              children: [
+                Icon(Icons.cloud_off_rounded, size: 18, color: Colors.white54),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Can't reach the site, showing your downloaded episodes",
+                    style: TextStyle(fontSize: 13, color: Colors.white60),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _episodeSliver(downloaded, progress, null),
+      ],
+    );
+  }
+
   Widget _episodeList(int progress) {
     final current = source;
-    if (episodes == null || current == null) return const SliverToBoxAdapter();
+    if (episodes == null || current == null) {
+      return (sitesError != null ? _offlineList(progress) : null) ??
+          const SliverToBoxAdapter();
+    }
     return FutureBuilder(
       future: episodes,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
-          return SliverList.builder(itemCount: 6, itemBuilder: (_, _) => const EpisodeSkeleton());
+          return SliverList.builder(
+            itemCount: 6,
+            itemBuilder: (_, _) => const EpisodeSkeleton(),
+          );
         }
         if (snap.hasError) {
-          return SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: ErrorState(snap.error!, compact: true, onRetry: () => _select(current)),
-            ),
-          );
+          return _offlineList(progress) ??
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: ErrorState(
+                    snap.error!,
+                    compact: true,
+                    onRetry: () => _select(current),
+                  ),
+                ),
+              );
         }
         final list = snap.data!;
         if (list.isEmpty) {
@@ -985,22 +1380,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           );
         }
-        return SliverList.builder(
-          itemCount: list.length,
-          itemBuilder: (context, i) => _EpisodeTile(
-            list[i],
-            watched: list[i].number <= progress,
-            onTap: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => PlayerScreen(media: media, source: current, episodes: list, index: i, dub: dub),
-                ),
-              );
-              if (mounted) setState(() => record = WatchHistory.of(media)); // progress and resume point changed
-            },
-          ),
-        );
+        return _episodeSliver(list, progress, current);
       },
     );
   }
@@ -1021,7 +1401,10 @@ class _MatchSheetState extends State<_MatchSheet> {
   late final controller = TextEditingController(text: widget.query);
   late Future<List<SearchResult>> results = _run();
 
-  Future<List<SearchResult>> _run() => withCloudflare(context, () => widget.source.search(controller.text.trim()));
+  Future<List<SearchResult>> _run() => withCloudflare(
+    context,
+    () => widget.source.search(controller.text.trim()),
+  );
 
   void _retry() => setState(() => results = _run());
 
@@ -1033,89 +1416,115 @@ class _MatchSheetState extends State<_MatchSheet> {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-        child: DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: .85,
-          minChildSize: .5,
-          maxChildSize: .95,
-          builder: (context, scroll) => Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pick the show on ${widget.source.name}',
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Your choice is remembered for this show.',
-                      style: TextStyle(color: Colors.white54, fontSize: 13),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: controller,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => _retry(),
-                      decoration: _searchDecoration(
-                        'Search ${widget.source.name}',
-                        suffix: IconButton(icon: const Icon(Icons.arrow_forward_rounded), onPressed: _retry),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
+    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+    child: DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: .85,
+      minChildSize: .5,
+      maxChildSize: .95,
+      builder: (context, scroll) => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Pick the show on ${widget.source.name}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              Expanded(
-                child: FutureBuilder(
-                  future: results,
-                  builder: (context, snap) {
-                    if (snap.connectionState != ConnectionState.done) {
-                      return ListView.builder(controller: scroll, itemCount: 6, itemBuilder: (_, _) => const _ResultSkeleton());
-                    }
-                    if (snap.hasError) {
-                      return ListView(controller: scroll, children: [ErrorState(snap.error!, onRetry: _retry)]);
-                    }
-                    if (snap.data!.isEmpty) {
-                      return ListView(
-                        controller: scroll,
-                        children: const [
-                          EmptyState(
-                            compact: true,
-                            icon: Icons.search_off_rounded,
-                            title: 'No shows found',
-                            message: 'Try a shorter or alternative title',
-                          ),
-                        ],
-                      );
-                    }
-                    return ListView.builder(
-                      controller: scroll,
-                      itemCount: snap.data!.length,
-                      itemBuilder: (context, i) {
-                        final result = snap.data![i];
-                        return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SizedBox(width: 44, height: 62, child: _Img(result.image)),
-                          ),
-                          title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                          subtitle: result.info == null || result.info!.isEmpty ? null : Text(result.info!),
-                          onTap: () => Navigator.pop(context, result),
-                        );
-                      },
+                const SizedBox(height: 4),
+                const Text(
+                  'Your choice is remembered for this show.',
+                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _retry(),
+                  decoration: _searchDecoration(
+                    'Search ${widget.source.name}',
+                    suffix: IconButton(
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                      onPressed: _retry,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+          Expanded(
+            child: FutureBuilder(
+              future: results,
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return ListView.builder(
+                    controller: scroll,
+                    itemCount: 6,
+                    itemBuilder: (_, _) => const _ResultSkeleton(),
+                  );
+                }
+                if (snap.hasError) {
+                  return ListView(
+                    controller: scroll,
+                    children: [ErrorState(snap.error!, onRetry: _retry)],
+                  );
+                }
+                if (snap.data!.isEmpty) {
+                  return ListView(
+                    controller: scroll,
+                    children: const [
+                      EmptyState(
+                        compact: true,
+                        icon: Icons.search_off_rounded,
+                        title: 'No shows found',
+                        message: 'Try a shorter or alternative title',
+                      ),
+                    ],
+                  );
+                }
+                return ListView.builder(
+                  controller: scroll,
+                  itemCount: snap.data!.length,
+                  itemBuilder: (context, i) {
+                    final result = snap.data![i];
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 4,
+                      ),
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(
+                          width: 44,
+                          height: 62,
+                          child: _Img(result.image),
+                        ),
+                      ),
+                      title: Text(
+                        result.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: result.info == null || result.info!.isEmpty
+                          ? null
+                          : Text(result.info!),
+                      onTap: () => Navigator.pop(context, result),
                     );
                   },
-                ),
-              ),
-            ],
+                );
+              },
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
 
 class _ResultSkeleton extends StatelessWidget {
@@ -1123,82 +1532,255 @@ class _ResultSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        child: Row(
-          children: [
-            Skeleton(width: 44, height: 62, radius: 8),
-            SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [Skeleton(height: 14, radius: 6), SizedBox(height: 8), Skeleton(height: 11, width: 120, radius: 6)],
-              ),
-            ),
-          ],
+    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+    child: Row(
+      children: [
+        Skeleton(width: 44, height: 62, radius: 8),
+        SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Skeleton(height: 14, radius: 6),
+              SizedBox(height: 8),
+              Skeleton(height: 11, width: 120, radius: 6),
+            ],
+          ),
         ),
-      );
+      ],
+    ),
+  );
 }
 
 class _ProgressCard extends StatelessWidget {
-  const _ProgressCard({required this.progress, required this.total, required this.status, required this.accent});
+  const _ProgressCard({
+    required this.progress,
+    required this.total,
+    required this.status,
+    required this.accent,
+    required this.onTap,
+  });
 
   final int progress;
   final int? total;
   final String? status;
   final Color accent;
+  final VoidCallback onTap;
 
-  static const _labels = {
+  static const labels = {
     'CURRENT': 'Watching',
     'PLANNING': 'Planning',
     'COMPLETED': 'Completed',
-    'DROPPED': 'Dropped',
     'PAUSED': 'Paused',
+    'DROPPED': 'Dropped',
     'REPEATING': 'Rewatching',
   };
 
   @override
   Widget build(BuildContext context) {
     final total = this.total;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: LinearGradient(colors: [accent.withValues(alpha: .22), Colors.white.withValues(alpha: .03)]),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        children: [
-          Row(
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                accent.withValues(alpha: .22),
+                Colors.white.withValues(alpha: .03),
+              ],
+            ),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
             children: [
-              Icon(Icons.bookmark_rounded, size: 18, color: accent),
-              const SizedBox(width: 8),
-              Text(_labels[status] ?? 'Not in your list', style: const TextStyle(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              Text('$progress / ${total ?? '?'}', style: const TextStyle(fontWeight: FontWeight.w700)),
+              Row(
+                children: [
+                  Icon(
+                    status == null
+                        ? Icons.bookmark_add_outlined
+                        : Icons.bookmark_rounded,
+                    size: 18,
+                    color: accent,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    labels[status] ?? 'Add to your list',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '$progress / ${total ?? '?'}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(width: 8),
+                  const Icon(
+                    Icons.edit_rounded,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: total == null || total == 0
+                      ? 0
+                      : (progress / total).clamp(0.0, 1.0).toDouble(),
+                  minHeight: 6,
+                  color: accent,
+                  backgroundColor: Colors.white10,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: total == null || total == 0 ? 0 : (progress / total).clamp(0.0, 1.0).toDouble(),
-              minHeight: 6,
-              color: accent,
-              backgroundColor: Colors.white10,
+        ),
+      ),
+    );
+  }
+}
+
+/// Edits the AniList entry: status, episodes watched, or removal.
+class _EntrySheet extends StatefulWidget {
+  const _EntrySheet({
+    required this.status,
+    required this.progress,
+    required this.total,
+    required this.inList,
+  });
+
+  final String? status;
+  final int progress;
+  final int? total;
+  final bool inList;
+
+  @override
+  State<_EntrySheet> createState() => _EntrySheetState();
+}
+
+class _EntrySheetState extends State<_EntrySheet> {
+  late String status = widget.status ?? 'CURRENT';
+  late int progress = widget.progress;
+
+  void _setProgress(int value) => setState(() {
+    progress = value.clamp(0, widget.total ?? 9999);
+    if (progress == widget.total) status = 'COMPLETED';
+  });
+
+  void _done({bool remove = false}) => Navigator.pop(context, (
+    status: status,
+    progress: progress,
+    remove: remove,
+  ));
+
+  @override
+  Widget build(BuildContext context) {
+    final total = widget.total;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.inList ? 'Update your list' : 'Add to your list',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final MapEntry(:key, :value)
+                    in _ProgressCard.labels.entries)
+                  ChoiceChip(
+                    label: Text(value),
+                    selected: status == key,
+                    onSelected: (_) => setState(() {
+                      status = key;
+                      if (key == 'COMPLETED' && total != null) progress = total;
+                    }),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Text(
+                  'Episodes watched',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.remove_rounded),
+                  onPressed: progress > 0
+                      ? () => _setProgress(progress - 1)
+                      : null,
+                ),
+                SizedBox(
+                  width: 84,
+                  child: Text(
+                    '$progress${total == null ? '' : ' / $total'}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.add_rounded),
+                  onPressed: total == null || progress < total
+                      ? () => _setProgress(progress + 1)
+                      : null,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                if (widget.inList)
+                  TextButton.icon(
+                    onPressed: () => _done(remove: true),
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('Remove'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF8A8E),
+                    ),
+                  ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: _done,
+                  child: Text(widget.inList ? 'Save' : 'Add to list'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
 class _EpisodeTile extends StatelessWidget {
-  const _EpisodeTile(this.episode, {required this.watched, required this.onTap});
+  const _EpisodeTile(
+    this.episode, {
+    required this.watched,
+    required this.onTap,
+    this.trailing,
+  });
 
   final Episode episode;
   final bool watched;
   final VoidCallback onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -1225,7 +1807,11 @@ class _EpisodeTile extends StatelessWidget {
                       child: Center(
                         child: Text(
                           epNumber(episode.number),
-                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white24),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white24,
+                          ),
                         ),
                       ),
                     ),
@@ -1233,10 +1819,21 @@ class _EpisodeTile extends StatelessWidget {
                     if (watched)
                       const ColoredBox(
                         color: Color(0x99000000),
-                        child: Center(child: Icon(Icons.check_circle_rounded, color: Colors.white)),
+                        child: Center(
+                          child: Icon(
+                            Icons.check_circle_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
                       )
                     else if (thumbnail != null)
-                      Center(child: Icon(Icons.play_circle_fill_rounded, size: 30, color: Colors.white.withValues(alpha: .9))),
+                      Center(
+                        child: Icon(
+                          Icons.play_circle_fill_rounded,
+                          size: 30,
+                          color: Colors.white.withValues(alpha: .9),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1248,20 +1845,36 @@ class _EpisodeTile extends StatelessWidget {
                 children: [
                   Text(
                     'Episode ${epNumber(episode.number)}',
-                    style: TextStyle(fontWeight: FontWeight.w700, color: watched ? Colors.white54 : Colors.white),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: watched ? Colors.white54 : Colors.white,
+                    ),
                   ),
                   if (title != null)
-                    Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                      ),
+                    ),
                   if (overview != null)
                     Text(
                       overview,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: Colors.white38, height: 1.3),
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: Colors.white38,
+                        height: 1.3,
+                      ),
                     ),
                 ],
               ),
             ),
+            ?trailing,
           ],
         ),
       ),
@@ -1269,17 +1882,363 @@ class _EpisodeTile extends StatelessWidget {
   }
 }
 
+// ───────────────────────────── Downloads ─────────────────────────────
+
+class _DownloadButton extends StatelessWidget {
+  const _DownloadButton({
+    required this.media,
+    required this.source,
+    required this.episode,
+    required this.dub,
+  });
+
+  final Map media;
+  final Source source;
+  final Episode episode;
+  final bool dub;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Downloads.instance,
+    builder: (context, _) {
+      final d = Downloads.instance.entry(media, episode.number, dub);
+      return switch (d?.status) {
+        null => IconButton(
+          tooltip: 'Download',
+          icon: const Icon(Icons.download_rounded, color: Colors.white60),
+          onPressed: () =>
+              Downloads.instance.enqueue(media, source.name, episode, dub: dub),
+        ),
+        DownloadStatus.queued => IconButton(
+          tooltip: 'Queued · tap to cancel',
+          icon: const Icon(Icons.schedule_rounded, color: Colors.white38),
+          onPressed: () => Downloads.instance.remove(d!),
+        ),
+        DownloadStatus.downloading => IconButton(
+          tooltip: '${(d!.progress * 100).round()}% · tap to cancel',
+          onPressed: () => Downloads.instance.remove(d),
+          icon: SizedBox.square(
+            dimension: 24,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: d.progress == 0 ? null : d.progress,
+                  strokeWidth: 2.5,
+                ),
+                const Icon(Icons.stop_rounded, size: 14),
+              ],
+            ),
+          ),
+        ),
+        DownloadStatus.done => IconButton(
+          tooltip: 'Downloaded · tap to delete',
+          icon: Icon(
+            Icons.download_done_rounded,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          onPressed: () => _confirmDelete(context, d!),
+        ),
+        DownloadStatus.failed => IconButton(
+          tooltip: d!.error ?? 'Download failed',
+          icon: const Icon(
+            Icons.error_outline_rounded,
+            color: Color(0xFFFF8A8E),
+          ),
+          onPressed: () {
+            showError(context, 'Retrying · ${d.error ?? 'download failed'}');
+            Downloads.instance.retry(d);
+          },
+        ),
+      };
+    },
+  );
+}
+
+Future<void> _confirmDelete(BuildContext context, Download d) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Delete Episode ${epNumber(d.number)}?'),
+      content: Text('${formatBytes(d.bytes)} will be freed on this device.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  await Downloads.instance.remove(d);
+  if (context.mounted) showSuccess(context, 'Download deleted');
+}
+
+class DownloadsScreen extends StatelessWidget {
+  const DownloadsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: background,
+    appBar: AppBar(title: const Text('Downloads')),
+    body: ListenableBuilder(
+      listenable: Downloads.instance,
+      builder: (context, _) {
+        final items = Downloads.instance.items;
+        if (items.isEmpty) {
+          return const EmptyState(
+            icon: Icons.download_for_offline_outlined,
+            title: 'No downloads yet',
+            message:
+                'Tap the download icon next to an episode to watch it offline.',
+          );
+        }
+        final shows = <Object?, List<Download>>{};
+        for (final d in items) {
+          shows.putIfAbsent(d.media['id'], () => []).add(d);
+        }
+        return ListView(
+          padding: const EdgeInsets.only(bottom: 32),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+              child: Text(
+                '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
+                style: const TextStyle(color: Colors.white54, fontSize: 13),
+              ),
+            ),
+            for (final group in shows.values) ...[
+              _DownloadShowHeader(group),
+              for (final d in [
+                ...group,
+              ]..sort((a, b) => a.number.compareTo(b.number)))
+                _DownloadTile(d, group),
+            ],
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class _DownloadShowHeader extends StatelessWidget {
+  const _DownloadShowHeader(this.group);
+
+  final List<Download> group;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = group.first.media;
+    return InkWell(
+      onTap: () => openDetails(context, media),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 40,
+                height: 56,
+                child: _Img(
+                  media['coverImage']?['extraLarge'],
+                  color: media['coverImage']?['color'],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titleOf(media),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '${group.length} ${group.length == 1 ? 'episode' : 'episodes'} · '
+                    '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DownloadTile extends StatelessWidget {
+  const _DownloadTile(this.download, this.group);
+
+  final Download download;
+  final List<Download> group;
+
+  void _play(BuildContext context) {
+    final playable = [
+      for (final d in group)
+        if (d.status == DownloadStatus.done && d.dub == download.dub) d,
+    ]..sort((a, b) => a.number.compareTo(b.number));
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          media: download.media,
+          source: null,
+          sourceName: download.source,
+          episodes: [for (final d in playable) d.episode],
+          index: playable.indexOf(download),
+          dub: download.dub,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = download;
+    final failed = d.status == DownloadStatus.failed;
+    final active =
+        d.status == DownloadStatus.downloading ||
+        d.status == DownloadStatus.queued;
+    final status = switch (d.status) {
+      DownloadStatus.queued => 'Waiting to download',
+      DownloadStatus.downloading =>
+        '${(d.progress * 100).round()}% · ${formatBytes(d.bytes)}',
+      DownloadStatus.done =>
+        '${formatBytes(d.bytes)} · ${d.dub ? 'Dub' : 'Sub'} · ${d.source}',
+      DownloadStatus.failed => d.error ?? 'Download failed',
+    };
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      onTap: d.status == DownloadStatus.done ? () => _play(context) : null,
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 88,
+          height: 50,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ColoredBox(
+                color: Colors.white.withValues(alpha: .05),
+                child: Center(
+                  child: Text(
+                    epNumber(d.number),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white24,
+                    ),
+                  ),
+                ),
+              ),
+              if (d.thumbnail != null) _Img(d.thumbnail, transparent: true),
+            ],
+          ),
+        ),
+      ),
+      title: Text(
+        'Episode ${epNumber(d.number)}${d.title == null ? '' : ' · ${d.title}'}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            status,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: failed ? const Color(0xFFFF8A8E) : Colors.white54,
+            ),
+          ),
+          if (active)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: LinearProgressIndicator(
+                value: d.status == DownloadStatus.queued ? 0 : d.progress,
+                minHeight: 3,
+                borderRadius: BorderRadius.circular(2),
+                backgroundColor: Colors.white10,
+              ),
+            ),
+        ],
+      ),
+      trailing: switch (d.status) {
+        DownloadStatus.done => IconButton(
+          tooltip: 'Delete',
+          icon: const Icon(Icons.delete_outline_rounded),
+          onPressed: () => _confirmDelete(context, d),
+        ),
+        DownloadStatus.failed => IconButton(
+          tooltip: 'Retry',
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: () => Downloads.instance.retry(d),
+        ),
+        _ => IconButton(
+          tooltip: 'Cancel',
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Downloads.instance.remove(d),
+        ),
+      },
+    );
+  }
+}
+
 // ───────────────────────────── Continue watching ─────────────────────────────
 
-/// Reopens the player where a [WatchHistory] record left off.
-Future<void> resumeWatching(BuildContext context, Map<String, dynamic> record, {List<Episode>? loaded}) async {
+/// Reopens the player where a [WatchHistory] record left off, from downloads when the site can't be reached.
+Future<void> resumeWatching(
+  BuildContext context,
+  Map<String, dynamic> record, {
+  List<Episode>? loaded,
+}) async {
   final media = record['media'] as Map;
-  final source = (await sites).where((s) => s.name == record['source']).firstOrNull;
-  if (source == null) throw Exception('${record['source']} is no longer one of the top sites');
-  if (!context.mounted) return;
-  final episodes = loaded ?? await withCloudflare<List<Episode>>(context, () => loadEpisodes(source, media));
-  final index = episodes.indexWhere((e) => e.number == record['episode']);
-  if (index == -1) throw Exception('Episode ${epNumber(record['episode'])} is not on ${source.name} yet');
+  final number = record['episode'] as num;
+  final downloaded = [
+    for (final d in Downloads.instance.forMedia(media)) d.episode,
+  ];
+  Source? source;
+  var episodes = loaded ?? const <Episode>[];
+  try {
+    source = (await sites).where((s) => s.name == record['source']).firstOrNull;
+    final site = source;
+    if (loaded == null && site != null && context.mounted) {
+      episodes = await withCloudflare<List<Episode>>(
+        context,
+        () => loadEpisodes(site, media),
+      );
+    }
+  } catch (_) {
+    if (!downloaded.any((e) => e.number == number)) {
+      rethrow; // offline and not downloaded
+    }
+  }
+  if (!episodes.any((e) => e.number == number)) episodes = downloaded;
+  final index = episodes.indexWhere((e) => e.number == number);
+  if (index == -1) {
+    throw Exception(
+      source == null
+          ? '${record['source']} is no longer one of the top sites'
+          : 'Episode ${epNumber(number)} is not on ${source.name} yet',
+    );
+  }
   if (!context.mounted) return;
   await Navigator.push(
     context,
@@ -1287,17 +2246,25 @@ Future<void> resumeWatching(BuildContext context, Map<String, dynamic> record, {
       builder: (_) => PlayerScreen(
         media: media,
         source: source,
+        sourceName: record['source'],
         episodes: episodes,
         index: index,
         dub: record['dub'] == true,
-        start: Settings.resume ? Duration(milliseconds: record['position'] as int? ?? 0) : null,
+        start: Settings.resume
+            ? Duration(milliseconds: record['position'] as int? ?? 0)
+            : null,
       ),
     ),
   );
 }
 
 class ContinueFab extends StatefulWidget {
-  const ContinueFab({super.key, required this.title, required this.subtitle, required this.onPressed});
+  const ContinueFab({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
 
   final String title, subtitle;
   final Future<void> Function() onPressed;
@@ -1321,34 +2288,27 @@ class _ContinueFabState extends State<ContinueFab> {
   }
 
   @override
-  Widget build(BuildContext context) => FloatingActionButton.extended(
-        onPressed: busy ? null : _run,
-        icon: busy
-            ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.5))
-            : const Icon(Icons.play_arrow_rounded, size: 28),
-        label: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 200),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(widget.title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-              Text(
-                widget.subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w400),
-              ),
-            ],
-          ),
-        ),
-      );
+  Widget build(BuildContext context) => FloatingActionButton(
+    tooltip: '${widget.title} · ${widget.subtitle}',
+    onPressed: busy ? null : _run,
+    child: busy
+        ? const SizedBox.square(
+            dimension: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          )
+        : const Icon(Icons.play_arrow_rounded, size: 32),
+  );
 }
 
 // ───────────────────────────── Shared bits ─────────────────────────────
 
 class _Img extends StatelessWidget {
-  const _Img(this.url, {this.color, this.alignment = Alignment.center, this.transparent = false});
+  const _Img(
+    this.url, {
+    this.color,
+    this.alignment = Alignment.center,
+    this.transparent = false,
+  });
 
   final String? url;
   final String? color;
@@ -1359,7 +2319,9 @@ class _Img extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = this.url;
     return ColoredBox(
-      color: transparent ? Colors.transparent : _hex(color)?.withValues(alpha: .3) ?? const Color(0xFF1A1A24),
+      color: transparent
+          ? Colors.transparent
+          : _hex(color)?.withValues(alpha: .3) ?? const Color(0xFF1A1A24),
       child: url == null
           ? null
           : Image.network(
@@ -1368,7 +2330,11 @@ class _Img extends StatelessWidget {
               alignment: alignment,
               frameBuilder: (context, child, frame, sync) => sync
                   ? child
-                  : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 300), child: child),
+                  : AnimatedOpacity(
+                      opacity: frame == null ? 0 : 1,
+                      duration: const Duration(milliseconds: 300),
+                      child: child,
+                    ),
               errorBuilder: (_, _, _) => const SizedBox(),
             ),
     );
@@ -1383,19 +2349,32 @@ class _Score extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 10, vertical: compact ? 3 : 6),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: .6),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white12),
+    padding: EdgeInsets.symmetric(
+      horizontal: compact ? 6 : 10,
+      vertical: compact ? 3 : 6,
+    ),
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: .6),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.white12),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.star_rounded,
+          size: compact ? 12 : 16,
+          color: const Color(0xFFFFC857),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.star_rounded, size: compact ? 12 : 16, color: const Color(0xFFFFC857)),
-            const SizedBox(width: 3),
-            Text('$score%', style: TextStyle(fontSize: compact ? 11 : 13, fontWeight: FontWeight.w700)),
-          ],
+        const SizedBox(width: 3),
+        Text(
+          '$score%',
+          style: TextStyle(
+            fontSize: compact ? 11 : 13,
+            fontWeight: FontWeight.w700,
+          ),
         ),
-      );
+      ],
+    ),
+  );
 }

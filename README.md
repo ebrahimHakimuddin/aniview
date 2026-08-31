@@ -10,6 +10,12 @@ streams come from third-party sites.
 
 ## Extras
 
+- Offline downloads save the HLS playlist, segments, encryption keys and preferred subtitles on-device. A
+  downloaded episode is preferred during playback even when the network is available. Interrupted downloads
+  resume when AniView next runs; downloads only progress while the app process is alive.
+- Watch progress recorded offline is queued locally and synced to AniList when connectivity returns, without
+  overwriting newer AniList progress.
+- The player includes an episode drawer and marks intro/outro ranges on the seek bar.
 - Episode titles, synopses and thumbnails: [ani.zip](https://api.ani.zip)
 - Intro/outro/recap skip times: [AniSkip](https://api.aniskip.com), falling back to the site's own times
 - Some hosts disguise segments as PNGs; a localhost proxy (`lib/hls_proxy.dart`) strips the prefix for FFmpeg
