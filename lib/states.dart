@@ -11,14 +11,17 @@ const _success = Color(0xFF4ADE80);
 
 /// Turns exceptions into short messages people can act on.
 String friendlyError(Object error) => switch (error) {
-      CloudflareChallenge() => 'This site needs a quick verification before it can be reached',
-      SocketException() || HandshakeException() || http.ClientException() =>
-        'No connection. Check your internet and try again',
-      TimeoutException() => 'The site took too long to respond',
-      HttpException(:final message) => 'The site returned an error ($message)',
-      FormatException() => 'The site sent something unexpected. It may have changed its layout',
-      _ => '$error'.replaceFirst('Exception: ', ''),
-    };
+  CloudflareChallenge() =>
+    'This site needs a quick verification before it can be reached',
+  SocketException() ||
+  HandshakeException() ||
+  http.ClientException() => 'No connection. Check your internet and try again',
+  TimeoutException() => 'The site took too long to respond',
+  HttpException(:final message) => 'The site returned an error ($message)',
+  FormatException() =>
+    'The site sent something unexpected. It may have changed its layout',
+  _ => '$error'.replaceFirst('Exception: ', ''),
+};
 
 void showSuccess(BuildContext context, String message) =>
     _snack(context, message, Icons.check_circle_rounded, _success);
@@ -26,18 +29,26 @@ void showSuccess(BuildContext context, String message) =>
 void showError(BuildContext context, Object error) =>
     _snack(context, friendlyError(error), Icons.error_rounded, _danger);
 
-void _snack(BuildContext context, String message, IconData icon, Color color) => ScaffoldMessenger.of(context)
-  ..hideCurrentSnackBar()
-  ..showSnackBar(SnackBar(
-    backgroundColor: const Color(0xFF1C1C26),
-    content: Row(
-      children: [
-        Icon(icon, color: color),
-        const SizedBox(width: 12),
-        Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-      ],
-    ),
-  ));
+void _snack(BuildContext context, String message, IconData icon, Color color) =>
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1C1C26),
+          content: Row(
+            children: [
+              Icon(icon, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
 
 /// Shimmering placeholder block.
 class Skeleton extends StatefulWidget {
@@ -50,8 +61,12 @@ class Skeleton extends StatefulWidget {
   State<Skeleton> createState() => _SkeletonState();
 }
 
-class _SkeletonState extends State<Skeleton> with SingleTickerProviderStateMixin {
-  late final _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
+class _SkeletonState extends State<Skeleton>
+    with SingleTickerProviderStateMixin {
+  late final _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
 
   @override
   void dispose() {
@@ -61,22 +76,30 @@ class _SkeletonState extends State<Skeleton> with SingleTickerProviderStateMixin
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final t = _controller.value * 1.6 - .3;
-          return Container(
-            width: widget.width,
-            height: widget.height,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(widget.radius),
-              gradient: LinearGradient(
-                colors: const [Color(0xFF16161F), Color(0xFF252532), Color(0xFF16161F)],
-                stops: [(t - .3).clamp(0.0, 1.0), t.clamp(0.0, 1.0), (t + .3).clamp(0.0, 1.0)],
-              ),
-            ),
-          );
-        },
+    animation: _controller,
+    builder: (context, _) {
+      final t = _controller.value * 1.6 - .3;
+      return Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(widget.radius),
+          gradient: LinearGradient(
+            colors: const [
+              Color(0xFF16161F),
+              Color(0xFF252532),
+              Color(0xFF16161F),
+            ],
+            stops: [
+              (t - .3).clamp(0.0, 1.0),
+              t.clamp(0.0, 1.0),
+              (t + .3).clamp(0.0, 1.0),
+            ],
+          ),
+        ),
       );
+    },
+  );
 }
 
 class PosterSkeleton extends StatelessWidget {
@@ -84,15 +107,15 @@ class PosterSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AspectRatio(aspectRatio: 2 / 3, child: Skeleton(radius: 14)),
-          SizedBox(height: 10),
-          Skeleton(height: 12, width: 110, radius: 6),
-          SizedBox(height: 6),
-          Skeleton(height: 10, width: 64, radius: 6),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      AspectRatio(aspectRatio: 2 / 3, child: Skeleton(radius: 14)),
+      SizedBox(height: 10),
+      Skeleton(height: 12, width: 110, radius: 6),
+      SizedBox(height: 6),
+      Skeleton(height: 10, width: 64, radius: 6),
+    ],
+  );
 }
 
 class ShelfSkeleton extends StatelessWidget {
@@ -102,27 +125,34 @@ class ShelfSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
-            child: title == null
-                ? const Skeleton(width: 150, height: 18, radius: 6)
-                : Text(title!, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          ),
-          SizedBox(
-            height: 272,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              itemCount: 5,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
-              itemBuilder: (_, _) => const SizedBox(width: 136, child: PosterSkeleton()),
-            ),
-          ),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
+        child: title == null
+            ? const Skeleton(width: 150, height: 18, radius: 6)
+            : Text(
+                title!,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+      ),
+      SizedBox(
+        height: 272,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          itemCount: 5,
+          separatorBuilder: (_, _) => const SizedBox(width: 14),
+          itemBuilder: (_, _) =>
+              const SizedBox(width: 136, child: PosterSkeleton()),
+        ),
+      ),
+    ],
+  );
 }
 
 class EpisodeSkeleton extends StatelessWidget {
@@ -130,24 +160,24 @@ class EpisodeSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        child: Row(
-          children: [
-            Skeleton(width: 128, height: 72, radius: 10),
-            SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Skeleton(height: 14, width: 110, radius: 6),
-                  SizedBox(height: 8),
-                  Skeleton(height: 11, radius: 6),
-                ],
-              ),
-            ),
-          ],
+    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+    child: Row(
+      children: [
+        Skeleton(width: 128, height: 72, radius: 10),
+        SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Skeleton(height: 14, width: 110, radius: 6),
+              SizedBox(height: 8),
+              Skeleton(height: 11, radius: 6),
+            ],
+          ),
         ),
-      );
+      ],
+    ),
+  );
 }
 
 class ErrorState extends StatelessWidget {
@@ -157,7 +187,8 @@ class ErrorState extends StatelessWidget {
   final VoidCallback? onRetry;
   final bool compact;
 
-  String get _retryLabel => error is CloudflareChallenge ? 'Verify' : 'Try again';
+  String get _retryLabel =>
+      error is CloudflareChallenge ? 'Verify' : 'Try again';
 
   @override
   Widget build(BuildContext context) {
@@ -175,8 +206,14 @@ class ErrorState extends StatelessWidget {
           children: [
             const Icon(Icons.error_outline_rounded, color: _danger, size: 20),
             const SizedBox(width: 12),
-            Expanded(child: Text(message, style: const TextStyle(fontSize: 13, color: Colors.white70))),
-            if (onRetry != null) TextButton(onPressed: onRetry, child: Text(_retryLabel)),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(fontSize: 13, color: Colors.white70),
+              ),
+            ),
+            if (onRetry != null)
+              TextButton(onPressed: onRetry, child: Text(_retryLabel)),
           ],
         ),
       );
@@ -189,12 +226,23 @@ class ErrorState extends StatelessWidget {
           children: [
             _Badge(icon: Icons.cloud_off_rounded, color: _danger),
             const SizedBox(height: 16),
-            const Text('Something went wrong', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            const Text(
+              'Something went wrong',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 6),
-            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60, height: 1.4)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white60, height: 1.4),
+            ),
             if (onRetry != null) ...[
               const SizedBox(height: 20),
-              FilledButton.tonalIcon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded), label: Text(_retryLabel)),
+              FilledButton.tonalIcon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(_retryLabel),
+              ),
             ],
           ],
         ),
@@ -204,7 +252,14 @@ class ErrorState extends StatelessWidget {
 }
 
 class EmptyState extends StatelessWidget {
-  const EmptyState({super.key, required this.icon, required this.title, this.message, this.action, this.compact = false});
+  const EmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.message,
+    this.action,
+    this.compact = false,
+  });
 
   final IconData icon;
   final String title;
@@ -220,17 +275,30 @@ class EmptyState extends StatelessWidget {
       children: [
         _Badge(icon: icon, color: color),
         const SizedBox(height: 16),
-        Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+        ),
         if (message != null) ...[
           const SizedBox(height: 6),
-          Text(message!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60, height: 1.4)),
+          Text(
+            message!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white60, height: 1.4),
+          ),
         ],
         if (action != null) ...[const SizedBox(height: 20), action!],
       ],
     );
     return compact
-        ? Padding(padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24), child: body)
-        : Center(child: Padding(padding: const EdgeInsets.all(32), child: body));
+        ? Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+            child: body,
+          )
+        : Center(
+            child: Padding(padding: const EdgeInsets.all(32), child: body),
+          );
   }
 }
 
@@ -242,8 +310,11 @@ class _Badge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color.withValues(alpha: .1)),
-        child: Icon(icon, size: 34, color: color),
-      );
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      color: color.withValues(alpha: .1),
+    ),
+    child: Icon(icon, size: 34, color: color),
+  );
 }
