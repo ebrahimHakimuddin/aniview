@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'anilist.dart';
+import 'downloads.dart';
 import 'screens.dart';
 import 'settings.dart';
 import 'sources.dart';
@@ -10,7 +11,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   sites.ignore(); // start fetching everythingmoe's top sites on app load; screens await it later
-  await Future.wait([AniList.load(), Settings.load()]);
+  await Future.wait([
+    AniList.load(),
+    Settings.load(),
+    Downloads.instance.load(),
+  ]);
   runApp(const App());
 }
 
@@ -29,9 +34,17 @@ class App extends StatelessWidget {
       theme: ThemeData(
         colorScheme: scheme,
         scaffoldBackgroundColor: background,
-        appBarTheme: const AppBarTheme(backgroundColor: background, surfaceTintColor: Colors.transparent),
-        chipTheme: const ChipThemeData(shape: StadiumBorder(), side: BorderSide.none),
-        snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: background,
+          surfaceTintColor: Colors.transparent,
+        ),
+        chipTheme: const ChipThemeData(
+          shape: StadiumBorder(),
+          side: BorderSide.none,
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+        ),
       ),
       home: const HomeScreen(),
     );
