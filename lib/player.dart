@@ -57,6 +57,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String subtitle = 'Auto';
   Object? error;
   String? hint;
+  IconData? hintIcon;
   bool controls = true, locked = false, cover = false, synced = false;
   double rate = Settings.speed, brightness = .5, volume = 100, doubleTapX = 0;
   Duration? seekTarget;
@@ -266,7 +267,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (current == null || position < const Duration(seconds: 5)) return;
     final finished =
         duration > Duration.zero &&
-        position.inMilliseconds > duration.inMilliseconds * .9;
+        position.inMilliseconds >
+            duration.inMilliseconds * Settings.watchedPercent / 100;
     if (finished && !hasNext) {
       WatchHistory.remove(widget.media);
     } else {
@@ -295,12 +297,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Ask AniList itself: cached media (e.g. from resume history) may be behind and must not roll progress back.
       if (number > await AniList.progressOf(widget.media['id'])) {
         await AniList.saveProgress(widget.media, number);
-        _hint('✓  AniList updated · Episode $number');
+        _hint(
+          'AniList updated · Episode $number',
+          icon: Icons.check_circle_rounded,
+        );
       }
       AniList.syncPending().ignore();
     } catch (_) {
       await AniList.queueProgress(widget.media, number);
-      _hint('Saved offline · syncs to AniList when you’re back online');
+      _hint(
+        'Saved offline · syncs to AniList when you’re back online',
+        icon: Icons.cloud_off_rounded,
+      );
     }
   }
 
@@ -347,15 +355,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (d.localPosition.dx < size.width / 2) {
       brightness = (brightness + delta).clamp(0.0, 1.0);
       ScreenBrightness().setApplicationScreenBrightness(brightness);
-      _hint('☀  ${(brightness * 100).round()}%', sticky: true);
+      _hint(
+        '${(brightness * 100).round()}%',
+        icon: Icons.brightness_6_rounded,
+        sticky: true,
+      );
     } else {
       volume = (volume + delta * 100).clamp(0.0, 100.0);
       player.setVolume(volume);
-      _hint('🔊  ${volume.round()}%', sticky: true);
+      _hint(
+        '${volume.round()}%',
+        icon: volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+        sticky: true,
+      );
     }
   }
 
-  void _clearHint([Object? _]) => _hint(hint ?? '');
+  void _clearHint([Object? _]) => _hint(hint ?? '', icon: hintIcon);
 
   IconData get _replayIcon => switch (Settings.seekSeconds) {
     5 => Icons.replay_5_rounded,
@@ -512,12 +528,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     color: Colors.black.withValues(alpha: .7),
                     borderRadius: BorderRadius.circular(24),
                   ),
-                  child: Text(
-                    hint!,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hintIcon != null) ...[
+                        Icon(hintIcon, size: 20),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        hint!,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
