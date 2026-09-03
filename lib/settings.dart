@@ -225,7 +225,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: () => _choose(
                 'Count as watched at',
                 {
-                  for (final p in const [70, 80, 85, 90, 95]) p: '$p%',
+                  for (final p in const [50, 60, 70, 75, 80, 85, 90, 95])
+                    p: '$p%',
                 },
                 Settings.watchedPercent,
                 (v) => Settings.watchedPercent = v,

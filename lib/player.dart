@@ -316,10 +316,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (controls) _scheduleHide();
   }
 
-  void _hint(String text, {bool sticky = false}) {
+  void _hint(String text, {IconData? icon, bool sticky = false}) {
     _hintTimer?.cancel();
     if (!mounted) return;
-    setState(() => hint = text);
+    setState(() {
+      hint = text;
+      hintIcon = icon;
+    });
     if (!sticky) {
       _hintTimer = Timer(
         const Duration(milliseconds: 1500),
