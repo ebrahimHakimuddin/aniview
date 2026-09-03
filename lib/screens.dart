@@ -164,6 +164,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onAccount: _account,
               onSettings: _openSettings,
             ),
+            FutureBuilder(
+              future: trending,
+              builder: (context, snap) => _Hero(
+                items: snap.data?.take(6).toList() ?? const [],
+                loading: snap.connectionState != ConnectionState.done,
+                error: snap.error,
+                onRetry: _refresh,
+              ),
+            ),
             if (AniList.token != null)
               FutureBuilder(
                 future: lists,
@@ -180,15 +189,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : _Shelf(title, airing, onBack: _reloadLists);
                 },
               ),
-            FutureBuilder(
-              future: trending,
-              builder: (context, snap) => _Hero(
-                items: snap.data?.take(6).toList() ?? const [],
-                loading: snap.connectionState != ConnectionState.done,
-                error: snap.error,
-                onRetry: _refresh,
-              ),
-            ),
             if (AniList.token == null)
               _SignInCard(onTap: _account)
             else
