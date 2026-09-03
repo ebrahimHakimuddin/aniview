@@ -371,7 +371,7 @@ class Downloads extends ChangeNotifier {
       try {
         final name = 'sub${saved.length}.vtt';
         await File('${dir.path}/$name')
-            .writeAsBytes(await _fetchWithRetry(subtitle.url, const {}));
+            .writeAsBytes(await _fetchWithRetry(subtitle.url, stream.headers));
         saved.add(Subtitle(subtitle.label, name));
       } catch (_) {} // subtitles are optional for offline playback
     }

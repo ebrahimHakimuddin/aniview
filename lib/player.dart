@@ -169,6 +169,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
             : await HlsProxy.url(stream.url, stream.headers),
       ),
     );
+    // open() returns before mpv has loaded the file, and seeking or adding a subtitle track before that is dropped.
+    if (player.state.duration == Duration.zero) {
+      await player.stream.duration
+          .firstWhere((d) => d > Duration.zero)
+          .timeout(const Duration(seconds: 20), onTimeout: () => Duration.zero);
+    }
+    if (!mounted || current != stream) return;
     if (at != null && at > Duration.zero) await player.seek(at);
     await _applySubtitle(stream);
     await player.setRate(rate);
@@ -189,11 +196,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
         'Auto',
       ); // embedded or burned-in subs
     }
-    return _setSubtitle(
-      SubtitleTrack.uri(pick.url, title: pick.label),
-      pick.label,
-    );
+    return _setExternal(stream, pick);
   }
+
+  /// Subtitle hosts refuse requests without the stream's Referer, which mpv doesn't send, so go through the proxy.
+  Future<void> _setExternal(VideoStream stream, Subtitle s) async =>
+      _setSubtitle(
+        SubtitleTrack.uri(
+          stream.isLocal
+              ? s.url
+              : await HlsProxy.url(
+                  s.url,
+                  stream.headers,
+                  ext: Uri.parse(s.url).path.split('.').last,
+                ),
+          title: s.label,
+        ),
+        s.label,
+      );
 
   Future<void> _setSubtitle(SubtitleTrack track, String label) async {
     await player.setSubtitleTrack(track);
@@ -617,10 +637,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           : Icons.subtitles_rounded,
                     ),
                     onSelected: (value) => switch (value) {
-                      Subtitle s => _setSubtitle(
-                        SubtitleTrack.uri(s.url, title: s.label),
-                        s.label,
-                      ),
+                      Subtitle s => _setExternal(current!, s),
                       SubtitleTrack t => _setSubtitle(
                         t,
                         t.title ?? t.language ?? 'Track ${t.id}',

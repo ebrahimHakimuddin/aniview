@@ -15,13 +15,16 @@ class HlsProxy {
     0,
   ).then((server) => server..listen(_handle));
 
+  /// Local URL for [upstream]; [ext] is `m3u8` for a stream, or the file's own extension (e.g. a `.vtt`
+  /// subtitle, whose host also rejects requests without the stream's Referer).
   static Future<String> url(
     String upstream,
-    Map<String, String> headers,
-  ) async {
+    Map<String, String> headers, {
+    String ext = 'm3u8',
+  }) async {
     final port = (await _server).port;
     _headers.add(headers);
-    return _local(port, _headers.length - 1, upstream, 'm3u8');
+    return _local(port, _headers.length - 1, upstream, ext);
   }
 
   // The upstream URL lives in the path (no query) so FFmpeg's segment-extension check sees `.ts`/`.m3u8`.
@@ -52,7 +55,9 @@ class HlsProxy {
           ),
         );
       } else {
-        response.add(stripToTs(res.bodyBytes));
+        response.add(
+          file.endsWith('.ts') ? stripToTs(res.bodyBytes) : res.bodyBytes,
+        );
       }
     } catch (_) {
       response.statusCode = HttpStatus.badGateway;
