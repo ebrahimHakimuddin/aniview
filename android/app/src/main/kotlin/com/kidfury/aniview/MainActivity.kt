@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,6 +24,17 @@ class MainActivity : FlutterActivity() {
                     call.argument<Int>("percent") ?: 0,
                 )
                 result.success(null)
+            }
+        // The player's brightness/volume swipe drives the phone's media volume, not mpv's.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/volume")
+            .setMethodCallHandler { call, result ->
+                val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                if (call.method == "set") {
+                    val level = Math.round((call.arguments as Double) * max).toInt()
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
+                }
+                result.success(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max)
             }
     }
 

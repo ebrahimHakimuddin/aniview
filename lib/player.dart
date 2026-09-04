@@ -59,7 +59,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? hint;
   IconData? hintIcon;
   bool controls = true, locked = false, cover = false, synced = false;
-  double rate = Settings.speed, brightness = .5, volume = 100, doubleTapX = 0;
+  double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
+  // The phone's media volume as 0–1.
+  static const _systemVolume = MethodChannel('aniview/volume');
   Duration? seekTarget;
   Timer? _hideTimer, _hintTimer;
   Duration _savedAt = Duration.zero;
@@ -361,10 +363,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         sticky: true,
       );
     } else {
-      volume = (volume + delta * 100).clamp(0.0, 100.0);
-      player.setVolume(volume);
+      volume = (volume + delta).clamp(0.0, 1.0);
+      _systemVolume.invokeMethod('set', volume).ignore();
       _hint(
-        '${volume.round()}%',
+        '${(volume * 100).round()}%',
         icon: volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
         sticky: true,
       );
@@ -473,6 +475,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     player.setRate(rate);
                     _clearHint();
                   },
+            onVerticalDragStart: locked
+                ? null
+                : (_) => _systemVolume
+                      .invokeMethod<double>(
+                        'get',
+                      ) // may have changed with the volume keys
+                      .then((v) => volume = v ?? volume)
+                      .ignore(),
             onVerticalDragUpdate: locked ? null : (d) => _verticalDrag(d, size),
             onVerticalDragEnd: locked ? null : _clearHint,
             onHorizontalDragStart: locked
