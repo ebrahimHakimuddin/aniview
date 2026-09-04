@@ -418,6 +418,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             controls: NoVideoControls,
             fit: cover ? BoxFit.cover : BoxFit.contain,
             subtitleViewConfiguration: SubtitleViewConfiguration(
+              // media_kit otherwise shrinks text relative to a 1920×1080 view, making it tiny on phones.
+              textScaler: TextScaler.noScaling,
               style: TextStyle(
                 fontSize: Settings.subtitleSize,
                 color: Colors.white,
