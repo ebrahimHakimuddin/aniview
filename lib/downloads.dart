@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'anilist.dart';
 import 'hls_proxy.dart';
 import 'metadata.dart';
 import 'settings.dart';
@@ -116,6 +118,9 @@ class Downloads extends ChangeNotifier {
   Completer<void>? _activeDone;
   bool _running = false, _cancel = false;
   Future<void> _saving = Future.value();
+  static const _notifications = MethodChannel('aniview/downloads');
+  var _notifiedPercent = -1;
+  var _notifiedAt = DateTime(0);
 
   Future<void> load() async {
     _root = Directory(
@@ -239,8 +244,36 @@ class Downloads extends ChangeNotifier {
     }
   }
 
+  /// System notification for the running download, throttled because Android drops rapid updates.
+  void _notifyProgress() {
+    final d = _active;
+    if (d == null) return;
+    final percent = (d.progress * 100).floor();
+    final now = DateTime.now();
+    if (percent == _notifiedPercent ||
+        (percent > 0 &&
+            now.difference(_notifiedAt) < const Duration(milliseconds: 700))) {
+      return;
+    }
+    _notifiedPercent = percent;
+    _notifiedAt = now;
+    _post('progress', d, {'percent': percent});
+  }
+
+  void _post(
+    String state,
+    Download d, [
+    Map<String, Object?> extra = const {},
+  ]) => _notifications
+      .invokeMethod(state, {
+        'title': '${titleOf(d.media)} · Episode ${epNumber(d.number)}',
+        ...extra,
+      })
+      .catchError((Object _) => null); // no notifications off Android
+
   void _notify({bool save = false}) {
     notifyListeners();
+    _notifyProgress();
     if (!save) return;
     final json = jsonEncode([for (final d in items) d.toJson()]);
     _saving = _saving.then((_) async {
@@ -270,6 +303,7 @@ class Downloads extends ChangeNotifier {
     final done = _activeDone = Completer<void>();
     _active = d;
     _cancel = false;
+    _notifiedPercent = -1;
     d
       ..status = DownloadStatus.downloading
       ..progress = 0
@@ -303,6 +337,7 @@ class Downloads extends ChangeNotifier {
             ? '${d.source} needs a quick verification: play any episode from it once, then retry'
             : friendlyError(e);
     } finally {
+      _post(_cancel ? 'cancel' : d.status.name, d, {'text': d.error});
       _active = null;
       _activeDone = null;
       if (!_cancel) _notify(save: true);
