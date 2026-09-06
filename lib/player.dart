@@ -666,15 +666,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     icon: const Icon(Icons.video_library_rounded),
                     onPressed: () => _scaffold.currentState?.openEndDrawer(),
                   ),
-                if (streams.length > 1)
-                  PopupMenuButton<VideoStream>(
-                    tooltip: 'Server',
-                    icon: const Icon(Icons.dns_rounded),
-                    onSelected: (s) => _play(s, at: player.state.position),
-                    itemBuilder: (_) => [
-                      for (final s in streams)
-                        _checked(s.label, s == current, s),
-                    ],
+                if (streams.isNotEmpty && streams.contains(current))
+                  DropdownButtonHideUnderline(
+                    child: DropdownButton<VideoStream>(
+                      value: current,
+                      icon: const Icon(Icons.arrow_drop_down_rounded),
+                      dropdownColor: const Color(0xF2101016),
+                      borderRadius: BorderRadius.circular(12),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      items: [
+                        for (final s in streams)
+                          DropdownMenuItem(value: s, child: Text(s.label)),
+                      ],
+                      onChanged: (s) => s == null || s == current
+                          ? null
+                          : _play(s, at: player.state.position),
+                    ),
                   ),
                 if (external.isNotEmpty || embedded.isNotEmpty)
                   PopupMenuButton<Object>(
