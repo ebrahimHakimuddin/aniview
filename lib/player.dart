@@ -87,6 +87,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.stream.playing.listen((_) => _refresh()),
       player.stream.buffering.listen((_) => _refresh()),
       player.stream.tracks.listen((_) => _refresh()),
+      // A stream that never loads would otherwise spin on "Loading video…" forever.
+      player.stream.error.listen((e) {
+        if (mounted &&
+            current != null &&
+            player.state.duration == Duration.zero) {
+          setState(() => error = Exception(e));
+        }
+      }),
       player.stream.completed.listen((done) {
         if (done && hasNext && Settings.autoNext) _load(index + 1);
       }),
