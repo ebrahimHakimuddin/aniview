@@ -575,7 +575,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
               child: locked ? _lockedOverlay() : _overlay(position, loading),
             ),
           ),
-          if (skip != null && !locked)
+          if (skip != null &&
+              !locked &&
+              !controls) // the controls have their own
             Positioned(
               right: 32,
               bottom: 110,
@@ -609,6 +611,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   );
 
   Widget _overlay(Duration position, bool loading) {
+    final skip = Settings.skipMode == SkipMode.off
+        ? null
+        : _activeSkip(position);
     final duration = player.state.duration;
     final shown = seekTarget ?? position;
     final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);
@@ -789,10 +794,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   icon: const Icon(Icons.lock_open_rounded),
                   onPressed: () => setState(() => locked = true),
                 ),
+                // AniSkip's range when we're inside one, otherwise a fixed jump.
                 TextButton.icon(
-                  onPressed: () => _seekBy(85),
+                  onPressed: skip == null
+                      ? () => _seekBy(Settings.skipSeconds)
+                      : () => player.seek(skip.end),
                   icon: const Icon(Icons.double_arrow_rounded),
-                  label: const Text('+85s'),
+                  label: Text(
+                    skip == null
+                        ? '+${Settings.skipSeconds}s'
+                        : 'Skip ${_skipName(skip.type)}',
+                  ),
                   style: TextButton.styleFrom(foregroundColor: Colors.white),
                 ),
                 const Spacer(),

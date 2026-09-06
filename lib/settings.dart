@@ -40,6 +40,10 @@ class Settings {
   static int get seekSeconds => _prefs.getInt('seek_seconds') ?? 10;
   static set seekSeconds(int v) => _prefs.setInt('seek_seconds', v);
 
+  /// Length of the fixed skip button, for shows AniSkip has no times for.
+  static int get skipSeconds => _prefs.getInt('skip_seconds') ?? 85;
+  static set skipSeconds(int v) => _prefs.setInt('skip_seconds', v);
+
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
   static set speed(double v) => _prefs.setDouble('speed', v);
 
@@ -305,6 +309,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
                 Settings.seekSeconds,
                 (v) => Settings.seekSeconds = v,
+              ),
+            ),
+            _Choice(
+              title: 'Skip button length',
+              value: '${Settings.skipSeconds}s',
+              onTap: () => _choose(
+                'Skip button length',
+                {
+                  for (final s in const [30, 60, 75, 85, 90, 120])
+                    s: '$s seconds',
+                },
+                Settings.skipSeconds,
+                (v) => Settings.skipSeconds = v,
               ),
             ),
             _Choice(
