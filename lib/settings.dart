@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -62,6 +63,9 @@ class Settings {
   static int get watchedPercent => _prefs.getInt('watched_percent') ?? 85;
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
 }
+
+/// App version and opening links in the browser, answered by MainActivity.
+const _app = MethodChannel('aniview/app');
 
 const subtitleLanguages = [
   'Off',
@@ -435,6 +439,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
               },
             ),
+          ]),
+          _Group('About', [
+            FutureBuilder(
+              future: _app.invokeMethod<String>('version'),
+              builder: (context, snap) => ListTile(
+                leading: const Icon(Icons.info_outline_rounded),
+                title: const Text('AniView'),
+                subtitle: Text(
+                  snap.hasData ? 'Version ${snap.data}' : 'Version',
+                ),
+              ),
+            ),
+            for (final (icon, title, url) in const [
+              (
+                Icons.code_rounded,
+                'GitHub',
+                'https://github.com/ebrahimHakimuddin',
+              ),
+              (
+                Icons.description_outlined,
+                'Resume',
+                'https://resume.ebrahim.co.tz',
+              ),
+            ])
+              ListTile(
+                leading: Icon(icon),
+                title: Text(title),
+                subtitle: Text(url.replaceFirst('https://', '')),
+                trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                onTap: () => _app.invokeMethod('open', url).ignore(),
+              ),
           ]),
           const Padding(
             padding: EdgeInsets.only(top: 28),
