@@ -63,6 +63,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // The phone's media volume as 0–1.
   static const _systemVolume = MethodChannel('aniview/volume');
   Duration? seekTarget;
+  Duration? _startAt; // where the current server was asked to start
   Timer? _hideTimer, _hintTimer;
   Duration _savedAt = Duration.zero;
   late final List<StreamSubscription> _subs;
@@ -89,9 +90,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.stream.tracks.listen((_) => _refresh()),
       // A stream that never loads would otherwise spin on "Loading video…" forever.
       player.stream.error.listen((e) {
-        if (mounted &&
-            current != null &&
-            player.state.duration == Duration.zero) {
+        if (!mounted ||
+            current == null ||
+            player.state.duration != Duration.zero) {
+          return;
+        }
+        // Aggregated sources often list dead servers; move on before giving up.
+        final next = streams.indexOf(current!) + 1;
+        if (next > 0 && next < streams.length) {
+          _hint(
+            '${current!.label} failed · trying ${streams[next].label}',
+            icon: Icons.dns_rounded,
+          );
+          _play(streams[next], at: _startAt);
+        } else {
           setState(() => error = Exception(e));
         }
       }),
@@ -169,15 +181,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _play(VideoStream stream, {Duration? at}) async {
+    _startAt = at;
     setState(() {
       current = stream;
       if (skips.isEmpty) skips = stream.skips;
     });
     await player.open(
+      // HLS goes through the local proxy; direct files (mp4) get their headers from mpv itself.
       Media(
-        stream.isLocal
+        stream.isLocal || !stream.isHls
             ? stream.url
             : await HlsProxy.url(stream.url, stream.headers),
+        httpHeaders: stream.isHls ? null : stream.headers,
       ),
     );
     // open() returns before mpv has loaded the file, and seeking or adding a subtitle track before that is dropped.
