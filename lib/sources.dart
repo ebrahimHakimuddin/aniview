@@ -3,15 +3,16 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http2/http2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'cloudflare.dart';
+import 'anilist.dart';
 import 'metadata.dart';
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
-/// Top 3 anime streaming sites from everythingmoe, fetched once on app start.
+/// The top 3 supported anime streaming sites from everythingmoe, fetched once on app start.
 Future<List<Source>> sites = topSources();
 
 class CloudflareChallenge implements Exception {
@@ -67,6 +68,7 @@ class VideoStream {
   final List<SkipTime> skips; // intro/outro times the site itself provides
 
   bool get isLocal => !url.startsWith('http'); // a downloaded episode on disk
+  bool get isHls => Uri.parse(url).path.endsWith('.m3u8');
 }
 
 /// A show as listed on a site, used to fix a wrong automatic match.
@@ -148,7 +150,7 @@ Future<Uint8List> fetchBytes(
   Map<String, String>? headers,
 }) async => (await _get(url, headers)).bodyBytes;
 
-/// (name, origin) of the first three entries in everythingmoe's "Anime Streaming" section.
+/// (name, origin) of the entries in everythingmoe's "Anime Streaming" section, in rank order.
 List<(String, String)> parseTopSites(String html) {
   final start = html.indexOf('id="sec-anime"');
   if (start == -1) {
@@ -162,7 +164,6 @@ List<(String, String)> parseTopSites(String html) {
         r'class="section-item">\d+\.\s*<a href="[^"]*" data-link="([^"]+)"[^>]*>(?:<img[^>]*>)?\s*([^<]+)</a>',
       )
       .allMatches(section)
-      .take(3)
       .map((m) => (m[2]!.trim(), Uri.parse(m[1]!).origin))
       .toList();
 }
@@ -175,10 +176,10 @@ Future<List<Source>> topSources() async => [
     ?switch (Uri.parse(origin).host) {
       final h when h.contains('anikoto') => Anikoto(name, origin),
       final h when h.contains('reanime') => ReAnime(name, origin),
-      final h when h.contains('animepahe') => AnimePahe(name, origin),
+      final h when h.contains('miruro') => Miruro(name, origin),
       _ => null,
     },
-];
+].take(3).toList();
 
 Iterable<String> _searchTitles(Map media) =>
     {media['title']['romaji'], media['title']['english']}.whereType<String>();
@@ -431,67 +432,123 @@ class ReAnime extends Source {
   );
 }
 
-/// animepahe and its kwik player sit behind Cloudflare, which rejects Dart's HTTP client even with a clearance
-/// cookie, so every request goes through the in-app browser ([browserFetch]).
-class AnimePahe extends Source {
-  AnimePahe(super.name, super.base);
+typedef _MiruroConfig = ({
+  List<int> pipeKey,
+  List<int> proxyKey,
+  String proxy,
+  String? version,
+});
 
-  Future<dynamic> _api(String query) async =>
-      jsonDecode(await browserFetch('$base/api?$query', text: true));
+/// Miruro, keyed by AniList id and aggregating several providers. Its API answers only over HTTP/2 ([_h2Get]);
+/// HLS plays through Miruro's own stream proxy, mp4 directly with the provider's Referer.
+class Miruro extends Source {
+  Miruro(super.name, super.base);
 
-  @override
-  Future<List<SearchResult>> search(String query) async {
-    final json = await _api('m=search&q=${Uri.encodeQueryComponent(query)}');
-    return [
-      for (final r in json['data'] as List? ?? const [])
-        SearchResult(
-          '${r['session']}',
-          '${r['title']}',
-          image: r['poster'],
-          info: _info([
-            r['type'],
-            r['year'],
-            if (r['episodes'] != null) '${r['episodes']} eps',
-          ]),
-        ),
-    ];
-  }
+  static const _apiHeaders = {
+    'referer': 'https://www.miruro.to/watch',
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-dest': 'empty',
+  };
 
-  @override
-  Future<String?> match(Map media) async {
-    final links = RegExp(
-      'anilist\\.co/anime/${media['id']}\\b|myanimelist\\.net/anime/${media['idMal'] ?? 'none'}\\b',
-    );
-    for (final title in _searchTitles(media)) {
-      for (final result in (await search(title)).take(3)) {
-        if (links.hasMatch(await browserFetch('$base/anime/${result.id}'))) {
-          return result.id;
-        }
-      }
+  Future<_MiruroConfig>? _config;
+
+  /// Keys and proxy from the site's env2.js, so a key rotation on their side doesn't need an app update.
+  Future<_MiruroConfig> get _settings =>
+      _config ??= _loadConfig().catchError((Object e, StackTrace stack) {
+        _config = null; // retry on the next request
+        Error.throwWithStackTrace(e, stack);
+      });
+
+  Future<_MiruroConfig> _loadConfig() async {
+    final (_, _, env) = await _h2Get(Uri.parse('$base/env2.js'));
+    final raw = RegExp(r'JSON\.parse\(("(?:[^"\\]|\\.)*")\)')
+        .firstMatch(utf8.decode(env))?[1];
+    if (raw == null) {
+      throw const FormatException('Miruro changed its config script');
     }
-    return null;
+    final values = jsonDecode(jsonDecode(raw) as String) as Map;
+    final (_, headers, _) = await _h2Get(
+      Uri.parse('$base/api/secure/jwks'),
+      _apiHeaders,
+    );
+    final proxy = '${values['VITE_PROXY_A'] ?? values['VITE_PROXY_B'] ?? ''}';
+    return (
+      pipeKey: _hex('${values['VITE_PIPE_OBF_KEY'] ?? ''}'),
+      proxyKey: _hex('${values['VITE_PROXY_OBF_KEY'] ?? ''}'),
+      proxy: proxy.endsWith('/') ? proxy : '$proxy/',
+      version: headers['x-protocol-version'],
+    );
   }
+
+  Future<dynamic> _pipe(String path, Map<String, Object?> query) async {
+    final c = await _settings;
+    final envelope = base64Url
+        .encode(
+          utf8.encode(
+            jsonEncode({
+              'path': path,
+              'method': 'GET',
+              'query': query,
+              'body': null,
+              'version': ?c.version,
+            }),
+          ),
+        )
+        .replaceAll('=', '');
+    final uri = Uri.parse('$base/api/secure/pipe?e=$envelope');
+    final (status, headers, body) = await _h2Get(uri, _apiHeaders);
+    if (status != 200) throw HttpException('HTTP $status', uri: uri);
+    return decodeMiruroReply(body, headers['x-obfuscated'], c.pipeKey);
+  }
+
+  // Miruro is keyed by AniList id, so the picker lists AniList's own results.
+  @override
+  Future<List<SearchResult>> search(String query) async => [
+    for (final m in await AniList.search(query))
+      SearchResult(
+        '${m['id']}',
+        titleOf(m),
+        image: m['coverImage']?['large'],
+        info: _info([
+          m['format'],
+          m['seasonYear'],
+          if (m['episodes'] != null) '${m['episodes']} eps',
+        ]),
+      ),
+  ];
+
+  @override
+  Future<String?> match(Map media) async => '${media['id']}';
 
   @override
   Future<List<Episode>> episodesOf(String id) async {
-    final raw = <Map>[];
-    for (var page = 1, last = 1; page <= last; page++) {
-      final json = await _api('m=release&id=$id&sort=episode_asc&page=$page');
-      last = json['last_page'] ?? 1;
-      raw.addAll((json['data'] as List? ?? const []).cast<Map>());
+    final json = await _pipe('episodes', {'anilistId': int.tryParse(id) ?? id});
+    // episode number → sub/dub → provider → that provider's episode id
+    final refs = <num, Map<String, Map<String, String>>>{};
+    final details = <num, Map>{};
+    for (final MapEntry(key: provider, value: p)
+        in (json['providers'] as Map? ?? const {}).entries) {
+      for (final MapEntry(key: audio, value: list)
+          in ((p as Map)['episodes'] as Map? ?? const {}).entries) {
+        if (audio != 'sub' && audio != 'dub') continue;
+        for (final e in (list as List).cast<Map>()) {
+          if (e['number'] is! num || e['id'] is! String) continue;
+          final number = e['number'] as num;
+          ((refs[number] ??= {})[audio as String] ??= {})[provider as String] =
+              e['id'];
+          details[number] ??= e;
+        }
+      }
     }
-    if (raw.isEmpty) return [];
-    // animepahe keeps counting across seasons (S2 starts at 13); renumber from 1.
-    final offset = ((raw.first['episode'] as num) - 1).clamp(
-      0,
-      double.infinity,
-    );
     return [
-      for (final e in raw)
+      for (final n in refs.keys.toList()..sort())
         Episode(
-          (e['episode'] as num) - offset,
-          thumbnail: e['snapshot'],
-          ref: '$id/${e['session']}',
+          n,
+          title: details[n]!['title'],
+          thumbnail: details[n]!['image'],
+          overview: details[n]!['description'],
+          ref: refs[n]!,
         ),
     ];
   }
@@ -502,67 +559,150 @@ class AnimePahe extends Source {
     Episode episode, {
     required bool dub,
   }) async {
-    final play = await browserFetch(
-      '$base/play/${episode.ref}',
-      referer: '$base/',
-    );
-    final buttons =
-        RegExp(r'<button[^>]*data-src="[^"]*"[^>]*>')
-            .allMatches(play)
-            .map((m) => _dataAttrs(m[0]!))
-            .where((b) => (b['audio'] == 'eng') == dub)
-            .toList()
-          ..sort(
-            (a, b) => (int.tryParse(b['resolution'] ?? '') ?? 0).compareTo(
-              int.tryParse(a['resolution'] ?? '') ?? 0,
-            ),
-          );
-    final resolved = await Future.wait(
-      buttons.map((button) async {
-        try {
-          final kwik = Uri.parse(button['src']!);
-          final html = await browserFetch('$kwik', referer: '$base/');
-          final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
-              .firstMatch(unpack(html))?[0];
-          if (m3u8 == null) return null;
-          return VideoStream(
-            '${button['fansub'] ?? 'Kwik'} ${button['resolution']}p',
-            m3u8,
-            {'Referer': '${kwik.origin}/', 'User-Agent': userAgent},
-          );
-        } on CloudflareChallenge {
-          rethrow;
-        } catch (_) {
-          return null;
-        }
-      }),
-    );
-    return resolved.nonNulls.toList();
+    final c = await _settings;
+    final category = dub ? 'dub' : 'sub';
+    final ids = (episode.ref as Map)[category] as Map? ?? const {};
+    final found = await Future.wait([
+      for (final MapEntry(key: provider, value: id) in ids.entries)
+        _pipe('sources', {
+              'episodeId': id,
+              'provider': provider,
+              'category': category,
+              'anilistId': media['id'],
+            })
+            .then((json) => _parseSources(c, '$provider', json))
+            .catchError(
+              (Object _) => <VideoStream>[],
+            ), // providers are often down
+    ]);
+    final all = found.expand((s) => s);
+    // HLS first: it goes through Miruro's proxy, while direct mp4 links expire more often.
+    return [...all.where((s) => s.isHls), ...all.where((s) => !s.isHls)];
+  }
+
+  List<VideoStream> _parseSources(
+    _MiruroConfig c,
+    String provider,
+    dynamic json,
+  ) {
+    final streams = (json['streams'] as List? ?? const []).cast<Map>();
+    final referer = '${streams.firstOrNull?['referer'] ?? ''}';
+    final subtitles = [
+      for (final t in json['subtitles'] as List? ?? const [])
+        if (t['file'] is String)
+          Subtitle(
+            '${t['label'] ?? t['language'] ?? 'Subtitles'}',
+            miruroProxyUrl(c.proxy, c.proxyKey, t['file'], referer, 'sub.vtt'),
+          ),
+    ];
+    return [
+      for (final s in streams)
+        if (s['url'] is String && (s['type'] == 'hls' || s['type'] == 'mp4'))
+          VideoStream(
+            [
+              s['server'] ?? provider,
+              s['quality'],
+            ].whereType<Object>().join(' '),
+            s['type'] == 'hls'
+                ? miruroProxyUrl(
+                    c.proxy,
+                    c.proxyKey,
+                    s['url'],
+                    '${s['referer'] ?? ''}',
+                    'pl.m3u8',
+                  )
+                : s['url'],
+            s['type'] == 'hls'
+                ? const {}
+                : {'Referer': '${s['referer'] ?? ''}', 'User-Agent': userAgent},
+            subtitles: subtitles,
+          ),
+    ];
   }
 }
 
-/// Expands Dean Edwards' p.a.c.k.e.r `eval(function(p,a,c,k,e,d){...}('...',a,c,'...'.split('|')))` scripts.
-String unpack(String js) {
-  final m = RegExp(
-    r"\}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('\|'\)",
-    dotAll: true,
-  ).firstMatch(js);
-  if (m == null) return js;
-  final radix = int.parse(m[2]!),
-      count = int.parse(m[3]!),
-      words = m[4]!.split('|');
-  String encode(int n) =>
-      (n < radix ? '' : encode(n ~/ radix)) +
-      (n % radix > 35
-          ? String.fromCharCode(n % radix + 29)
-          : (n % radix).toRadixString(36));
-  final dict = {
-    for (var i = 0; i < count; i++)
-      encode(i): i < words.length && words[i].isNotEmpty ? words[i] : encode(i),
-  };
-  return m[1]!
-      .replaceAll(r"\'", "'")
-      .replaceAllMapped(RegExp(r'\b\w+\b'), (w) => dict[w[0]] ?? w[0]!);
+/// A Miruro pipe reply: base64url, XORed with the pipe key when [obfuscated] is "2", then gzip or zlib JSON.
+dynamic decodeMiruroReply(List<int> body, String? obfuscated, List<int> key) {
+  if (obfuscated == null) return jsonDecode(utf8.decode(body));
+  var bytes = base64Url.decode(base64Url.normalize(ascii.decode(body).trim()));
+  if (obfuscated == '2') bytes = _xor(bytes, key);
+  return jsonDecode(
+    utf8.decode(bytes[0] == 0x1f ? gzip.decode(bytes) : zlib.decode(bytes)),
+  );
+}
+
+/// [url] through Miruro's stream proxy, which sends [referer] upstream: `<proxy><url>~<referer>/<file>`.
+String miruroProxyUrl(
+  String proxy,
+  List<int> key,
+  String url,
+  String referer,
+  String file,
+) {
+  String obfuscate(String s) =>
+      base64Url.encode(_xor(utf8.encode(s), key)).replaceAll('=', '');
+  return '$proxy${obfuscate(url)}${referer.isEmpty ? '' : '~${obfuscate(referer)}'}/$file';
+}
+
+Uint8List _xor(List<int> bytes, List<int> key) => Uint8List.fromList([
+  for (var i = 0; i < bytes.length; i++)
+    key.isEmpty ? bytes[i] : bytes[i] ^ key[i % key.length],
+]);
+
+List<int> _hex(String s) => [
+  for (var i = 0; i + 1 < s.length; i += 2)
+    int.parse(s.substring(i, i + 2), radix: 16),
+];
+
+/// One HTTP/2 GET. package:http speaks only HTTP/1.1, which Cloudflare turns away on Miruro's API.
+// ponytail: a new connection per request; keep one ClientTransportConnection open if Miruro calls get chatty
+Future<(int, Map<String, String>, Uint8List)> _h2Get(
+  Uri uri, [
+  Map<String, String> extra = const {},
+]) async {
+  final socket = await SecureSocket.connect(
+    uri.host,
+    443,
+    supportedProtocols: const ['h2'],
+    timeout: const Duration(seconds: 15),
+  );
+  final connection = ClientTransportConnection.viaSocket(socket);
+  try {
+    final stream = connection.makeRequest([
+      Header.ascii(':method', 'GET'),
+      Header.ascii(
+        ':path',
+        uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path,
+      ),
+      Header.ascii(':scheme', 'https'),
+      Header.ascii(':authority', uri.host),
+      Header.ascii('user-agent', userAgent),
+      for (final MapEntry(:key, :value) in extra.entries)
+        Header.ascii(key, value),
+    ], endStream: true);
+    final response = <String, String>{};
+    final body = <int>[];
+    await for (final message in stream.incomingMessages.timeout(
+      const Duration(seconds: 30),
+    )) {
+      switch (message) {
+        case HeadersStreamMessage(:final headers):
+          for (final h in headers) {
+            response[utf8.decode(h.name)] = utf8.decode(h.value);
+          }
+        case DataStreamMessage(:final bytes):
+          body.addAll(bytes);
+      }
+    }
+    return (
+      int.tryParse(response[':status'] ?? '') ?? 0,
+      response,
+      Uint8List.fromList(body),
+    );
+  } finally {
+    // terminate, not finish: finish waits forever on a stream abandoned by the timeout.
+    await connection.terminate();
+  }
 }
 
 extension on String {

@@ -320,7 +320,10 @@ class Downloads extends ChangeNotifier {
       if (streams.isEmpty) {
         throw Exception('No ${d.dub ? 'dub' : 'sub'} servers for this episode');
       }
-      final stream = streams.first;
+      // Only HLS is saved; direct mp4 servers can still be streamed.
+      final stream =
+          streams.where((s) => s.isHls).firstOrNull ??
+          (throw Exception('No downloadable servers for this episode'));
       final dir = await _dir(d).create(recursive: true);
       final length = await _saveHls(d, stream, dir);
       d.subtitles = await _saveSubtitles(stream, dir);

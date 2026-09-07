@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:aniview/downloads.dart';
@@ -21,14 +22,41 @@ void main() {
       ('Anikoto', 'https://anikototv.to'),
       ('animepahe', 'https://animepahe.pw'),
       ('Re:Anime', 'https://reanime.to'),
+      ('X', 'https://x.to'),
     ]);
   });
 
-  test('unpacks p.a.c.k.e.r scripts', () {
-    const packed =
-        r"eval(function(p,a,c,k,e,d){}('0 1=\'2://3.4/5.6\'',62,7,"
-        r"'const|source|https|cdn|example|video|m3u8'.split('|'),0,{}))";
-    expect(unpack(packed), "const source='https://cdn.example/video.m3u8'");
+  // Vectors captured from miruro.to: this proxied URL played, and the reply matches the site's own decoder.
+  test('builds Miruro proxy URLs and decodes pipe replies', () {
+    List<int> hex(String s) => [
+      for (var i = 0; i < s.length; i += 2)
+        int.parse(s.substring(i, i + 2), radix: 16),
+    ];
+    expect(
+      miruroProxyUrl(
+        'https://s1.watami.win/',
+        hex('a54d389c18527d9fd3e7f0643e27edbe'),
+        'https://hls.anidb.app/stream/6YXoA6yuljVaj1-Ek0NG7RfQtCwy1GYsc_Olz0Bn8A7SDNMQogfJ8Dxj5bzKajLK/master.m3u8',
+        'https://anidb.app/',
+        'pl.m3u8',
+      ),
+      'https://s1.watami.win/zTlM7GtoUrC7i4NKX0mE2sdjWexofQ7roYKRCRERtObKDA7lbT4XybKNwUl7TN3w4npq-kkmPuiq1rc9TUSy8ck3CN52ajyogKO-KW9IitjvdXzkcmcf5ZiGmih1CIDf1jld7jY_Turr~zTlM7GtoUrCyiZkAXAmMztVi/pl.m3u8',
+    );
+    expect(
+      decodeMiruroReply(
+        ascii.encode(
+          'bh4YNPj7z1PaYh56wRPrZjxZPWJKcWEF8jSZZL6PkOa5vEaedVbKU8QDW8L3PcIs',
+        ),
+        '2',
+        hex('71951034f8fbcf53d89db52ceb3dc22c'),
+      ),
+      {
+        'streams': [
+          {'type': 'hls'},
+        ],
+      },
+    );
+    expect(decodeMiruroReply(utf8.encode('{"a":1}'), null, const []), {'a': 1});
   });
 
   test('rewrites HLS playlists through the proxy', () {

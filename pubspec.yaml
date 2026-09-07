@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   flutter_inappwebview: ^6.2.0-beta.3
   http: ^1.6.0
+  http2: ^2.3.1
   media_kit: ^1.2.6
   media_kit_libs_video: ^1.0.7
   media_kit_video: ^2.0.1
