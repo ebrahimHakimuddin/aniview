@@ -110,6 +110,21 @@ class AniList {
     {'s': text},
   ))['Page']['media'];
 
+  /// Anime prequels and sequels of a show as (PREQUEL|SEQUEL, media), prequels first.
+  static Future<List<(String, Map)>> relations(int id) async {
+    final data = await query(
+      r'query($id:Int){Media(id:$id){relations{edges{relationType(version:2) node{type '
+      '$_media}}}}}',
+      {'id': id},
+    );
+    return [
+      for (final e in data['Media']['relations']['edges'])
+        if (e['node']['type'] == 'ANIME' &&
+            (e['relationType'] == 'PREQUEL' || e['relationType'] == 'SEQUEL'))
+          (e['relationType'] as String, e['node'] as Map),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+  }
+
   /// Watching (incl. rewatching) and planning entries, most recently updated first.
   static Future<Map<String, List>> lists() async {
     final me = await viewer();

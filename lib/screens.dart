@@ -868,6 +868,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Source? source;
   Future<List<Episode>>? episodes;
   late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
+  late final relations = AniList.relations(widget.media['id']);
   bool dub = Settings.preferDub, expanded = false;
 
   Map get media => widget.media;
@@ -1112,6 +1113,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     ),
                   ),
                 ],
+                FutureBuilder(
+                  future: relations,
+                  builder: (context, snap) => Column(
+                    children: [
+                      for (final (type, related)
+                          in snap.data ?? const <(String, Map)>[])
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: _RelationTile(type, related),
+                        ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 28),
                 Row(
                   children: [
@@ -1525,6 +1539,82 @@ class _MatchSheetState extends State<_MatchSheet> {
       ),
     ),
   );
+}
+
+/// A prequel or sequel; opens its details.
+class _RelationTile extends StatelessWidget {
+  const _RelationTile(this.type, this.media);
+
+  final String type;
+  final Map media;
+
+  @override
+  Widget build(BuildContext context) {
+    final prequel = type == 'PREQUEL';
+    return Material(
+      color: Colors.white.withValues(alpha: .04),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => openDetails(context, media),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 40,
+                  height: 56,
+                  child: _Img(
+                    media['coverImage']['extraLarge'],
+                    color: media['coverImage']['color'],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      prequel ? 'PREQUEL' : 'SEQUEL',
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 1.4,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    Text(
+                      titleOf(media),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      [
+                        media['format'],
+                        media['seasonYear'],
+                      ].whereType<Object>().join('  ·  '),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                prequel ? Icons.skip_previous_rounded : Icons.skip_next_rounded,
+                color: Colors.white54,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ResultSkeleton extends StatelessWidget {
