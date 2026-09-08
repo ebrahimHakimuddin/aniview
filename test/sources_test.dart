@@ -117,4 +117,21 @@ void main() {
     });
     expect(length, const Duration(seconds: 10));
   });
+
+  // The offline season cache stores episodes as JSON; nested Miruro refs must survive the round trip.
+  test('episodes round-trip through JSON', () {
+    const episode = Episode(
+      5.5,
+      title: 'T',
+      overview: 'O',
+      ref: {
+        'sub': {'p': 'id'},
+      },
+    );
+    final back = Episode.fromJson(jsonDecode(jsonEncode([episode]))[0]);
+    expect(
+      [back.number, back.title, back.thumbnail, back.overview, back.ref],
+      [5.5, 'T', null, 'O', episode.ref],
+    );
+  });
 }

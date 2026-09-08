@@ -156,112 +156,153 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            _TopBar(
-              viewer: viewer,
-              onAccount: _account,
-              onSettings: _openSettings,
-            ),
-            FutureBuilder(
-              future: trending,
-              builder: (context, snap) => _Hero(
-                items: snap.data?.take(6).toList() ?? const [],
-                loading: snap.connectionState != ConnectionState.done,
-                error: snap.error,
-                onRetry: _refresh,
+        child: FutureBuilder(
+          future: trending,
+          builder: (context, snap) => ListView(
+            padding: EdgeInsets.zero,
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              _TopBar(
+                viewer: viewer,
+                onAccount: _account,
+                onSettings: _openSettings,
               ),
-            ),
-            if (AniList.token != null)
-              FutureBuilder(
-                future: lists,
-                builder: (context, snap) {
-                  const title = 'Continue watching · This season';
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const ShelfSkeleton(title: title);
-                  }
-                  final airing = (snap.data?['CURRENT'] ?? const [])
-                      .where(_airingNow)
-                      .toList();
-                  return airing.isEmpty
-                      ? const SizedBox.shrink()
-                      : _Shelf(title, airing, onBack: _reloadLists);
-                },
-              ),
-            if (AniList.token == null)
-              _SignInCard(onTap: _account)
-            else
-              FutureBuilder(
-                future: lists,
-                builder: (context, snap) {
-                  if (snap.connectionState != ConnectionState.done) {
-                    return const ShelfSkeleton(title: 'Continue watching');
-                  }
-                  if (snap.hasError) {
-                    return _Section(
-                      'Your AniList',
-                      child: ErrorState(
-                        snap.error!,
-                        compact: true,
-                        onRetry: _reloadLists,
-                      ),
-                    );
-                  }
-                  final watching = snap.data!['CURRENT'] ?? const [];
-                  final current = watching
-                      .where((m) => !_airingNow(m))
-                      .toList(); // airing ones are in the top row
-                  final planning = snap.data!['PLANNING'] ?? const [];
-                  if (watching.isEmpty && planning.isEmpty) {
-                    return EmptyState(
-                      compact: true,
-                      icon: Icons.video_library_outlined,
-                      title: 'Your list is empty',
-                      message: 'Shows you watch or plan to watch on AniList show up here.',
-                      action: FilledButton.tonalIcon(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const SearchScreen(),
-                          ),
-                        ),
-                        icon: const Icon(Icons.search_rounded),
-                        label: const Text('Find a show'),
-                      ),
-                    );
-                  }
-                  return Column(
+              // Offline: go straight to what can play.
+              if (snap.hasError && _downloaded.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+                  child: Row(
                     children: [
-                      if (current.isNotEmpty)
-                        _Shelf(
-                          'Continue watching',
-                          current,
-                          onBack: _reloadLists,
+                      const Icon(
+                        Icons.cloud_off_rounded,
+                        size: 18,
+                        color: Colors.white54,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          "You're offline · showing your downloads",
+                          style: TextStyle(fontSize: 13, color: Colors.white60),
                         ),
-                      if (planning.isNotEmpty)
-                        _Shelf('Plan to watch', planning, onBack: _reloadLists),
+                      ),
+                      TextButton(
+                        onPressed: _refresh,
+                        child: const Text('Retry'),
+                      ),
                     ],
-                  );
-                },
-              ),
-            _shelf(
-              seasonTitle,
-              season,
-              onRetry: () => setState(() => season = AniList.season()),
-            ),
-            _shelf(
-              'Trending now',
-              trending,
-              onRetry: _refresh,
-              showError: false,
-            ), // the hero already shows it
-            const SizedBox(height: 96), // room for the continue-watching button
-          ],
+                  ),
+                ),
+                _Shelf('Downloaded', _downloaded, onBack: _reloadLists),
+              ] else ...[
+                _Hero(
+                  items: snap.data?.take(6).toList() ?? const [],
+                  loading: snap.connectionState != ConnectionState.done,
+                  error: snap.error,
+                  onRetry: _refresh,
+                ),
+                if (AniList.token != null)
+                  FutureBuilder(
+                    future: lists,
+                    builder: (context, snap) {
+                      const title = 'Continue watching · This season';
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const ShelfSkeleton(title: title);
+                      }
+                      final airing = (snap.data?['CURRENT'] ?? const [])
+                          .where(_airingNow)
+                          .toList();
+                      return airing.isEmpty
+                          ? const SizedBox.shrink()
+                          : _Shelf(title, airing, onBack: _reloadLists);
+                    },
+                  ),
+                if (AniList.token == null)
+                  _SignInCard(onTap: _account)
+                else
+                  FutureBuilder(
+                    future: lists,
+                    builder: (context, snap) {
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const ShelfSkeleton(title: 'Continue watching');
+                      }
+                      if (snap.hasError) {
+                        return _Section(
+                          'Your AniList',
+                          child: ErrorState(
+                            snap.error!,
+                            compact: true,
+                            onRetry: _reloadLists,
+                          ),
+                        );
+                      }
+                      final watching = snap.data!['CURRENT'] ?? const [];
+                      final current = watching
+                          .where((m) => !_airingNow(m))
+                          .toList(); // airing ones are in the top row
+                      final planning = snap.data!['PLANNING'] ?? const [];
+                      if (watching.isEmpty && planning.isEmpty) {
+                        return EmptyState(
+                          compact: true,
+                          icon: Icons.video_library_outlined,
+                          title: 'Your list is empty',
+                          message: 'Shows you watch or plan to watch on AniList show up here.',
+                          action: FilledButton.tonalIcon(
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const SearchScreen(),
+                              ),
+                            ),
+                            icon: const Icon(Icons.search_rounded),
+                            label: const Text('Find a show'),
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          if (current.isNotEmpty)
+                            _Shelf(
+                              'Continue watching',
+                              current,
+                              onBack: _reloadLists,
+                            ),
+                          if (planning.isNotEmpty)
+                            _Shelf(
+                              'Plan to watch',
+                              planning,
+                              onBack: _reloadLists,
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                _shelf(
+                  seasonTitle,
+                  season,
+                  onRetry: () => setState(() => season = AniList.season()),
+                ),
+                _shelf(
+                  'Trending now',
+                  trending,
+                  onRetry: _refresh,
+                  showError: false,
+                ), // the hero already shows it
+              ],
+              const SizedBox(
+                height: 96,
+              ), // room for the continue-watching button
+            ],
+          ),
         ),
       ),
     );
   }
+
+  /// Shows with a finished download.
+  List<Map> get _downloaded => {
+    for (final d in Downloads.instance.items)
+      if (d.status == DownloadStatus.done) d.media['id']: d.media,
+  }.values.toList();
 
   Widget _shelf(
     String title,
@@ -869,6 +910,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<List<Episode>>? episodes;
   late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
   late final relations = AniList.relations(widget.media['id']);
+  late final cachedSeason = Downloads.instance.season(widget.media);
   bool dub = Settings.preferDub, expanded = false;
 
   Map get media => widget.media;
@@ -897,8 +939,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
   // Episodes load only for the chosen site, so a Cloudflare prompt appears only when that site needs one.
   void _select(Source s) => setState(() {
     source = s;
-    episodes = withCloudflare(context, () => loadEpisodes(s, media));
+    episodes = withCloudflare(context, () => loadEpisodes(s, media)).then((
+      list,
+    ) {
+      Downloads.instance.saveSeason(
+        media,
+        list,
+      ); // keeps the offline copy current
+      return list;
+    });
   });
+
+  void _downloadSeason(Source site, List<Episode> list) {
+    final count = list.where((e) {
+      final d = Downloads.instance.entry(media, e.number, dub);
+      return d == null || d.status == DownloadStatus.failed;
+    }).length;
+    Downloads.instance.enqueue(media, site.name, list, dub: dub, season: list);
+    showSuccess(
+      context,
+      count == 0
+          ? 'Every episode is already downloaded or queued'
+          : 'Downloading $count ${dub ? 'dub' : 'sub'} episodes',
+    );
+  }
 
   Future<void> _editEntry() async {
     final entry = media['mediaListEntry'] as Map?;
@@ -1149,6 +1213,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       ),
                       onSelectionChanged: (s) => setState(() => dub = s.first),
                     ),
+                    FutureBuilder(
+                      future: episodes,
+                      builder: (context, snap) {
+                        final list = snap.data, site = source;
+                        if (list == null || list.isEmpty || site == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return PopupMenuButton<VoidCallback>(
+                          tooltip: 'Season actions',
+                          icon: const Icon(Icons.more_vert_rounded),
+                          color: _sheet,
+                          onSelected: (action) => action(),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: () => _downloadSeason(site, list),
+                              child: const ListTile(
+                                leading: Icon(Icons.download_rounded),
+                                title: Text('Download season'),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1282,27 +1370,48 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Widget _episodeSliver(List<Episode> list, int progress, Source? site) =>
-      SliverList.builder(
-        itemCount: list.length,
-        itemBuilder: (context, i) => _EpisodeTile(
-          list[i],
-          watched: list[i].number <= progress,
+  /// [site] is null offline, when only downloaded episodes play.
+  Widget _episodeSliver(List<Episode> list, int progress, Source? site) {
+    final playable = site != null
+        ? list
+        : [
+            for (final e in list)
+              if (Downloads.instance.find(media, e.number) != null) e,
+          ];
+    return SliverList.builder(
+      itemCount: list.length,
+      itemBuilder: (context, i) {
+        final episode = list[i];
+        final watched = episode.number <= progress;
+        final saved = site != null || playable.contains(episode);
+        return _EpisodeTile(
+          episode,
+          watched: watched,
           trailing: site == null
-              ? const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Icon(
-                    Icons.download_done_rounded,
-                    color: Colors.white54,
-                  ),
-                )
+              ? saved
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Icon(
+                          Icons.download_done_rounded,
+                          color: Colors.white54,
+                        ),
+                      )
+                    : null
               : _DownloadButton(
                   media: media,
                   source: site,
-                  episode: list[i],
+                  episode: episode,
+                  season: list,
                   dub: dub,
                 ),
           onTap: () async {
+            if (!saved) {
+              showError(
+                context,
+                "Episode ${epNumber(episode.number)} isn't downloaded",
+              );
+              return;
+            }
             await Navigator.push(
               context,
               MaterialPageRoute(
@@ -1312,8 +1421,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   sourceName:
                       site?.name ??
                       Downloads.instance.forMedia(media).firstOrNull?.source,
-                  episodes: list,
-                  index: i,
+                  episodes: playable,
+                  index: playable.indexOf(episode),
                   dub: dub,
                 ),
               ),
@@ -1324,8 +1433,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ); // progress and resume point changed
             }
           },
-        ),
-      );
+        );
+      },
+    );
+  }
 
   /// Downloaded episodes, shown when the site can't be reached.
   Widget? _offlineList(int progress) {
@@ -1344,7 +1455,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    "Can't reach the site, showing your downloaded episodes",
+                    "Can't reach the site, only downloaded episodes play",
                     style: TextStyle(fontSize: 13, color: Colors.white60),
                   ),
                 ),
@@ -1352,7 +1463,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           ),
         ),
-        _episodeSliver(downloaded, progress, null),
+        FutureBuilder(
+          future: cachedSeason,
+          builder: (context, snap) =>
+              _episodeSliver(snap.data ?? downloaded, progress, null),
+        ),
       ],
     );
   }
@@ -1986,12 +2101,14 @@ class _DownloadButton extends StatelessWidget {
     required this.media,
     required this.source,
     required this.episode,
+    required this.season,
     required this.dub,
   });
 
   final Map media;
   final Source source;
   final Episode episode;
+  final List<Episode> season;
   final bool dub;
 
   @override
@@ -2003,8 +2120,13 @@ class _DownloadButton extends StatelessWidget {
         null => IconButton(
           tooltip: 'Download',
           icon: const Icon(Icons.download_rounded, color: Colors.white60),
-          onPressed: () =>
-              Downloads.instance.enqueue(media, source.name, episode, dub: dub),
+          onPressed: () => Downloads.instance.enqueue(
+            media,
+            source.name,
+            [episode],
+            dub: dub,
+            season: season,
+          ),
         ),
         DownloadStatus.queued => IconButton(
           tooltip: 'Queued · tap to cancel',

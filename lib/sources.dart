@@ -47,6 +47,22 @@ class Episode {
           overview: overview ?? info.overview,
           ref: ref,
         );
+
+  Map<String, dynamic> toJson() => {
+    'number': number,
+    'title': title,
+    'thumbnail': thumbnail,
+    'overview': overview,
+    'ref': ref,
+  };
+
+  factory Episode.fromJson(Map json) => Episode(
+    json['number'],
+    title: json['title'],
+    thumbnail: json['thumbnail'],
+    overview: json['overview'],
+    ref: json['ref'],
+  );
 }
 
 class Subtitle {

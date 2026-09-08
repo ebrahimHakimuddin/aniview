@@ -194,32 +194,75 @@ class Downloads extends ChangeNotifier {
     );
   }
 
-  void enqueue(Map media, String source, Episode episode, {required bool dub}) {
-    if (entry(media, episode.number, dub) case final existing?) {
-      return retry(existing);
+  /// Queues [episodes] (skipping ones already queued or saved, retrying failed ones) and caches [season] so the
+  /// show's full episode list is available offline.
+  void enqueue(
+    Map media,
+    String source,
+    Iterable<Episode> episodes, {
+    required bool dub,
+    required List<Episode> season,
+  }) {
+    for (final episode in episodes) {
+      if (entry(media, episode.number, dub) case final existing?) {
+        _retry(existing);
+        continue;
+      }
+      items.add(
+        Download(
+          media: media,
+          source: source,
+          number: episode.number,
+          dub: dub,
+          ref: episode.ref,
+          title: episode.title,
+          thumbnail: episode.thumbnail,
+        ),
+      );
     }
-    items.add(
-      Download(
-        media: media,
-        source: source,
-        number: episode.number,
-        dub: dub,
-        ref: episode.ref,
-        title: episode.title,
-        thumbnail: episode.thumbnail,
-      ),
-    );
+    _notify(save: true);
+    _pump();
+    saveSeason(media, season);
+  }
+
+  void retry(Download d) {
+    _retry(d);
     _notify(save: true);
     _pump();
   }
 
-  void retry(Download d) {
+  void _retry(Download d) {
     if (d.status != DownloadStatus.failed) return;
     d
       ..status = DownloadStatus.queued
       ..error = null;
-    _notify(save: true);
-    _pump();
+  }
+
+  File _seasonFile(Map media) =>
+      File('${_root.path}/seasons/${media['id']}.json');
+
+  /// Caches a show's episode list, only for shows with downloads.
+  Future<void> saveSeason(Map media, List<Episode> season) async {
+    if (!items.any((d) => d.media['id'] == media['id'])) return;
+    try {
+      final file = _seasonFile(media);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(jsonEncode(season));
+      // The cache is optional; offline falls back to the downloaded episodes.
+    } catch (_) {}
+  }
+
+  /// The cached episode list of a downloaded show, if any.
+  Future<List<Episode>?> season(Map media) async {
+    try {
+      return [
+        for (final json
+            in jsonDecode(await _seasonFile(media).readAsString()) as List)
+          Episode.fromJson(json),
+      ];
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> remove(Download d) async {
@@ -231,6 +274,9 @@ class Downloads extends ChangeNotifier {
     try {
       await _dir(d).delete(recursive: true);
     } catch (_) {} // nothing on disk yet
+    if (!items.any((i) => i.media['id'] == d.media['id'])) {
+      _seasonFile(d.media).delete().ignore();
+    }
   }
 
   Future<void> removeAll() async {
