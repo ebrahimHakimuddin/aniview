@@ -267,7 +267,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   {
                     '': 'Highest ranked',
                     for (final s in snap.data ?? const <Source>[])
-                      s.name: s.name,
+                      s.name: s.label,
                   },
                   Settings.preferredSource,
                   (v) => Settings.preferredSource = v,

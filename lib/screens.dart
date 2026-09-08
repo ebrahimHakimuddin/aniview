@@ -1238,14 +1238,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
     }
     if (sources == null) {
-      return const Row(
-        children: [
-          Skeleton(width: 96, height: 34, radius: 17),
-          SizedBox(width: 8),
-          Skeleton(width: 96, height: 34, radius: 17),
-          SizedBox(width: 8),
-          Skeleton(width: 96, height: 34, radius: 17),
-        ],
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: Skeleton(width: 160, height: 44, radius: 22),
       );
     }
     if (sources!.isEmpty) {
@@ -1256,21 +1251,33 @@ class _DetailsScreenState extends State<DetailsScreen> {
         message: "None of everythingmoe's top sites are supported yet.",
       );
     }
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          for (final (i, s) in sources!.indexed)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text('#${i + 1}  ${s.name}'),
-                selected: s == source,
-                onSelected: (_) => _select(s),
-              ),
-            ),
-        ],
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.only(left: 16, right: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: .06),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<Source>(
+            value: source,
+            icon: const Icon(Icons.arrow_drop_down_rounded),
+            dropdownColor: _sheet,
+            borderRadius: BorderRadius.circular(12),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+            items: [
+              for (final (i, s) in sources!.indexed)
+                DropdownMenuItem(
+                  value: s,
+                  child: Text('#${i + 1}  ${s.label}'),
+                ),
+            ],
+            onChanged: (s) {
+              if (s != null && s != source) _select(s);
+            },
+          ),
+        ),
       ),
     );
   }

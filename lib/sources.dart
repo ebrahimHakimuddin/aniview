@@ -82,6 +82,8 @@ abstract class Source {
   Source(this.name, this.base);
   final String name, base;
 
+  String get label => name;
+
   Future<List<SearchResult>> search(String query);
 
   /// The site's id for [media] when it can be matched confidently, else null.
@@ -443,6 +445,9 @@ typedef _MiruroConfig = ({
 /// HLS plays through Miruro's own stream proxy, mp4 directly with the provider's Referer.
 class Miruro extends Source {
   Miruro(super.name, super.base);
+
+  @override
+  String get label => '$name (WIP)';
 
   static const _apiHeaders = {
     'referer': 'https://www.miruro.to/watch',
