@@ -950,6 +950,52 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
   });
 
+  /// Sets AniList progress to [progress] episodes; queued for later when offline and moving forward.
+  Future<void> _markWatched(int progress) async {
+    if (AniList.token == null) {
+      return showError(context, 'Sign in with AniList to track episodes');
+    }
+    final entry = media['mediaListEntry'] as Map?;
+    final status = progress == media['episodes']
+        ? 'COMPLETED'
+        : entry?['status'] == 'REPEATING'
+        ? 'REPEATING'
+        : 'CURRENT';
+    try {
+      media['mediaListEntry'] = await AniList.saveEntry(
+        media['id'],
+        status: status,
+        progress: progress,
+      );
+      if (mounted) {
+        showSuccess(
+          context,
+          progress == 0
+              ? 'Marked as unwatched'
+              : 'Watched up to Episode $progress',
+        );
+      }
+    } catch (e) {
+      if (progress <= (entry?['progress'] as int? ?? 0)) {
+        if (mounted) showError(context, e); // AniList sync never rolls back
+        return;
+      }
+      await AniList.queueProgress(media, progress);
+      media['mediaListEntry'] = {
+        ...?entry,
+        'progress': progress,
+        'status': status,
+      };
+      if (mounted) {
+        showSuccess(
+          context,
+          'Saved offline · syncs to AniList when you’re back online',
+        );
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
   void _downloadSeason(Source site, List<Episode> list) {
     final count = list.where((e) {
       final d = Downloads.instance.entry(media, e.number, dub);
@@ -1233,6 +1279,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 title: Text('Download season'),
                               ),
                             ),
+                            if (AniList.token != null)
+                              PopupMenuItem(
+                                value: () => _markWatched(
+                                  list.fold(
+                                    0,
+                                    (n, e) =>
+                                        e.number > n ? e.number.toInt() : n,
+                                  ),
+                                ),
+                                child: const ListTile(
+                                  leading: Icon(Icons.done_all_rounded),
+                                  title: Text('Mark season watched'),
+                                ),
+                              ),
                           ],
                         );
                       },
@@ -1370,7 +1430,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// [site] is null offline, when only downloaded episodes play.
+  /// [site] is null offline, when only downloaded episodes play. Long-press toggles watched.
   Widget _episodeSliver(List<Episode> list, int progress, Source? site) {
     final playable = site != null
         ? list
@@ -1387,6 +1447,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         return _EpisodeTile(
           episode,
           watched: watched,
+          onLongPress: () => _markWatched(
+            watched ? episode.number.ceil() - 1 : episode.number.toInt(),
+          ),
           trailing: site == null
               ? saved
                     ? const Padding(
@@ -1986,12 +2049,14 @@ class _EpisodeTile extends StatelessWidget {
     this.episode, {
     required this.watched,
     required this.onTap,
+    this.onLongPress,
     this.trailing,
   });
 
   final Episode episode;
   final bool watched;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final Widget? trailing;
 
   @override
@@ -2001,6 +2066,7 @@ class _EpisodeTile extends StatelessWidget {
     final overview = episode.overview;
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         child: Row(
