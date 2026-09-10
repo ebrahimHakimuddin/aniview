@@ -3,6 +3,14 @@
 Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in); episodes and
 streams come from third-party sites.
 
+## Disclaimer
+
+AniView does not host, store, upload or serve any video, subtitle or image content. Everything shown in the app
+comes from third-party websites and APIs (the streaming sites listed below, AniList, ani.zip and AniSkip); AniView
+only fetches it from them at your request, like a browser would. Downloads are saved on your own device only.
+AniView has no affiliation with and no control over these third parties, and is not responsible for their
+content. Any takedown or copyright concerns should be addressed to the site that hosts the content.
+
 ## Run
 
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
