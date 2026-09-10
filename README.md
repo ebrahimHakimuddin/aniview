@@ -6,8 +6,8 @@ streams come from third-party sites.
 ## Disclaimer
 
 AniView does not host, store, upload or serve any video, subtitle or image content. Everything shown in the app
-comes from third-party websites and APIs; AniView only fetches it from them at your request, like a browser would. Downloads are saved on your own device only.
-AniView has no affiliation with and no control over these third parties, and is not responsible for their
+comes from third-party websites and APIs; AniView only fetches it from them at your request, like a browser
+would. Downloads are saved on your own device only. AniView has no affiliation with and no control over these third parties, and is not responsible for their
 content. Any takedown or copyright concerns should be addressed to the site that hosts the content.
 
 ## Run
@@ -16,6 +16,9 @@ content. Any takedown or copyright concerns should be addressed to the site that
 2. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id>`
 
 ## Extras
+
+- If an automatic match is wrong or missing, **Wrong show?** on the details page searches the site and remembers
+  your pick per show and site (reset in Settings).
 
 - Offline downloads save the HLS playlist, segments, encryption keys and preferred subtitles on-device. A
   downloaded episode is preferred during playback even when the network is available. Interrupted downloads
