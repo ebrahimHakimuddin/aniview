@@ -15,6 +15,21 @@ content. Any takedown or copyright concerns should be addressed to the site that
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
 2. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id>`
 
+## Release
+
+Release APKs are signed with `android/app/aniview-release.jks`, configured by `android/key.properties`
+(`storeFile`, `keyAlias`, `storePassword`, `keyPassword`). Both are gitignored: back them up, since updates only
+install over builds signed with the same key.
+
+1. Bump `version:` in `pubspec.yaml` and commit.
+2. Build and publish:
+
+   ```sh
+   fvm flutter build apk --release --split-per-abi --dart-define=ANILIST_CLIENT_ID=<client id>
+   git tag v1.5.2 && git push origin main v1.5.2
+   gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
+   ```
+
 ## Extras
 
 - If an automatic match is wrong or missing, **Wrong show?** on the details page searches the site and remembers
