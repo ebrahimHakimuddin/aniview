@@ -30,6 +30,8 @@ install over builds signed with the same key.
    gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
    ```
 
+The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
+
 ## Extras
 
 - If an automatic match is wrong or missing, **Wrong show?** on the details page searches the site and remembers

@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
@@ -66,6 +70,61 @@ class Settings {
 
 /// App version and opening links in the browser, answered by MainActivity.
 const _app = MethodChannel('aniview/app');
+
+const _latestRelease =
+    'https://api.github.com/repos/ebrahimHakimuddin/aniview/releases/latest';
+
+/// Whether release tag [latest] ("v1.5.2") is a newer version than [current] ("1.5.1").
+bool isNewerVersion(String latest, String current) {
+  List<int> parts(String v) => [
+    for (final p in v.replaceFirst('v', '').split('+').first.split('.'))
+      int.tryParse(p) ?? 0,
+  ];
+  final a = parts(latest), b = parts(current);
+  for (var i = 0; i < a.length || i < b.length; i++) {
+    final x = i < a.length ? a[i] : 0, y = i < b.length ? b[i] : 0;
+    if (x != y) return x > y;
+  }
+  return false;
+}
+
+/// Offers the latest GitHub release when it is newer than this build.
+/// [quiet] (the check on launch) stays silent when up to date or offline.
+Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
+  try {
+    final current = await _app.invokeMethod<String>('version') ?? '';
+    final res = await http
+        .get(Uri.parse(_latestRelease))
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw HttpException('${res.statusCode}');
+    final release = jsonDecode(res.body) as Map;
+    final latest = release['tag_name'] as String;
+    if (!context.mounted) return;
+    if (!isNewerVersion(latest, current)) {
+      if (!quiet) showSuccess(context, 'You have the latest version');
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1C1C26),
+          showCloseIcon: true,
+          content: Text(
+            'AniView ${latest.replaceFirst('v', '')} is available',
+            style: const TextStyle(color: Colors.white),
+          ),
+          action: SnackBarAction(
+            label: 'Update',
+            onPressed: () =>
+                _app.invokeMethod('open', release['html_url']).ignore(),
+          ),
+        ),
+      );
+  } catch (e) {
+    if (!quiet && context.mounted) showError(context, e);
+  }
+}
 
 const subtitleLanguages = [
   'Off',
@@ -447,8 +506,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 leading: const Icon(Icons.info_outline_rounded),
                 title: const Text('AniView'),
                 subtitle: Text(
-                  snap.hasData ? 'Version ${snap.data}' : 'Version',
+                  snap.hasData
+                      ? 'Version ${snap.data} · Tap to check for updates'
+                      : 'Version',
                 ),
+                trailing: const Icon(Icons.system_update_rounded, size: 18),
+                onTap: () => checkForUpdate(context),
               ),
             ),
             for (final (icon, title, url) in const [
