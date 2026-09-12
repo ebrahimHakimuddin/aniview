@@ -124,6 +124,12 @@ bool isNewerVersion(String latest, String current) {
   return false;
 }
 
+/// The release asset built for [abi] ("arm64-v8a"), or null when there isn't one.
+Map? updateApk(List assets, String? abi) => assets
+    .cast<Map>()
+    .where((a) => a['name'] == 'app-$abi-release.apk')
+    .firstOrNull;
+
 /// Offers the latest GitHub release when it is newer than this build.
 /// [quiet] (the check on launch) stays silent when up to date or offline.
 Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
@@ -135,6 +141,9 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
     if (res.statusCode != 200) throw HttpException('${res.statusCode}');
     final release = jsonDecode(res.body) as Map;
     final latest = release['tag_name'] as String;
+    final abi = await _app.invokeMethod<String>('abi');
+    final apk = updateApk(release['assets'] as List? ?? const [], abi);
+    final version = latest.replaceFirst('v', '');
     if (!context.mounted) return;
     if (!isNewerVersion(latest, current)) {
       if (!quiet) showSuccess(context, 'You have the latest version');
@@ -147,13 +156,26 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
           backgroundColor: const Color(0xFF1C1C26),
           showCloseIcon: true,
           content: Text(
-            'AniView ${latest.replaceFirst('v', '')} is available',
+            'AniView $version is available',
             style: const TextStyle(color: Colors.white),
           ),
           action: SnackBarAction(
             label: 'Update',
-            onPressed: () =>
-                _app.invokeMethod('open', release['html_url']).ignore(),
+            onPressed: () async {
+              if (apk == null) {
+                return _app.invokeMethod('open', release['html_url']).ignore();
+              }
+              await _app.invokeMethod('download', {
+                'url': apk['browser_download_url'],
+                'title': 'AniView $version',
+              });
+              if (context.mounted) {
+                showSuccess(
+                  context,
+                  'Downloading update · tap the notification to install',
+                );
+              }
+            },
           ),
         ),
       );

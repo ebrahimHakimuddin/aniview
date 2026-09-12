@@ -1,6 +1,7 @@
 package com.kidfury.aniview
 
 import android.Manifest
+import android.app.DownloadManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -31,6 +32,16 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "version" -> result.success(packageManager.getPackageInfo(packageName, 0).versionName)
+                    "abi" -> result.success(Build.SUPPORTED_ABIS.first())
+                    // The system notification opens the installer when tapped.
+                    "download" -> {
+                        val request = DownloadManager.Request(Uri.parse(call.argument<String>("url")))
+                            .setTitle(call.argument<String>("title"))
+                            .setMimeType("application/vnd.android.package-archive")
+                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                        result.success(null)
+                    }
                     "open" -> {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
                         result.success(null)
