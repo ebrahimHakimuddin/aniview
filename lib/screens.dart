@@ -911,12 +911,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Object? sitesError;
   Source? source;
   Future<List<Episode>>? episodes;
-  late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
 
-  /// MAL entries arrive without an AniList id, which sources and ani.zip are keyed by.
+  /// MAL entries arrive without an AniList id, which history, downloads and sources are keyed by.
   late final Future<void> _ids = Tracker.resolveIds(widget.media);
+  late Future<Map<String, dynamic>?> record = _ids.then(
+    (_) => WatchHistory.of(widget.media),
+  );
   late final relations = _ids.then((_) => Tracker.relations(widget.media));
-  late final cachedSeason = Downloads.instance.season(widget.media);
+  late final cachedSeason = _ids.then(
+    (_) => Downloads.instance.season(widget.media),
+  );
   bool dub = Settings.preferDub, expanded = false;
 
   Map get media => widget.media;
