@@ -52,7 +52,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late Future<Map<String, List>> lists = Tracker.lists();
   late Future<List> trending = Tracker.trending();
   late Future<List> season = Tracker.season();
-  late Future<Map<String, dynamic>?> lastWatched = WatchHistory.latest();
+
+  /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
+  late Future<List<Map<String, dynamic>>> history = WatchHistory.all();
 
   @override
   void initState() {
@@ -87,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _reloadLists() => setState(() {
     lists = Tracker.lists();
-    lastWatched = WatchHistory.latest();
+    history = WatchHistory.all();
   });
 
   Future<void> _refresh() async {
@@ -96,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       lists = Tracker.lists();
       trending = Tracker.trending();
       season = Tracker.season();
-      lastWatched = WatchHistory.latest();
+      history = WatchHistory.all();
     });
     _syncPending();
     try {
@@ -142,9 +144,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: FutureBuilder(
-        future: lastWatched,
+        future: history,
         builder: (context, snap) {
-          final record = snap.data;
+          final record = snap.data?.firstOrNull;
           if (record == null) return const SizedBox.shrink();
           return ContinueFab(
             title: 'Continue EP ${epNumber(record['episode'])}',
@@ -194,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+                _recentlyWatched,
                 _Shelf('Downloaded', _downloaded, onBack: _reloadLists),
               ] else ...[
                 _Hero(
@@ -279,6 +282,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       );
                     },
                   ),
+                _recentlyWatched,
                 _shelf(
                   seasonTitle,
                   season,
@@ -300,6 +304,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
+
+  Widget get _recentlyWatched => FutureBuilder(
+    future: history,
+    builder: (context, snap) => snap.data?.isNotEmpty ?? false
+        ? _Shelf('Recently watched', [
+            for (final record in snap.data!) record['media'],
+          ], onBack: _reloadLists)
+        : const SizedBox.shrink(),
+  );
 
   /// Shows with a finished download.
   List<Map> get _downloaded => {

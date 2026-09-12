@@ -13,9 +13,6 @@ class WatchHistory {
         : (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<Map<String, dynamic>?> latest() async =>
-      (await all()).firstOrNull;
-
   static Future<Map<String, dynamic>?> of(Map media) async =>
       (await all()).where((r) => r['media']['id'] == media['id']).firstOrNull;
 
