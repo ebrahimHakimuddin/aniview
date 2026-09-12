@@ -8,10 +8,46 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
+import 'mal.dart';
 import 'downloads.dart';
 import 'history.dart';
 import 'sources.dart';
 import 'states.dart';
+
+typedef _Service = ({
+  String name,
+  String define,
+  bool usable,
+  bool Function() signedIn,
+  Future<void> Function(BuildContext) login,
+  Future<void> Function() logout,
+  Future<Map<String, dynamic>?> Function() viewer,
+});
+
+/// The trackers you can sign into. AniList leads; MAL covers for it when AniList can't be reached.
+final List<_Service> _services = [
+  (
+    name: 'AniList',
+    define: 'ANILIST_CLIENT_ID',
+    usable: AniList.usable,
+    signedIn: _aniListIn,
+    login: AniList.login,
+    logout: AniList.logout,
+    viewer: AniList.viewer,
+  ),
+  (
+    name: 'MyAnimeList',
+    define: 'MAL_CLIENT_ID',
+    usable: MAL.usable,
+    signedIn: _malIn,
+    login: MAL.login,
+    logout: MAL.logout,
+    viewer: MAL.viewer,
+  ),
+];
+
+bool _aniListIn() => AniList.token != null;
+bool _malIn() => MAL.token != null;
 
 enum SkipMode { button, auto, off }
 
@@ -211,17 +247,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ) ??
       false;
 
-  Future<void> _signIn() async {
-    if (AniList.clientId.isEmpty) {
+  Future<void> _signIn(_Service service) async {
+    if (!service.usable) {
       showError(
         context,
-        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
+        'This build has no ${service.name} client id (--dart-define=${service.define})',
       );
       return;
     }
     try {
-      await AniList.login(context);
-      final me = await AniList.viewer();
+      await service.login(context);
+      final me = await service.viewer();
       if (mounted && me != null) {
         showSuccess(context, 'Signed in as ${me['name']}');
       }
@@ -231,58 +267,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _signOut() async {
-    await AniList.logout();
+  Future<void> _signOut(_Service service) async {
+    await service.logout();
     if (!mounted) return;
     setState(() {});
-    showSuccess(context, 'Signed out of AniList');
+    showSuccess(context, 'Signed out of ${service.name}');
   }
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = AniList.token != null;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
-          _Group('AniList', [
-            FutureBuilder(
-              future: AniList.viewer(),
-              builder: (context, snap) {
-                final avatar = snap.data?['avatar']?['large'] as String?;
-                return ListTile(
-                  leading: avatar == null
-                      ? const Icon(Icons.account_circle_rounded, size: 40)
-                      : CircleAvatar(
-                          radius: 20,
-                          backgroundImage: NetworkImage(avatar),
-                        ),
-                  title: Text(
-                    signedIn
-                        ? (snap.data?['name'] ?? 'AniList')
-                        : 'Not signed in',
-                  ),
-                  subtitle: Text(
-                    signedIn
-                        ? 'Your progress syncs to AniList'
-                        : 'Sign in to track what you watch',
-                  ),
-                  trailing: signedIn
-                      ? TextButton(
-                          onPressed: _signOut,
-                          child: const Text('Sign out'),
-                        )
-                      : FilledButton(
-                          onPressed: _signIn,
-                          child: const Text('Sign in'),
-                        ),
-                );
-              },
-            ),
+          _Group('Tracking', [
+            for (final service in _services)
+              _AccountTile(
+                service,
+                onSignIn: () => _signIn(service),
+                onSignOut: () => _signOut(service),
+              ),
             SwitchListTile(
               title: const Text('Update progress automatically'),
-              subtitle: const Text('Marks the episode watched on AniList'),
+              subtitle: const Text(
+                'Marks the episode watched on every signed-in service',
+              ),
               value: Settings.syncAniList,
               onChanged: (v) => setState(() => Settings.syncAniList = v),
             ),
@@ -612,4 +622,42 @@ class _Choice extends StatelessWidget {
       ],
     ),
   );
+}
+
+class _AccountTile extends StatelessWidget {
+  const _AccountTile(
+    this.service, {
+    required this.onSignIn,
+    required this.onSignOut,
+  });
+
+  final _Service service;
+  final VoidCallback onSignIn, onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final signedIn = service.signedIn();
+    return FutureBuilder(
+      future: signedIn ? service.viewer() : null,
+      builder: (context, snap) {
+        final avatar = snap.data?['avatar']?['large'] as String?;
+        return ListTile(
+          leading: avatar == null
+              ? const Icon(Icons.account_circle_rounded, size: 40)
+              : CircleAvatar(radius: 20, backgroundImage: NetworkImage(avatar)),
+          title: Text(
+            signedIn ? '${snap.data?['name'] ?? service.name}' : service.name,
+          ),
+          subtitle: Text(
+            signedIn
+                ? 'Your progress syncs to ${service.name}'
+                : 'Not signed in',
+          ),
+          trailing: signedIn
+              ? TextButton(onPressed: onSignOut, child: const Text('Sign out'))
+              : FilledButton(onPressed: onSignIn, child: const Text('Sign in')),
+        );
+      },
+    );
+  }
 }

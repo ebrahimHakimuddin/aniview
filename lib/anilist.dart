@@ -174,58 +174,6 @@ class AniList {
       'id': entry['id'],
     });
   }
-
-  static const _pendingKey = 'anilist_pending';
-  static Future<int>? _syncing;
-
-  static Map<String, dynamic> _pending(SharedPreferences prefs) =>
-      jsonDecode(prefs.getString(_pendingKey) ?? '{}');
-
-  /// Remembers progress made while AniList couldn't be reached so [syncPending] can push it later.
-  static Future<void> queueProgress(Map media, int progress) async {
-    final prefs = await SharedPreferences.getInstance();
-    final pending = _pending(prefs);
-    final existing = pending['${media['id']}']?['progress'] as int? ?? 0;
-    if (progress <= existing) return;
-    pending['${media['id']}'] = {'media': media, 'progress': progress};
-    await prefs.setString(_pendingKey, jsonEncode(pending));
-  }
-
-  /// Pushes queued offline progress and returns how many shows were updated. Never rolls AniList back.
-  static Future<int> syncPending() =>
-      _syncing ??= _syncPending().whenComplete(() => _syncing = null);
-
-  static Future<int> _syncPending() async {
-    if (token == null) return 0;
-    final prefs = await SharedPreferences.getInstance();
-    final pending = _pending(prefs);
-    if (pending.isEmpty) return 0;
-    var synced = 0;
-    for (final MapEntry(:key, :value) in pending.entries.toList()) {
-      try {
-        final media = value['media'] as Map;
-        final progress = value['progress'] as int;
-        if (progress > await progressOf(media['id'])) {
-          await saveProgress(media, progress);
-          synced++;
-        }
-        pending.remove(key);
-      } catch (_) {
-        break; // still offline; the rest stays queued
-      }
-    }
-    await prefs.setString(_pendingKey, jsonEncode(pending));
-    return synced;
-  }
-
-  static Future<void> saveProgress(Map media, int progress) => query(
-    r'mutation($id:Int,$p:Int,$s:MediaListStatus){SaveMediaListEntry(mediaId:$id,progress:$p,status:$s){id}}',
-    {
-      'id': media['id'],
-      'p': progress,
-      's': progress == media['episodes'] ? 'COMPLETED' : 'CURRENT',
-    },
-  );
 }
 
 /// Shows [url] in an in-app browser and returns the `aniview://…` redirect it ends on, or null if closed.

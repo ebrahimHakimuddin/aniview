@@ -7,12 +7,29 @@ class EpisodeInfo {
   final String? title, image, overview;
 }
 
-/// Per-episode titles, synopses and artwork from ani.zip, keyed by episode number ("1", "2", …).
-Future<Map<String, EpisodeInfo>> episodeInfo(int anilistId) async {
+/// ani.zip's entry for a show, looked up by AniList id when there is one and by MAL id otherwise.
+Future<Map<String, dynamic>> _mappings(Map media) async {
+  final query = media['id'] is int
+      ? 'anilist_id=${media['id']}'
+      : 'mal_id=${media['idMal']}';
+  return jsonDecode(await fetch('https://api.ani.zip/mappings?$query'));
+}
+
+/// The AniList and MAL ids of a show, from whichever one it already has. Both are null when ani.zip
+/// doesn't know it. ani.zip is a separate service, so this still answers while AniList itself is down.
+Future<(int?, int?)> idsOf(Map media) async {
   try {
-    final json = jsonDecode(
-      await fetch('https://api.ani.zip/mappings?anilist_id=$anilistId'),
-    );
+    final ids = (await _mappings(media))['mappings'] as Map? ?? const {};
+    return (ids['anilist_id'] as int?, ids['mal_id'] as int?);
+  } catch (_) {
+    return (null, null);
+  }
+}
+
+/// Per-episode titles, synopses and artwork from ani.zip, keyed by episode number ("1", "2", …).
+Future<Map<String, EpisodeInfo>> episodeInfo(Map media) async {
+  try {
+    final json = await _mappings(media);
     final episodes = json['episodes'] as Map<String, dynamic>? ?? const {};
     return {
       for (final MapEntry(:key, :value) in episodes.entries)

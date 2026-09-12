@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'anilist.dart';
+import 'tracker.dart';
 import 'cloudflare.dart';
 import 'downloads.dart';
 import 'history.dart';
@@ -47,10 +48,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  late Future<Map<String, dynamic>?> viewer = AniList.viewer();
-  late Future<Map<String, List>> lists = AniList.lists();
-  late Future<List> trending = AniList.trending();
-  late Future<List> season = AniList.season();
+  late Future<Map<String, dynamic>?> viewer = Tracker.viewer();
+  late Future<Map<String, List>> lists = Tracker.lists();
+  late Future<List> trending = Tracker.trending();
+  late Future<List> season = Tracker.season();
   late Future<Map<String, dynamic>?> lastWatched = WatchHistory.latest();
 
   @override
@@ -72,29 +73,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) _syncPending();
   }
 
-  /// Pushes progress watched while offline once AniList is reachable again.
+  /// Pushes progress watched while offline once a tracker is reachable again.
   Future<void> _syncPending() async {
-    final synced = await AniList.syncPending();
+    final synced = await Tracker.syncPending();
     if (synced > 0 && mounted) {
       showSuccess(
         context,
-        'Synced $synced offline ${synced == 1 ? 'update' : 'updates'} to AniList',
+        'Synced $synced offline ${synced == 1 ? 'update' : 'updates'}',
       );
       _reloadLists();
     }
   }
 
   void _reloadLists() => setState(() {
-    lists = AniList.lists();
+    lists = Tracker.lists();
     lastWatched = WatchHistory.latest();
   });
 
   Future<void> _refresh() async {
     setState(() {
-      viewer = AniList.viewer();
-      lists = AniList.lists();
-      trending = AniList.trending();
-      season = AniList.season();
+      viewer = Tracker.viewer();
+      lists = Tracker.lists();
+      trending = Tracker.trending();
+      season = Tracker.season();
       lastWatched = WatchHistory.latest();
     });
     _syncPending();
@@ -108,28 +109,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context,
       MaterialPageRoute(builder: (_) => const SettingsScreen()),
     );
-    if (mounted) _refresh();
-  }
-
-  Future<void> _account() async {
-    if (AniList.token != null) return _openSettings();
-    if (AniList.clientId.isEmpty) {
-      showError(
-        context,
-        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
-      );
-      return;
-    }
-    try {
-      await AniList.login(context);
-      if (AniList.token == null) return; // closed without signing in
-      final me = await AniList.viewer();
-      if (mounted) {
-        showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
-      }
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
     if (mounted) _refresh();
   }
 
@@ -165,7 +144,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               _TopBar(
                 viewer: viewer,
-                onAccount: _account,
+                onAccount: _openSettings,
                 onSettings: _openSettings,
               ),
               // Offline: go straight to what can play.
@@ -201,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   error: snap.error,
                   onRetry: _refresh,
                 ),
-                if (AniList.token != null)
+                if (Tracker.signedIn)
                   FutureBuilder(
                     future: lists,
                     builder: (context, snap) {
@@ -217,8 +196,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           : _Shelf(title, airing, onBack: _reloadLists);
                     },
                   ),
-                if (AniList.token == null)
-                  _SignInCard(onTap: _account)
+                if (!Tracker.signedIn)
+                  _SignInCard(onTap: _openSettings)
                 else
                   FutureBuilder(
                     future: lists,
@@ -228,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       }
                       if (snap.hasError) {
                         return _Section(
-                          'Your AniList',
+                          'Your list',
                           child: ErrorState(
                             snap.error!,
                             compact: true,
@@ -246,7 +225,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           compact: true,
                           icon: Icons.video_library_outlined,
                           title: 'Your list is empty',
-                          message: 'Shows you watch or plan to watch on AniList show up here.',
+                          message:
+                              'Shows you watch or plan to watch show up here.',
                           action: FilledButton.tonalIcon(
                             onPressed: () => Navigator.push(
                               context,
@@ -280,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _shelf(
                   seasonTitle,
                   season,
-                  onRetry: () => setState(() => season = AniList.season()),
+                  onRetry: () => setState(() => season = Tracker.season()),
                 ),
                 _shelf(
                   'Trending now',
@@ -420,7 +400,7 @@ class _TopBar extends StatelessWidget {
             builder: (context, snap) {
               final avatar = snap.data?['avatar']?['large'] as String?;
               return IconButton(
-                tooltip: AniList.token == null ? 'Sign in' : 'Account',
+                tooltip: Tracker.signedIn ? 'Account' : 'Sign in',
                 onPressed: onAccount,
                 icon: avatar == null
                     ? const Icon(Icons.account_circle_outlined)
@@ -655,7 +635,7 @@ class _SignInCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Sign in with AniList',
+                        'Sign in to track',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
@@ -813,7 +793,7 @@ class _SearchScreenState extends State<SearchScreen> {
         if (mounted) {
           setState(() {
             query = q;
-            results = AniList.search(q);
+            results = Tracker.search(q);
           });
         }
       },
@@ -840,7 +820,7 @@ class _SearchScreenState extends State<SearchScreen> {
         ? const EmptyState(
             icon: Icons.travel_explore_rounded,
             title: 'Find your next show',
-            message: 'Search AniList by English or Japanese title',
+            message: 'Search by English or Japanese title',
           )
         : FutureBuilder(
             future: results,
@@ -910,7 +890,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Source? source;
   Future<List<Episode>>? episodes;
   late Future<Map<String, dynamic>?> record = WatchHistory.of(widget.media);
-  late final relations = AniList.relations(widget.media['id']);
+
+  /// MAL entries arrive without an AniList id, which sources and ani.zip are keyed by.
+  late final Future<void> _ids = Tracker.resolveIds(widget.media);
+  late final relations = _ids.then((_) => Tracker.relations(widget.media));
   late final cachedSeason = Downloads.instance.season(widget.media);
   bool dub = Settings.preferDub, expanded = false;
 
@@ -924,6 +907,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Future<void> _loadSites() async {
     try {
+      await _ids;
       final found = await sites;
       if (!mounted) return;
       setState(() => sources = found);
@@ -951,10 +935,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
   });
 
-  /// Sets AniList progress to [progress] episodes; queued for later when offline and moving forward.
+  /// Sets tracked progress to [progress] episodes; queued for later when offline and moving forward.
   Future<void> _markWatched(int progress) async {
-    if (AniList.token == null) {
-      return showError(context, 'Sign in with AniList to track episodes');
+    if (!Tracker.signedIn) {
+      return showError(context, 'Sign in to track episodes');
     }
     final entry = media['mediaListEntry'] as Map?;
     final status = progress == media['episodes']
@@ -963,8 +947,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ? 'REPEATING'
         : 'CURRENT';
     try {
-      media['mediaListEntry'] = await AniList.saveEntry(
-        media['id'],
+      media['mediaListEntry'] = await Tracker.saveEntry(
+        media,
         status: status,
         progress: progress,
       );
@@ -978,20 +962,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
       }
     } catch (e) {
       if (progress <= (entry?['progress'] as int? ?? 0)) {
-        if (mounted) showError(context, e); // AniList sync never rolls back
+        if (mounted) showError(context, e); // tracking never rolls back
         return;
       }
-      await AniList.queueProgress(media, progress);
+      await Tracker.queueProgress(media, progress);
       media['mediaListEntry'] = {
         ...?entry,
         'progress': progress,
         'status': status,
       };
       if (mounted) {
-        showSuccess(
-          context,
-          'Saved offline · syncs to AniList when you’re back online',
-        );
+        showSuccess(context, 'Saved offline · syncs when you’re back online');
       }
     }
     if (mounted) setState(() {});
@@ -1031,12 +1012,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (result == null || !mounted) return;
     try {
       if (result.remove) {
-        await AniList.removeFromList(media['id']);
+        await Tracker.removeFromList(media);
         media['mediaListEntry'] = null;
         if (mounted) showSuccess(context, 'Removed from your list');
       } else {
-        media['mediaListEntry'] = await AniList.saveEntry(
-          media['id'],
+        media['mediaListEntry'] = await Tracker.saveEntry(
+          media,
           status: result.status,
           progress: result.progress,
         );
@@ -1179,7 +1160,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     ),
                   ],
                 ),
-                if (AniList.token != null) ...[
+                if (Tracker.signedIn) ...[
                   const SizedBox(height: 20),
                   _ProgressCard(
                     progress: progress,
@@ -1280,7 +1261,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 title: Text('Download season'),
                               ),
                             ),
-                            if (AniList.token != null)
+                            if (Tracker.signedIn)
                               PopupMenuItem(
                                 value: () => _markWatched(
                                   list.fold(
@@ -1321,7 +1302,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// Resume the saved spot for this show, else continue after the AniList progress on the selected source.
+  /// Resume the saved spot for this show, else continue after the tracked progress on the selected source.
   Widget _continueButton(int progress) => FutureBuilder(
     future: record,
     builder: (context, saved) {
@@ -1922,7 +1903,7 @@ class _ProgressCard extends StatelessWidget {
   }
 }
 
-/// Edits the AniList entry: status, episodes watched, or removal.
+/// Edits the list entry: status, episodes watched, or removal.
 class _EntrySheet extends StatefulWidget {
   const _EntrySheet({
     required this.status,

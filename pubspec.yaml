@@ -1,5 +1,5 @@
 name: aniview
-description: "AniView: watch and track anime with AniList."
+description: "AniView: watch and track anime with AniList or MyAnimeList."
 publish_to: 'none'
 version: 1.5.2+4
 

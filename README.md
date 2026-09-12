@@ -1,7 +1,7 @@
 # AniView
 
-Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in); episodes and
-streams come from third-party sites.
+Flutter (Android) app for watching and tracking anime. Tracking is AniList or MyAnimeList (in-app sign-in);
+episodes and streams come from third-party sites.
 
 ## Disclaimer
 
@@ -13,7 +13,11 @@ content. Any takedown or copyright concerns should be addressed to the site that
 ## Run
 
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
-2. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id>`
+2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig ("other", no secret) with the same
+   redirect URL `aniview://auth`.
+3. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id>`
+
+Either client id can be left out; the app just loses that service.
 
 ## Release
 
@@ -25,12 +29,20 @@ install over builds signed with the same key.
 2. Build and publish:
 
    ```sh
-   fvm flutter build apk --release --split-per-abi --dart-define=ANILIST_CLIENT_ID=<client id>
+   fvm flutter build apk --release --split-per-abi --dart-define=ANILIST_CLIENT_ID=<client id> \
+     --dart-define=MAL_CLIENT_ID=<client id>
    git tag v1.5.2 && git push origin main v1.5.2
    gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
    ```
 
 The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
+
+## Tracking
+
+Sign into AniList, MyAnimeList, or both in Settings. Browsing (trending, this season, search, your lists) uses
+AniList and falls back to MyAnimeList when AniList is unreachable; progress is written to every service you are
+signed into, and queued on-device when they are all unreachable. MyAnimeList entries get their AniList id from
+ani.zip when you open a show, since the streaming sources are keyed by it.
 
 ## Extras
 

@@ -122,7 +122,7 @@ String _matchKey(Source source, Map media) =>
 /// Episodes of [media] on [source] — the user's manual pick first, else the automatic match —
 /// with titles and artwork from ani.zip.
 Future<List<Episode>> loadEpisodes(Source source, Map media) async {
-  final info = episodeInfo(media['id']);
+  final info = episodeInfo(media);
   final prefs = await SharedPreferences.getInstance();
   final id =
       prefs.getString(_matchKey(source, media)) ?? await source.match(media);

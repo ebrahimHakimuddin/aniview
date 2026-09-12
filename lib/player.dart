@@ -15,6 +15,7 @@ import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
 import 'states.dart';
+import 'tracker.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, swipe seek, brightness (left) /
 /// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -310,7 +311,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _syncProgress() async {
     final number = episode.number.toInt();
     final entry = widget.media['mediaListEntry'] as Map?;
-    if (AniList.token == null || !Settings.syncAniList) return;
+    if (!Tracker.signedIn || !Settings.syncAniList) return;
     if (number > (entry?['progress'] as int? ?? 0)) {
       widget.media['mediaListEntry'] = {
         ...?entry,
@@ -319,19 +320,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
       };
     }
     try {
-      // Ask AniList itself: cached media (e.g. from resume history) may be behind and must not roll progress back.
-      if (number > await AniList.progressOf(widget.media['id'])) {
-        await AniList.saveProgress(widget.media, number);
+      // Ask the tracker itself: cached media (e.g. from resume history) may be behind and must not roll progress back.
+      if (number > await Tracker.progressOf(widget.media)) {
+        await Tracker.saveProgress(widget.media, number);
         _hint(
-          'AniList updated · Episode $number',
+          'Progress updated · Episode $number',
           icon: Icons.check_circle_rounded,
         );
       }
-      AniList.syncPending().ignore();
+      Tracker.syncPending().ignore();
     } catch (_) {
-      await AniList.queueProgress(widget.media, number);
+      await Tracker.queueProgress(widget.media, number);
       _hint(
-        'Saved offline · syncs to AniList when you’re back online',
+        'Saved offline · syncs when you’re back online',
         icon: Icons.cloud_off_rounded,
       );
     }
