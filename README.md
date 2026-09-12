@@ -1,7 +1,7 @@
 # AniView
 
-Flutter (Android) app for watching and tracking anime. Tracking is AniList or MyAnimeList (in-app sign-in);
-episodes and streams come from third-party sites.
+Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
+MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
 
 ## Disclaimer
 
@@ -13,11 +13,11 @@ content. Any takedown or copyright concerns should be addressed to the site that
 ## Run
 
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
-2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig ("other", no secret) with the same
-   redirect URL `aniview://auth`.
+2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig (app type "android"); only its client id
+   is used, for public data.
 3. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id>`
 
-Either client id can be left out; the app just loses that service.
+Either client id can be left out: without AniList's there's no tracking, without MyAnimeList's no fallback.
 
 ## Release
 
@@ -39,10 +39,10 @@ The app checks the latest GitHub release on launch and when you tap the version 
 
 ## Tracking
 
-Sign into AniList, MyAnimeList, or both in Settings. Browsing (trending, this season, search, your lists) uses
-AniList and falls back to MyAnimeList when AniList is unreachable; progress is written to every service you are
-signed into, and queued on-device when they are all unreachable. MyAnimeList entries get their AniList id from
-ani.zip when you open a show, since the streaming sources are keyed by it.
+Home, search and related shows come from AniList, and from MyAnimeList's public data when AniList fails.
+Progress goes to AniList only. A save AniList can't take (down, or you're offline) is queued on-device and
+retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
+MyAnimeList get their AniList id from ani.zip when opened.
 
 ## Extras
 

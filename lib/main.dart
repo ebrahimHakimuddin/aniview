@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'anilist.dart';
 import 'downloads.dart';
 import 'screens.dart';
 import 'settings.dart';
 import 'sources.dart';
-import 'tracker.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   sites.ignore(); // start fetching everythingmoe's top sites on app load; screens await it later
   await Future.wait([
-    Tracker.load(),
+    AniList.load(),
     Settings.load(),
     Downloads.instance.load(),
   ]);

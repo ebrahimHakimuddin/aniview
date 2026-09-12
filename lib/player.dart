@@ -310,29 +310,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _syncProgress() async {
     final number = episode.number.toInt();
-    final entry = widget.media['mediaListEntry'] as Map?;
     if (!Tracker.signedIn || !Settings.syncAniList) return;
-    if (number > (entry?['progress'] as int? ?? 0)) {
-      widget.media['mediaListEntry'] = {
-        ...?entry,
-        'progress': number,
-        'status': entry?['status'] ?? 'CURRENT',
-      };
+    // Rewatching an earlier episode mustn't pull the list back.
+    if (number <= (widget.media['mediaListEntry']?['progress'] as int? ?? 0)) {
+      return;
     }
-    try {
-      // Ask the tracker itself: cached media (e.g. from resume history) may be behind and must not roll progress back.
-      if (number > await Tracker.progressOf(widget.media)) {
-        await Tracker.saveProgress(widget.media, number);
-        _hint(
-          'Progress updated · Episode $number',
-          icon: Icons.check_circle_rounded,
-        );
-      }
-      Tracker.syncPending().ignore();
-    } catch (_) {
-      await Tracker.queueProgress(widget.media, number);
+    if (await Tracker.save(widget.media, number, forwardOnly: true)) {
       _hint(
-        'Saved offline · syncs when you’re back online',
+        'Progress updated · Episode $number',
+        icon: Icons.check_circle_rounded,
+      );
+    } else {
+      _hint(
+        'Saved · syncs next time you open the app',
         icon: Icons.cloud_off_rounded,
       );
     }

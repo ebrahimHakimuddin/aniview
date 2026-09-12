@@ -112,6 +112,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) _refresh();
   }
 
+  Future<void> _account() async {
+    if (Tracker.signedIn) return _openSettings();
+    if (AniList.clientId.isEmpty) {
+      showError(
+        context,
+        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
+      );
+      return;
+    }
+    try {
+      await AniList.login(context);
+      if (!Tracker.signedIn) return; // closed without signing in
+      final me = await AniList.viewer();
+      if (mounted) {
+        showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) _refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     final (name, year) = AniList.currentSeason;
@@ -144,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               _TopBar(
                 viewer: viewer,
-                onAccount: _openSettings,
+                onAccount: _account,
                 onSettings: _openSettings,
               ),
               // Offline: go straight to what can play.
@@ -197,7 +219,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   ),
                 if (!Tracker.signedIn)
-                  _SignInCard(onTap: _openSettings)
+                  _SignInCard(onTap: _account)
                 else
                   FutureBuilder(
                     future: lists,
@@ -635,7 +657,7 @@ class _SignInCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Sign in to track',
+                        'Sign in with AniList',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
@@ -938,44 +960,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Sets tracked progress to [progress] episodes; queued for later when offline and moving forward.
   Future<void> _markWatched(int progress) async {
     if (!Tracker.signedIn) {
-      return showError(context, 'Sign in to track episodes');
+      return showError(context, 'Sign in with AniList to track episodes');
     }
-    final entry = media['mediaListEntry'] as Map?;
-    final status = progress == media['episodes']
-        ? 'COMPLETED'
-        : entry?['status'] == 'REPEATING'
-        ? 'REPEATING'
-        : 'CURRENT';
-    try {
-      media['mediaListEntry'] = await Tracker.saveEntry(
-        media,
-        status: status,
-        progress: progress,
-      );
-      if (mounted) {
-        showSuccess(
-          context,
-          progress == 0
-              ? 'Marked as unwatched'
-              : 'Watched up to Episode $progress',
-        );
-      }
-    } catch (e) {
-      if (progress <= (entry?['progress'] as int? ?? 0)) {
-        if (mounted) showError(context, e); // tracking never rolls back
-        return;
-      }
-      await Tracker.queueProgress(media, progress);
-      media['mediaListEntry'] = {
-        ...?entry,
-        'progress': progress,
-        'status': status,
-      };
-      if (mounted) {
-        showSuccess(context, 'Saved offline · syncs when you’re back online');
-      }
-    }
-    if (mounted) setState(() {});
+    final synced = await Tracker.save(media, progress);
+    if (!mounted) return;
+    setState(() {});
+    showSuccess(
+      context,
+      !synced
+          ? 'Saved · syncs next time you open the app'
+          : progress == 0
+          ? 'Marked as unwatched'
+          : 'Watched up to Episode $progress',
+    );
   }
 
   void _downloadSeason(Source site, List<Episode> list) {
@@ -1016,15 +1013,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
         media['mediaListEntry'] = null;
         if (mounted) showSuccess(context, 'Removed from your list');
       } else {
-        media['mediaListEntry'] = await Tracker.saveEntry(
+        final synced = await Tracker.save(
           media,
+          result.progress,
           status: result.status,
-          progress: result.progress,
         );
         if (mounted) {
           showSuccess(
             context,
-            'Saved as ${_ProgressCard.labels[result.status]} · ${result.progress} watched',
+            synced
+                ? 'Saved as ${_ProgressCard.labels[result.status]} · ${result.progress} watched'
+                : 'Saved · syncs next time you open the app',
           );
         }
       }

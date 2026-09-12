@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'sources.dart';
 
@@ -16,13 +17,15 @@ Future<Map<String, dynamic>> _mappings(Map media) async {
 }
 
 /// The AniList and MAL ids of a show, from whichever one it already has. Both are null when ani.zip
-/// doesn't know it. ani.zip is a separate service, so this still answers while AniList itself is down.
+/// doesn't know the show; throws when ani.zip can't be reached. ani.zip is a separate service, so this
+/// still answers while AniList itself is down.
 Future<(int?, int?)> idsOf(Map media) async {
   try {
     final ids = (await _mappings(media))['mappings'] as Map? ?? const {};
     return (ids['anilist_id'] as int?, ids['mal_id'] as int?);
-  } catch (_) {
-    return (null, null);
+  } on HttpException catch (e) {
+    if (e.message == 'HTTP 404') return (null, null);
+    rethrow;
   }
 }
 
