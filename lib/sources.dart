@@ -150,16 +150,27 @@ Future<void> clearMatches() async {
 
 final _client = http.Client();
 
+/// Hosts whose Cloudflare turns away HTTP/1.1 (all package:http speaks), e.g. animepahe's kwik player and its CDN.
+final _h2Hosts = <String>{};
+
 Future<http.Response> _get(String url, Map<String, String>? headers) async {
   final uri = Uri.parse(url);
-  final res = await _client.get(
-    uri,
-    headers: {'User-Agent': userAgent, ...?headers},
-  );
-  if (res.statusCode != 200) {
-    throw HttpException('HTTP ${res.statusCode}', uri: uri);
+  final all = {'User-Agent': userAgent, ...?headers};
+  if (!_h2Hosts.contains(uri.host)) {
+    final res = await _client.get(uri, headers: all);
+    if (res.statusCode == 200) return res;
+    if (res.statusCode != 403) {
+      throw HttpException('HTTP ${res.statusCode}', uri: uri);
+    }
   }
-  return res;
+  final (status, response, body) = await h2Get(uri, all);
+  if (status != 200) throw HttpException('HTTP $status', uri: uri);
+  _h2Hosts.add(uri.host);
+  return http.Response.bytes(
+    body,
+    status,
+    headers: {'content-type': ?response['content-type']},
+  );
 }
 
 Future<String> fetch(String url, {Map<String, String>? headers}) async =>
@@ -630,7 +641,7 @@ typedef _MiruroConfig = ({
   String? version,
 });
 
-/// Miruro, keyed by AniList id and aggregating several providers. Its API answers only over HTTP/2 ([_h2Get]);
+/// Miruro, keyed by AniList id and aggregating several providers. Its API answers only over HTTP/2 ([h2Get]);
 /// HLS plays through Miruro's own stream proxy, mp4 directly with the provider's Referer.
 class Miruro extends Source {
   Miruro(super.name, super.base);
@@ -655,14 +666,14 @@ class Miruro extends Source {
       });
 
   Future<_MiruroConfig> _loadConfig() async {
-    final (_, _, env) = await _h2Get(Uri.parse('$base/env2.js'));
+    final (_, _, env) = await h2Get(Uri.parse('$base/env2.js'));
     final raw = RegExp(r'JSON\.parse\(("(?:[^"\\]|\\.)*")\)')
         .firstMatch(utf8.decode(env))?[1];
     if (raw == null) {
       throw const FormatException('Miruro changed its config script');
     }
     final values = jsonDecode(jsonDecode(raw) as String) as Map;
-    final (_, headers, _) = await _h2Get(
+    final (_, headers, _) = await h2Get(
       Uri.parse('$base/api/secure/jwks'),
       _apiHeaders,
     );
@@ -691,7 +702,7 @@ class Miruro extends Source {
         )
         .replaceAll('=', '');
     final uri = Uri.parse('$base/api/secure/pipe?e=$envelope');
-    final (status, headers, body) = await _h2Get(uri, _apiHeaders);
+    final (status, headers, body) = await h2Get(uri, _apiHeaders);
     if (status != 200) throw HttpException('HTTP $status', uri: uri);
     return decodeMiruroReply(body, headers['x-obfuscated'], c.pipeKey);
   }
@@ -848,12 +859,19 @@ List<int> _hex(String s) => [
     int.parse(s.substring(i, i + 2), radix: 16),
 ];
 
-/// One HTTP/2 GET. package:http speaks only HTTP/1.1, which Cloudflare turns away on Miruro's API.
-// ponytail: a new connection per request; keep one ClientTransportConnection open if Miruro calls get chatty
-Future<(int, Map<String, String>, Uint8List)> _h2Get(
+/// One HTTP/2 GET. package:http speaks only HTTP/1.1, which Cloudflare turns away on some sites (Miruro's API,
+/// animepahe). [extra] overrides the default user agent; names are lowercased as HTTP/2 requires.
+// ponytail: a new connection per request (HLS segments included); pool ClientTransportConnections per host if
+// segment loads get slow
+Future<(int, Map<String, String>, Uint8List)> h2Get(
   Uri uri, [
   Map<String, String> extra = const {},
 ]) async {
+  final headers = {
+    'user-agent': userAgent,
+    for (final MapEntry(:key, :value) in extra.entries)
+      key.toLowerCase(): value,
+  };
   final socket = await SecureSocket.connect(
     uri.host,
     443,
@@ -870,12 +888,11 @@ Future<(int, Map<String, String>, Uint8List)> _h2Get(
       ),
       Header.ascii(':scheme', 'https'),
       Header.ascii(':authority', uri.host),
-      Header.ascii('user-agent', userAgent),
-      for (final MapEntry(:key, :value) in extra.entries)
+      for (final MapEntry(:key, :value) in headers.entries)
         Header.ascii(key, value),
     ], endStream: true);
     final response = <String, String>{};
-    final body = <int>[];
+    final body = BytesBuilder(copy: false);
     await for (final message in stream.incomingMessages.timeout(
       const Duration(seconds: 30),
     )) {
@@ -885,13 +902,13 @@ Future<(int, Map<String, String>, Uint8List)> _h2Get(
             response[utf8.decode(h.name)] = utf8.decode(h.value);
           }
         case DataStreamMessage(:final bytes):
-          body.addAll(bytes);
+          body.add(bytes);
       }
     }
     return (
       int.tryParse(response[':status'] ?? '') ?? 0,
       response,
-      Uint8List.fromList(body),
+      body.takeBytes(),
     );
   } finally {
     // terminate, not finish: finish waits forever on a stream abandoned by the timeout.

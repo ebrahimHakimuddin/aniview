@@ -2,12 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
+import 'sources.dart';
 
-/// Localhost relay for HLS streams: sends each stream's headers upstream and strips the fake image
-/// prefix some hosts put in front of MPEG-TS segments (FFmpeg would otherwise probe them as PNG).
+/// Localhost relay for HLS streams: sends each stream's headers upstream (over HTTP/2 where a host refuses
+/// FFmpeg's HTTP/1.1, via [fetchBytes]) and strips the fake image prefix some hosts put in front of MPEG-TS
+/// segments (FFmpeg would otherwise probe them as PNG).
 class HlsProxy {
-  static final _client = http.Client();
   // ponytail: header sets are never evicted; one small map per opened stream is fine for a session
   static final _headers = <Map<String, String>>[];
   static final Future<HttpServer> _server = HttpServer.bind(
@@ -39,8 +39,10 @@ class HlsProxy {
       final upstream = Uri.parse(
         utf8.decode(base64Url.decode(base64Url.normalize(encoded))),
       );
-      final res = await _client.get(upstream, headers: _headers[int.parse(id)]);
-      response.statusCode = res.statusCode;
+      final body = await fetchBytes(
+        '$upstream',
+        headers: _headers[int.parse(id)],
+      );
       if (file.endsWith('.m3u8')) {
         response.headers.contentType = ContentType(
           'application',
@@ -48,16 +50,14 @@ class HlsProxy {
         );
         response.write(
           rewritePlaylist(
-            utf8.decode(res.bodyBytes, allowMalformed: true),
+            utf8.decode(body, allowMalformed: true),
             upstream,
             (url, ext) =>
                 _local(request.requestedUri.port, int.parse(id), url, ext),
           ),
         );
       } else {
-        response.add(
-          file.endsWith('.ts') ? stripToTs(res.bodyBytes) : res.bodyBytes,
-        );
+        response.add(file.endsWith('.ts') ? stripToTs(body) : body);
       }
     } catch (_) {
       response.statusCode = HttpStatus.badGateway;
