@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -76,6 +78,31 @@ Future<String> browserFetch(
     await view.dispose();
   }
 }
+
+/// GETs [url] over HTTP/2 with the in-app browser's cookies and user agent (what a cf_clearance cookie is bound
+/// to), so only the first request to a Cloudflare-challenged site pays for a WebView. Without a valid clearance,
+/// the site is opened in the browser first ([browserFetch]), which may throw [CloudflareChallenge].
+Future<String> clearedFetch(String url, {String? referer}) async {
+  final uri = Uri.parse(url);
+  Future<(int, Map<String, String>, Uint8List)> get() async {
+    final cookies = await CookieManager.instance().getCookies(url: WebUri(url));
+    return h2Get(uri, {
+      'user-agent': await _browserAgent,
+      'cookie': [for (final c in cookies) '${c.name}=${c.value}'].join('; '),
+      'referer': ?referer,
+    });
+  }
+
+  var (status, _, body) = await get();
+  if (status == 403 || status == 503) {
+    await browserFetch('${uri.origin}/');
+    (status, _, body) = await get();
+  }
+  if (status != 200) throw HttpException('HTTP $status', uri: uri);
+  return utf8.decode(body, allowMalformed: true);
+}
+
+final _browserAgent = InAppWebViewController.getDefaultUserAgent();
 
 bool _isChallenge(String title) =>
     title.contains('Just a moment') || title.contains('Attention Required');

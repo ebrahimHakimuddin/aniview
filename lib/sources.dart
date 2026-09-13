@@ -500,13 +500,13 @@ class ReAnime extends Source {
   }
 }
 
-/// animepahe and its kwik player sit behind Cloudflare, which rejects Dart's HTTP client even with a clearance
-/// cookie, so every request goes through the in-app browser ([browserFetch]).
+/// animepahe sits behind a Cloudflare JavaScript challenge: the in-app browser clears it once and the clearance is
+/// reused over HTTP/2 ([clearedFetch]). Its kwik player and CDN only refuse HTTP/1.1, which [fetch] handles.
 class AnimePahe extends Source {
   AnimePahe(super.name, super.base);
 
   Future<dynamic> _api(String query) async =>
-      jsonDecode(await browserFetch('$base/api?$query', text: true));
+      jsonDecode(await clearedFetch('$base/api?$query'));
 
   @override
   Future<List<SearchResult>> search(String query) async {
@@ -533,7 +533,7 @@ class AnimePahe extends Source {
     );
     for (final title in _searchTitles(media)) {
       for (final result in (await search(title)).take(3)) {
-        if (links.hasMatch(await browserFetch('$base/anime/${result.id}'))) {
+        if (links.hasMatch(await clearedFetch('$base/anime/${result.id}'))) {
           return result.id;
         }
       }
@@ -571,7 +571,7 @@ class AnimePahe extends Source {
     Episode episode, {
     required bool dub,
   }) async {
-    final play = await browserFetch(
+    final play = await clearedFetch(
       '$base/play/${episode.ref}',
       referer: '$base/',
     );
@@ -590,7 +590,7 @@ class AnimePahe extends Source {
       buttons.map((button) async {
         try {
           final kwik = Uri.parse(button['src']!);
-          final html = await browserFetch('$kwik', referer: '$base/');
+          final html = await fetch('$kwik', headers: {'Referer': '$base/'});
           final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
               .firstMatch(unpack(html))?[0];
           if (m3u8 == null) return null;
@@ -599,8 +599,6 @@ class AnimePahe extends Source {
             m3u8,
             {'Referer': '${kwik.origin}/', 'User-Agent': userAgent},
           );
-        } on CloudflareChallenge {
-          rethrow;
         } catch (_) {
           return null;
         }
