@@ -59,6 +59,18 @@ void main() {
     expect(decodeMiruroReply(utf8.encode('{"a":1}'), null, const []), {'a': 1});
   });
 
+  // Captured from megaplay.buzz getSourcesNew; the same decryption its player runs.
+  test('decrypts megaplay sources', () {
+    expect(
+      decodeMegaplaySource(
+        'wdeBruh3qqn_i5wUNnyaPcXqidp1UWP84FfPHzGyKXAz4mAVkH6j3DueswO2yXLWn8H-XMHNvbAo5Gsg7zIcFBuQI_zsUvMGI1gKwQsPTSHQHiF55R4BopgEQ-7jebQQ4C0Gu7YhaMucopp6d3Q8yAY9b5GdsSvPGq6CUn7SHyc',
+      ),
+      {
+        'file': 'https://fetch.nexabloom.top/anime/bb6d2babd7797d94d8f4a8600bc9b44e/b7d51fb7e838ee9b60dcdb34b953bc07/master.m3u8',
+      },
+    );
+  });
+
   test('rewrites HLS playlists through the proxy', () {
     String proxy(String url, String ext) => 'P($url).$ext';
     final base = Uri.parse('https://cdn.test/a/master.m3u8');

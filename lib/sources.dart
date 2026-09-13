@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http2/http2.dart';
+import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
@@ -216,7 +217,7 @@ String _decodeHtml(String s) => s
 
 String _info(List<Object?> parts) => parts.whereType<Object>().join(' · ');
 
-/// megaplay embed -> plain HLS via getSourcesNew (no decryption needed), with every subtitle track.
+/// megaplay embed -> HLS via getSourcesNew, with every subtitle track.
 Future<List<VideoStream>> megaplay(
   String label,
   String embed, {
@@ -233,15 +234,22 @@ Future<List<VideoStream>> megaplay(
       headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': embed},
     ),
   );
-  final sources = json['sources'];
-  final file =
-      (sources is List ? sources.firstOrNull : sources)?['file'] as String?;
+  if (json['enc'] is! String) return [];
+  final file = decodeMegaplaySource(json['enc'])['file'] as String?;
   if (file == null) return [];
+  final headers = {'Referer': '${uri.origin}/', 'User-Agent': userAgent};
+  // Some of megaplay's CDN hosts answer 403 to anything but its own player (and which one a server gets
+  // rotates), while the player only tries the first stream, so drop the ones that don't load.
+  try {
+    await fetch(file, headers: headers);
+  } on HttpException {
+    return [];
+  }
   return [
     VideoStream(
       label,
       file,
-      {'Referer': '${uri.origin}/', 'User-Agent': userAgent},
+      headers,
       subtitles: [
         for (final track in json['tracks'] as List? ?? const [])
           if (track['kind'] == 'captions' && track['file'] is String)
@@ -255,6 +263,27 @@ Future<List<VideoStream>> megaplay(
       ],
     ),
   ];
+}
+
+/// getSourcesNew's `enc`: base64url AES-256-CBC JSON, key and IV from megaplay's newclient.min.js
+/// (`trustAesKey`/`trustAesIv`, the key zero-padded to 32 bytes).
+Map decodeMegaplaySource(String enc) {
+  Uint8List pad(String s, int n) =>
+      Uint8List(n)..setAll(0, utf8.encode(s).take(n));
+  final cipher =
+      PaddedBlockCipherImpl(PKCS7Padding(), CBCBlockCipher(AESEngine()))..init(
+        false,
+        PaddedBlockCipherParameters(
+          ParametersWithIV(
+            KeyParameter(pad('i?LMTAx0Q6,:}50U', 32)),
+            pad("W0;27ToaUpl_P%'c", 16),
+          ),
+          null,
+        ),
+      );
+  return jsonDecode(
+    utf8.decode(cipher.process(base64Url.decode(base64Url.normalize(enc)))),
+  );
 }
 
 (Duration, Duration)? _range(Object? json) {
@@ -442,12 +471,20 @@ class ReAnime extends Source {
     Map media,
     Episode episode, {
     required bool dub,
-  }) => megaplay(
-    'Megaplay',
-    'https://megaplay.buzz/stream/ani/${(episode.ref as String).nullIfEmpty ?? media['id']}'
-        '/${epNumber(episode.number)}/${dub ? 'dub' : 'sub'}',
-    referer: '$base/',
-  );
+  }) async {
+    final embed =
+        'https://megaplay.buzz/stream/ani/${(episode.ref as String).nullIfEmpty ?? media['id']}'
+        '/${epNumber(episode.number)}/${dub ? 'dub' : 'sub'}';
+    final found = await Future.wait([
+      for (final (label, server) in [('HD-1', 'tcdn'), ('HD-2', 'bcdn')])
+        megaplay(
+          label,
+          '$embed?s=$server',
+          referer: '$base/',
+        ).catchError((Object _) => <VideoStream>[]),
+    ]);
+    return found.expand((s) => s).toList();
+  }
 }
 
 typedef _MiruroConfig = ({
