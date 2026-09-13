@@ -26,6 +26,13 @@ void main() {
     ]);
   });
 
+  test('unpacks p.a.c.k.e.r scripts', () {
+    const packed =
+        r"eval(function(p,a,c,k,e,d){}('0 1=\'2://3.4/5.6\'',62,7,"
+        r"'const|source|https|cdn|example|video|m3u8'.split('|'),0,{}))";
+    expect(unpack(packed), "const source='https://cdn.example/video.m3u8'");
+  });
+
   // Vectors captured from miruro.to: this proxied URL played, and the reply matches the site's own decoder.
   test('builds Miruro proxy URLs and decodes pipe replies', () {
     List<int> hex(String s) => [

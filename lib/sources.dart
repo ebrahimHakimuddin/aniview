@@ -8,12 +8,13 @@ import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
+import 'cloudflare.dart';
 import 'metadata.dart';
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
-/// The top 3 supported anime streaming sites from everythingmoe, fetched once on app start.
+/// The supported anime streaming sites from everythingmoe, in rank order, fetched once on app start.
 Future<List<Source>> sites = topSources();
 
 class CloudflareChallenge implements Exception {
@@ -194,11 +195,12 @@ Future<List<Source>> topSources() async => [
     // ponytail: unknown sites are skipped; add an adapter here when the ranking brings in a new one
     ?switch (Uri.parse(origin).host) {
       final h when h.contains('anikoto') => Anikoto(name, origin),
+      final h when h.contains('animepahe') => AnimePahe(name, origin),
       final h when h.contains('reanime') => ReAnime(name, origin),
       final h when h.contains('miruro') => Miruro(name, origin),
       _ => null,
     },
-].take(3).toList();
+];
 
 Iterable<String> _searchTitles(Map media) =>
     {media['title']['romaji'], media['title']['english']}.whereType<String>();
@@ -485,6 +487,140 @@ class ReAnime extends Source {
     ]);
     return found.expand((s) => s).toList();
   }
+}
+
+/// animepahe and its kwik player sit behind Cloudflare, which rejects Dart's HTTP client even with a clearance
+/// cookie, so every request goes through the in-app browser ([browserFetch]).
+class AnimePahe extends Source {
+  AnimePahe(super.name, super.base);
+
+  Future<dynamic> _api(String query) async =>
+      jsonDecode(await browserFetch('$base/api?$query', text: true));
+
+  @override
+  Future<List<SearchResult>> search(String query) async {
+    final json = await _api('m=search&q=${Uri.encodeQueryComponent(query)}');
+    return [
+      for (final r in json['data'] as List? ?? const [])
+        SearchResult(
+          '${r['session']}',
+          '${r['title']}',
+          image: r['poster'],
+          info: _info([
+            r['type'],
+            r['year'],
+            if (r['episodes'] != null) '${r['episodes']} eps',
+          ]),
+        ),
+    ];
+  }
+
+  @override
+  Future<String?> match(Map media) async {
+    final links = RegExp(
+      'anilist\\.co/anime/${media['id']}\\b|myanimelist\\.net/anime/${media['idMal'] ?? 'none'}\\b',
+    );
+    for (final title in _searchTitles(media)) {
+      for (final result in (await search(title)).take(3)) {
+        if (links.hasMatch(await browserFetch('$base/anime/${result.id}'))) {
+          return result.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    final raw = <Map>[];
+    for (var page = 1, last = 1; page <= last; page++) {
+      final json = await _api('m=release&id=$id&sort=episode_asc&page=$page');
+      last = json['last_page'] ?? 1;
+      raw.addAll((json['data'] as List? ?? const []).cast<Map>());
+    }
+    if (raw.isEmpty) return [];
+    // animepahe keeps counting across seasons (S2 starts at 13); renumber from 1.
+    final offset = ((raw.first['episode'] as num) - 1).clamp(
+      0,
+      double.infinity,
+    );
+    return [
+      for (final e in raw)
+        Episode(
+          (e['episode'] as num) - offset,
+          thumbnail: e['snapshot'],
+          ref: '$id/${e['session']}',
+        ),
+    ];
+  }
+
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    final play = await browserFetch(
+      '$base/play/${episode.ref}',
+      referer: '$base/',
+    );
+    final buttons =
+        RegExp(r'<button[^>]*data-src="[^"]*"[^>]*>')
+            .allMatches(play)
+            .map((m) => _dataAttrs(m[0]!))
+            .where((b) => (b['audio'] == 'eng') == dub)
+            .toList()
+          ..sort(
+            (a, b) => (int.tryParse(b['resolution'] ?? '') ?? 0).compareTo(
+              int.tryParse(a['resolution'] ?? '') ?? 0,
+            ),
+          );
+    final resolved = await Future.wait(
+      buttons.map((button) async {
+        try {
+          final kwik = Uri.parse(button['src']!);
+          final html = await browserFetch('$kwik', referer: '$base/');
+          final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
+              .firstMatch(unpack(html))?[0];
+          if (m3u8 == null) return null;
+          return VideoStream(
+            '${button['fansub'] ?? 'Kwik'} ${button['resolution']}p',
+            m3u8,
+            {'Referer': '${kwik.origin}/', 'User-Agent': userAgent},
+          );
+        } on CloudflareChallenge {
+          rethrow;
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    return resolved.nonNulls.toList();
+  }
+}
+
+/// Expands Dean Edwards' p.a.c.k.e.r `eval(function(p,a,c,k,e,d){...}('...',a,c,'...'.split('|')))` scripts.
+String unpack(String js) {
+  final m = RegExp(
+    r"\}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('\|'\)",
+    dotAll: true,
+  ).firstMatch(js);
+  if (m == null) return js;
+  final radix = int.parse(m[2]!),
+      count = int.parse(m[3]!),
+      words = m[4]!.split('|');
+  String encode(int n) =>
+      (n < radix ? '' : encode(n ~/ radix)) +
+      (n % radix > 35
+          ? String.fromCharCode(n % radix + 29)
+          : (n % radix).toRadixString(36));
+  final dict = {
+    for (var i = 0; i < count; i++)
+      encode(i): i < words.length && words[i].isNotEmpty ? words[i] : encode(i),
+  };
+  return m[1]!
+      .replaceAll(r"\'", "'")
+      .replaceAllMapped(RegExp(r'\b\w+\b'), (w) => dict[w[0]] ?? w[0]!);
 }
 
 typedef _MiruroConfig = ({
