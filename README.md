@@ -62,8 +62,9 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 - Offline downloads save the HLS playlist, segments, encryption keys and preferred subtitles on-device. A
   downloaded episode is preferred during playback even when the network is available. Interrupted downloads
   resume when AniView next runs; downloads only progress while the app process is alive.
-- **Download season** (⋮ next to SUB/DUB) queues every episode on the chosen site and audio, skipping ones
-  already saved or queued and retrying failed ones.
+- **Download episodes…** (⋮ next to SUB/DUB) queues a range of episodes on the chosen site and audio, starting
+  at the first unwatched one, skipping ones already saved or queued and retrying failed ones. Settings → Storage
+  caps the download quality.
 - Downloaded shows keep their full episode list (titles, thumbnails, synopses) on-device. Offline, home opens
   on a **Downloaded** row and the details page shows the whole season; only downloaded episodes play.
 - Long-press an episode to mark everything up to it watched on AniList (long-press a watched one to undo), or

@@ -119,6 +119,15 @@ void main() {
         '#EXT-X-STREAM-INF:BANDWIDTH=2400000\nhigh/index.m3u8\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=90000,URI="i.m3u8"\n';
     expect(bestVariant(master), 'high/index.m3u8');
 
+    const sized =
+        '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n1080.m3u8\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=2400000,RESOLUTION=1280x720\n720.m3u8\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=854x480\n480.m3u8\n';
+    expect(bestVariant(sized), '1080.m3u8');
+    expect(bestVariant(sized, maxHeight: 720), '720.m3u8');
+    // Nothing fits: the smallest.
+    expect(bestVariant(sized, maxHeight: 360), '480.m3u8');
+
     final (local, files, length) = localizePlaylist(
       '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="/k/1.key"\n#EXTINF:4.5,\nseg1.ts\n'
       '#EXTINF:5.5,\nhttps://img.test/x.image?sig=1\n#EXT-X-ENDLIST\n',

@@ -73,6 +73,10 @@ class Settings {
   static int get watchedPercent => _prefs.getInt('watched_percent') ?? 85;
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
 
+  /// Tallest video height to download; 0 means the best available.
+  static int get downloadQuality => _prefs.getInt('download_quality') ?? 0;
+  static set downloadQuality(int v) => _prefs.setInt('download_quality', v);
+
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);
 
@@ -175,6 +179,8 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
     if (!quiet && context.mounted) showError(context, e);
   }
 }
+
+const _qualities = {0: 'Best', 1080: '1080p', 720: '720p', 480: '480p'};
 
 const subtitleLanguages = [
   'Off',
@@ -494,6 +500,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _Group('Storage', [
+            _Choice(
+              title: 'Download quality',
+              subtitle: 'Lower quality takes less space',
+              value: _qualities[Settings.downloadQuality] ?? 'Best',
+              onTap: () => _choose(
+                'Download quality',
+                _qualities,
+                Settings.downloadQuality,
+                (v) => Settings.downloadQuality = v,
+              ),
+            ),
             ListenableBuilder(
               listenable: Downloads.instance,
               builder: (context, _) => ListTile(

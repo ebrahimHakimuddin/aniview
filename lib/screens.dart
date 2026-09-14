@@ -1360,12 +1360,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  void _downloadSeason(Source site, List<Episode> list) {
-    final count = list.where((e) {
+  Future<void> _downloadSeason(
+    Source site,
+    List<Episode> list,
+    int progress,
+  ) async {
+    final picked = await showDialog<List<Episode>>(
+      context: context,
+      builder: (_) => _DownloadRangeDialog(list, progress: progress, dub: dub),
+    );
+    if (picked == null || !mounted) return;
+    final count = picked.where((e) {
       final d = Downloads.instance.entry(media, e.number, dub);
       return d == null || d.status == DownloadStatus.failed;
     }).length;
-    Downloads.instance.enqueue(media, site.name, list, dub: dub, season: list);
+    Downloads.instance.enqueue(
+      media,
+      site.name,
+      picked,
+      dub: dub,
+      season: list,
+    );
+    Analytics.event('download_queue', {
+      'media_id': media['id'],
+      'episodes': count,
+      'dub': dub,
+    });
     showSuccess(
       context,
       count == 0
@@ -1639,10 +1659,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           onSelected: (action) => action(),
                           itemBuilder: (_) => [
                             PopupMenuItem(
-                              value: () => _downloadSeason(site, list),
+                              value: () =>
+                                  _downloadSeason(site, list, progress),
                               child: const ListTile(
                                 leading: Icon(Icons.download_rounded),
-                                title: Text('Download season'),
+                                title: Text('Download episodes…'),
                               ),
                             ),
                             if (Tracker.signedIn)
@@ -2604,6 +2625,97 @@ class _DownloadButton extends StatelessWidget {
       };
     },
   );
+}
+
+/// Picks which episodes to download, so a long show isn't queued whole. Starts at the first unwatched one.
+class _DownloadRangeDialog extends StatefulWidget {
+  const _DownloadRangeDialog(
+    this.episodes, {
+    required this.progress,
+    required this.dub,
+  });
+
+  final List<Episode> episodes;
+  final int progress;
+  final bool dub;
+
+  @override
+  State<_DownloadRangeDialog> createState() => _DownloadRangeDialogState();
+}
+
+class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
+  late final sorted = [...widget.episodes]
+    ..sort((a, b) => a.number.compareTo(b.number));
+  late final from = TextEditingController(
+    text: epNumber(
+      (sorted.where((e) => e.number > widget.progress).firstOrNull ??
+              sorted.first)
+          .number,
+    ),
+  );
+  late final to = TextEditingController(text: epNumber(sorted.last.number));
+
+  List<Episode> get picked {
+    final a = num.tryParse(from.text), b = num.tryParse(to.text);
+    if (a == null || b == null) return const [];
+    return [
+      for (final e in sorted)
+        if (e.number >= a && e.number <= b) e,
+    ];
+  }
+
+  @override
+  void dispose() {
+    from.dispose();
+    to.dispose();
+    super.dispose();
+  }
+
+  Widget _field(TextEditingController controller, String label) => Expanded(
+    child: TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: InputDecoration(labelText: label),
+      onChanged: (_) => setState(() {}),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final count = picked.length;
+    return AlertDialog(
+      title: const Text('Download episodes'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _field(from, 'From'),
+              const SizedBox(width: 16),
+              _field(to, 'To'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '$count ${widget.dub ? 'dub' : 'sub'} ${count == 1 ? 'episode' : 'episodes'} · '
+            '${epNumber(sorted.first.number)}–${epNumber(sorted.last.number)} available',
+            style: const TextStyle(color: Colors.white60, fontSize: 13),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: count == 0 ? null : () => Navigator.pop(context, picked),
+          child: const Text('Download'),
+        ),
+      ],
+    );
+  }
 }
 
 Future<void> _confirmDelete(BuildContext context, Download d) async {

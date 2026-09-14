@@ -403,7 +403,9 @@ class Downloads extends ChangeNotifier {
     var url = Uri.parse(stream.url);
     var playlist = await fetch('$url', headers: stream.headers);
     if (playlist.contains('#EXT-X-STREAM-INF')) {
-      url = url.resolve(bestVariant(playlist));
+      url = url.resolve(
+        bestVariant(playlist, maxHeight: Settings.downloadQuality),
+      );
       playlist = await fetch('$url', headers: stream.headers);
     }
     final (local, files, length) = localizePlaylist(playlist, url);
@@ -479,32 +481,39 @@ Future<Uint8List> _fetchWithRetry(
   }
 }
 
-/// URI of the highest-bandwidth variant in a master playlist.
+/// URI of the highest-bandwidth variant in a master playlist no taller than [maxHeight] (0 = any). When every
+/// variant is taller, the smallest one.
 // ponytail: separate audio renditions (#EXT-X-MEDIA) aren't saved; the supported hosts mux audio into the variant
-String bestVariant(String master) {
+String bestVariant(String master, {int maxHeight = 0}) {
   final lines = master.split('\n').map((l) => l.trim()).toList();
-  String? best;
-  var bestBandwidth = -1;
+  final variants = <(int bandwidth, int height, String uri)>[];
   for (var i = 0; i < lines.length; i++) {
     if (!lines[i].startsWith('#EXT-X-STREAM-INF')) continue;
-    final bandwidth =
-        int.tryParse(
-          RegExp(r'BANDWIDTH=(\d+)').firstMatch(lines[i])?[1] ?? '',
-        ) ??
-        0;
+    int attribute(String pattern) =>
+        int.tryParse(RegExp(pattern).firstMatch(lines[i])?[1] ?? '') ?? 0;
     final uri = lines
         .skip(i + 1)
         .firstWhere(
           (l) => l.isNotEmpty && !l.startsWith('#'),
           orElse: () => '',
         );
-    if (uri.isNotEmpty && bandwidth > bestBandwidth) {
-      best = uri;
-      bestBandwidth = bandwidth;
+    if (uri.isNotEmpty) {
+      variants.add((
+        attribute(r'BANDWIDTH=(\d+)'),
+        attribute(r'RESOLUTION=\d+x(\d+)'),
+        uri,
+      ));
     }
   }
-  return best ??
-      (throw const FormatException('The stream has no playable variant'));
+  if (variants.isEmpty) {
+    throw const FormatException('The stream has no playable variant');
+  }
+  variants.sort((a, b) => b.$1.compareTo(a.$1)); // best first
+  return (variants
+              .where((v) => maxHeight == 0 || v.$2 <= maxHeight)
+              .firstOrNull ??
+          variants.last)
+      .$3;
 }
 
 /// Rewrites a media playlist to local file names. Returns the playlist, the files to fetch (by local name)
