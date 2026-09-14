@@ -17,7 +17,7 @@ import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
 
-/// Full-screen player with Dantotsu-style gestures: double-tap seek, swipe seek, brightness (left) /
+/// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
 /// intro/outro markers on the seek bar. Downloaded episodes always play from disk.
 class PlayerScreen extends StatefulWidget {
@@ -417,6 +417,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         : null;
     final loading =
         error == null && (current == null || player.state.buffering);
+    final swipes = !locked && Settings.swipeGestures;
 
     return Scaffold(
       key: _scaffold,
@@ -494,7 +495,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     player.setRate(rate);
                     _clearHint();
                   },
-            onVerticalDragStart: locked
+            onVerticalDragStart: !swipes
                 ? null
                 : (_) => _systemVolume
                       .invokeMethod<double>(
@@ -502,12 +503,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ) // may have changed with the volume keys
                       .then((v) => volume = v ?? volume)
                       .ignore(),
-            onVerticalDragUpdate: locked ? null : (d) => _verticalDrag(d, size),
-            onVerticalDragEnd: locked ? null : _clearHint,
-            onHorizontalDragStart: locked
+            onVerticalDragUpdate: !swipes
+                ? null
+                : (d) => _verticalDrag(d, size),
+            onVerticalDragEnd: !swipes ? null : _clearHint,
+            onHorizontalDragStart: !swipes
                 ? null
                 : (_) => seekTarget = player.state.position,
-            onHorizontalDragUpdate: locked
+            onHorizontalDragUpdate: !swipes
                 ? null
                 : (d) {
                     seekTarget = _clamp(
@@ -520,7 +523,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       sticky: true,
                     );
                   },
-            onHorizontalDragEnd: locked
+            onHorizontalDragEnd: !swipes
                 ? null
                 : (_) {
                     player.seek(seekTarget!);

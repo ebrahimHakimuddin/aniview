@@ -42,6 +42,10 @@ class Settings {
       SkipMode.button;
   static set skipMode(SkipMode v) => _prefs.setString('skip_mode', v.name);
 
+  /// Swipe to seek, and to change brightness (left) or volume (right).
+  static bool get swipeGestures => _prefs.getBool('swipe_gestures') ?? false;
+  static set swipeGestures(bool v) => _prefs.setBool('swipe_gestures', v);
+
   static int get seekSeconds => _prefs.getInt('seek_seconds') ?? 10;
   static set seekSeconds(int v) => _prefs.setInt('seek_seconds', v);
 
@@ -383,6 +387,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Settings.skipMode,
                 (v) => Settings.skipMode = v,
               ),
+            ),
+            SwitchListTile(
+              title: const Text('Swipe gestures'),
+              subtitle: const Text(
+                'Swipe to seek, brightness on the left, volume on the right',
+              ),
+              value: Settings.swipeGestures,
+              onChanged: (v) => setState(() => Settings.swipeGestures = v),
             ),
             _Choice(
               title: 'Double-tap to seek',
