@@ -46,6 +46,14 @@ Progress goes to AniList only. A save AniList can't take (down, or you're offlin
 retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
 MyAnimeList get their AniList id from ani.zip when opened.
 
+## New episode notifications
+
+An Android background job (`EpisodeJob.kt`) runs hourly while online, with the app closed and across reboots. It
+asks AniList which episodes aired since its last successful check, for shows on your AniList watching list plus
+the ones you watched recently, and posts a notification for each; a missed check is caught up on the next run
+(up to a day back). Tapping a notification opens that show's page. The app keeps the job's inputs current each
+time home loads. Toggle it in Settings → Notifications.
+
 ## Analytics
 
 With a Rybbit site id, the app sends screen views and a fixed set of events (`episode_play`, `episode_watched`,
@@ -67,8 +75,8 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
   caps the download quality.
 - Downloaded shows keep their full episode list (titles, thumbnails, synopses) on-device. Offline, home opens
   on a **Downloaded** row and the details page shows the whole season; only downloaded episodes play.
-- Long-press an episode to mark everything up to it watched on AniList (long-press a watched one to undo), or
-  use **Mark season watched** in the ⋮ menu.
+- Long-press an episode to mark everything up to it watched on AniList (or undo it) and to download or delete
+  it, or use **Mark season watched** in the ⋮ menu.
 - Watch progress recorded offline is queued locally and synced to AniList when connectivity returns, without
   overwriting newer AniList progress.
 - The details page links a show's prequels and sequels.

@@ -16,6 +16,15 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var notifications: MethodChannel? = null
+
+    /** A new-episode notification tapped while the app is already running. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val id = intent.getIntExtra(EpisodeJob.EXTRA_MEDIA_ID, 0)
+        if (id != 0) notifications?.invokeMethod("open", id)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/downloads")
@@ -51,6 +60,26 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        notifications = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/notifications").apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "configure" -> EpisodeJob.configure(this@MainActivity, call.arguments as String)
+                    "permission" -> if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+                    }
+                    // The show of the notification that launched the app, handed out once.
+                    "launchMedia" -> {
+                        val id = intent.getIntExtra(EpisodeJob.EXTRA_MEDIA_ID, 0)
+                        intent.removeExtra(EpisodeJob.EXTRA_MEDIA_ID)
+                        return@setMethodCallHandler result.success(if (id == 0) null else id)
+                    }
+                    else -> return@setMethodCallHandler result.notImplemented()
+                }
+                result.success(null)
+            }
+        }
         // The player's brightness/volume swipe drives the phone's media volume, not mpv's.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/volume")
             .setMethodCallHandler { call, result ->

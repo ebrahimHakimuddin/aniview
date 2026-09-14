@@ -60,7 +60,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Object? error;
   String? hint;
   IconData? hintIcon;
-  bool controls = true, locked = false, cover = false, synced = false;
+  bool controls = true,
+      locked = false,
+      cover = false,
+      synced = false,
+      upNextDismissed = false;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
   static const _systemVolume = MethodChannel('aniview/volume');
@@ -111,7 +115,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }),
       player.stream.completed.listen((done) {
-        if (done && hasNext && Settings.autoNext) _load(index + 1);
+        if (done && hasNext && Settings.autoNext && !upNextDismissed) {
+          _load(index + 1);
+        }
       }),
     ];
     _load(index, at: widget.start);
@@ -145,6 +151,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       current = null;
       error = null;
       synced = false;
+      upNextDismissed = false;
       skips = [];
       _autoSkipped.clear();
       _skipsRequested = null;
@@ -380,6 +387,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _seekBy(int seconds) {
+    HapticFeedback.selectionClick();
     player.seek(_clamp(player.state.position + Duration(seconds: seconds)));
     _hint(seconds > 0 ? '+${seconds}s' : '${seconds}s');
   }
@@ -431,6 +439,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final loading =
         error == null && (current == null || player.state.buffering);
     final swipes = !locked && Settings.swipeGestures;
+    final upNext = _upNext(position);
 
     return Scaffold(
       key: _scaffold,
@@ -499,6 +508,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             onLongPressStart: locked
                 ? null
                 : (_) {
+                    HapticFeedback.mediumImpact();
                     player.setRate(2);
                     _hint('2× speed', sticky: true);
                   },
@@ -602,7 +612,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
               child: locked ? _lockedOverlay() : _overlay(position, loading),
             ),
           ),
-          if (skip != null &&
+          if (upNext != null && !locked && !controls)
+            Positioned(right: 32, bottom: 40, child: upNext)
+          else if (skip != null &&
               !locked &&
               !controls) // the controls have their own
             Positioned(
@@ -615,6 +627,69 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
           if (error != null) _errorView(),
+        ],
+      ),
+    );
+  }
+
+  /// Offers the next episode during the outro or the last 20 seconds; cancelling also stops auto-play.
+  Widget? _upNext(Duration position) {
+    final duration = player.state.duration;
+    if (!hasNext || upNextDismissed || error != null) return null;
+    if (duration <= Duration.zero) return null;
+    final remaining = duration - position;
+    final inOutro = skips.any(
+      (s) => s.type == SkipType.outro && s.contains(position),
+    );
+    if (!inOutro && remaining > const Duration(seconds: 20)) return null;
+    final next = widget.episodes[index + 1];
+    final countdown =
+        Settings.autoNext && remaining <= const Duration(seconds: 20);
+    return Container(
+      width: 300,
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .8),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'UP NEXT',
+            style: TextStyle(
+              fontSize: 11,
+              letterSpacing: 1.4,
+              fontWeight: FontWeight.w700,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Episode ${epNumber(next.number)}${next.title == null ? '' : ' · ${next.title}'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => setState(() => upNextDismissed = true),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 4),
+              FilledButton.icon(
+                onPressed: () => _load(index + 1),
+                icon: const Icon(Icons.skip_next_rounded),
+                label: Text(
+                  countdown ? 'Playing in ${remaining.inSeconds}s' : 'Play now',
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -967,7 +1042,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 }
 
-class _EpisodeDrawer extends StatelessWidget {
+/// Episodes in the order chosen on the details page (shared setting), with a jump-to-number field for long shows.
+class _EpisodeDrawer extends StatefulWidget {
   const _EpisodeDrawer({
     required this.episodes,
     required this.current,
@@ -980,12 +1056,46 @@ class _EpisodeDrawer extends StatelessWidget {
   final Map media;
   final ValueChanged<int> onSelect;
 
+  @override
+  State<_EpisodeDrawer> createState() => _EpisodeDrawerState();
+}
+
+class _EpisodeDrawerState extends State<_EpisodeDrawer> {
   static const _extent = 84.0;
+  static const _jumpAt = 50; // shorter lists are quick to scroll
+  bool newestFirst = Settings.newestFirst;
+  late final scroll = ScrollController(
+    initialScrollOffset: _offsetOf(widget.current),
+  );
+
+  /// Row of episode [i] in the current order.
+  int _row(int i) => newestFirst ? widget.episodes.length - 1 - i : i;
+
+  double _offsetOf(int i) =>
+      ((_row(i) - 1) * _extent).clamp(0, double.infinity).toDouble();
+
+  void _jump(String text) {
+    final number = num.tryParse(text.trim());
+    if (number == null) return;
+    final i = widget.episodes.indexWhere((e) => e.number >= number);
+    scroll.animateTo(
+      _offsetOf(i == -1 ? widget.episodes.length - 1 : i),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  void dispose() {
+    scroll.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final episodes = widget.episodes;
     final primary = Theme.of(context).colorScheme.primary;
-    final progress = media['mediaListEntry']?['progress'] as int? ?? 0;
+    final progress = widget.media['mediaListEntry']?['progress'] as int? ?? 0;
     return Drawer(
       width: 400,
       backgroundColor: const Color(0xF2101016),
@@ -994,31 +1104,56 @@ class _EpisodeDrawer extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Text(
-                'Episodes · ${episodes.length}',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
+              padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Episodes · ${episodes.length}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (episodes.length > _jumpAt)
+                    SizedBox(
+                      width: 96,
+                      child: TextField(
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.go,
+                        onSubmitted: _jump,
+                        decoration: const InputDecoration(
+                          hintText: 'Go to EP',
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: newestFirst ? 'Newest first' : 'Oldest first',
+                    icon: const Icon(Icons.swap_vert_rounded),
+                    onPressed: () {
+                      setState(
+                        () => Settings.newestFirst = newestFirst = !newestFirst,
+                      );
+                      scroll.jumpTo(_offsetOf(widget.current));
+                    },
+                  ),
+                ],
               ),
             ),
             Expanded(
               child: ListView.builder(
-                controller: ScrollController(
-                  initialScrollOffset: ((current - 1) * _extent).clamp(
-                    0,
-                    double.infinity,
-                  ),
-                ),
+                controller: scroll,
                 padding: const EdgeInsets.only(bottom: 16),
                 itemCount: episodes.length,
                 itemExtent: _extent,
-                itemBuilder: (context, i) {
+                itemBuilder: (context, row) {
+                  final i = _row(row);
                   final e = episodes[i];
-                  final playing = i == current;
+                  final playing = i == widget.current;
                   return InkWell(
-                    onTap: () => onSelect(i),
+                    onTap: () => widget.onSelect(i),
                     child: Container(
                       color: playing ? primary.withValues(alpha: .14) : null,
                       padding: const EdgeInsets.symmetric(
@@ -1092,7 +1227,8 @@ class _EpisodeDrawer extends StatelessWidget {
                               ],
                             ),
                           ),
-                          if (Downloads.instance.find(media, e.number) != null)
+                          if (Downloads.instance.find(widget.media, e.number) !=
+                              null)
                             const Padding(
                               padding: EdgeInsets.only(left: 8),
                               child: Icon(

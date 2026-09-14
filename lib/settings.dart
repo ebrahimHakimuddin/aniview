@@ -12,6 +12,7 @@ import 'analytics.dart';
 import 'anilist.dart';
 import 'downloads.dart';
 import 'history.dart';
+import 'notifications.dart';
 import 'sources.dart';
 import 'states.dart';
 
@@ -73,9 +74,17 @@ class Settings {
   static int get watchedPercent => _prefs.getInt('watched_percent') ?? 85;
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
 
+  static bool get newestFirst => _prefs.getBool('newest_first') ?? true;
+  static set newestFirst(bool v) => _prefs.setBool('newest_first', v);
+
   /// Tallest video height to download; 0 means the best available.
   static int get downloadQuality => _prefs.getInt('download_quality') ?? 0;
   static set downloadQuality(int v) => _prefs.setInt('download_quality', v);
+
+  static bool get episodeNotifications =>
+      _prefs.getBool('episode_notifications') ?? true;
+  static set episodeNotifications(bool v) =>
+      _prefs.setBool('episode_notifications', v);
 
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);
@@ -98,6 +107,9 @@ class Settings {
       _prefs.getStringList('recent_searches') ?? const [];
   static set recentSearches(List<String> v) =>
       _prefs.setStringList('recent_searches', v.take(10).toList());
+
+  static bool get episodeTipSeen => _prefs.getBool('episode_tip_seen') ?? false;
+  static set episodeTipSeen(bool v) => _prefs.setBool('episode_tip_seen', v);
 }
 
 /// App version and opening links in the browser, answered by MainActivity.
@@ -361,6 +373,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Settings.watchedPercent,
                 (v) => Settings.watchedPercent = v,
               ),
+            ),
+          ]),
+          _Group('Notifications', [
+            SwitchListTile(
+              title: const Text('New episodes'),
+              subtitle: const Text(
+                'When a show you\'re watching or recently watched airs',
+              ),
+              value: Settings.episodeNotifications,
+              onChanged: (v) {
+                setState(() => Settings.episodeNotifications = v);
+                // The schedule itself is refreshed by home when Settings closes.
+                if (v) EpisodeNotifications.requestPermission(again: true);
+              },
             ),
           ]),
           _Group('Playback', [
@@ -632,7 +658,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
-                color: Colors.white38,
+                color: Colors.white54,
                 height: 1.6,
               ),
             ),

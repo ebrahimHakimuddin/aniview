@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
@@ -8,6 +9,7 @@ import 'tracker.dart';
 import 'cloudflare.dart';
 import 'downloads.dart';
 import 'history.dart';
+import 'notifications.dart';
 import 'player.dart';
 import 'settings.dart';
 import 'sources.dart';
@@ -63,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     Analytics.screen('/', title: 'Home');
     _syncPending();
+    _scheduleNotifications();
+    EpisodeNotifications.listen(_openFromNotification);
     checkForUpdate(context, quiet: true);
   }
 
@@ -89,10 +93,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _reloadLists() => setState(() {
-    lists = Tracker.lists();
-    history = WatchHistory.all();
-  });
+  void _reloadLists() {
+    setState(() {
+      lists = Tracker.lists();
+      history = WatchHistory.all();
+    });
+    _scheduleNotifications();
+  }
+
+  /// Home is the root route, so its context can open a show whenever a notification is tapped.
+  Future<void> _openFromNotification(int id) async {
+    Analytics.event('notification_open', {'media_id': id});
+    try {
+      final media = await AniList.media(id);
+      if (mounted) await openDetails(context, media, onBack: _reloadLists);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
+  /// Keeps the background new-episode check current with recently watched shows and the AniList sign-in.
+  Future<void> _scheduleNotifications() async {
+    final recent = await history;
+    if (Settings.episodeNotifications &&
+        (Tracker.signedIn || recent.isNotEmpty)) {
+      EpisodeNotifications.requestPermission();
+    }
+    await EpisodeNotifications.refresh([for (final r in recent) r['media']]);
+  }
 
   Future<void> _refresh() async {
     setState(() {
@@ -103,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       history = WatchHistory.all();
     });
     _syncPending();
+    _scheduleNotifications();
     try {
       await Future.wait([lists, trending, season]);
     } catch (_) {} // each section shows its own error state
@@ -285,13 +314,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   seasonTitle,
                   season,
                   onRetry: () => setState(() => season = Tracker.season()),
+                  seeAll: SearchFilters(
+                    season: AniList.currentSeason.$1,
+                    year: AniList.currentSeason.$2,
+                    sort: 'POPULARITY_DESC',
+                  ),
                 ),
                 _shelf(
                   'Trending now',
                   trending,
                   onRetry: _refresh,
-                  showError: false,
-                ), // the hero already shows it
+                  showError: false, // the hero already shows it
+                  seeAll: const SearchFilters(sort: 'TRENDING_DESC'),
+                ),
               ],
               const SizedBox(
                 height: 96,
@@ -305,12 +340,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget get _recentlyWatched => FutureBuilder(
     future: history,
-    builder: (context, snap) => snap.data?.isNotEmpty ?? false
-        ? _Shelf('Recently watched', [
-            for (final record in snap.data!) record['media'],
-          ], onBack: _reloadLists)
-        : const SizedBox.shrink(),
+    builder: (context, snap) {
+      final records = snap.data ?? const [];
+      if (records.isEmpty) return const SizedBox.shrink();
+      return _Shelf(
+        'Recently watched',
+        [for (final record in records) record['media']],
+        onBack: _reloadLists,
+        subtitles: [
+          for (final r in records)
+            'EP ${epNumber(r['episode'])}'
+                '${(r['position'] as int? ?? 0) > 0 ? ' · ${formatDuration(Duration(milliseconds: r['position']))}' : ''}',
+        ],
+        onLongPress: (i) => _removeFromHistory(records[i]),
+      );
+    },
   );
+
+  Future<void> _removeFromHistory(Map<String, dynamic> record) async {
+    HapticFeedback.mediumImpact();
+    final remove = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _sheet,
+      builder: (context) => SafeArea(
+        child: ListTile(
+          leading: const Icon(Icons.history_toggle_off_rounded),
+          title: const Text('Remove from recently watched'),
+          subtitle: Text(titleOf(record['media'])),
+          onTap: () => Navigator.pop(context, true),
+        ),
+      ),
+    );
+    if (remove != true) return;
+    await WatchHistory.remove(record['media']);
+    if (mounted) _reloadLists();
+  }
 
   /// Shows with a finished download.
   List<Map> get _downloaded => {
@@ -323,6 +388,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Future<List> future, {
     required VoidCallback onRetry,
     bool showError = true,
+    SearchFilters? seeAll,
   }) => FutureBuilder(
     future: future,
     builder: (context, snap) {
@@ -342,14 +408,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           title,
           child: const Text(
             'Nothing here yet.',
-            style: TextStyle(color: Colors.white54),
+            style: TextStyle(color: Colors.white70),
           ),
         );
       }
-      return _Shelf(title, snap.data!, onBack: _reloadLists);
+      return _Shelf(
+        title,
+        snap.data!,
+        onBack: _reloadLists,
+        onSeeAll: seeAll == null ? null : () => openSearch(context, seeAll),
+      );
     },
   );
 }
+
+Future<void> openSearch(BuildContext context, SearchFilters filters) =>
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => SearchScreen(filters: filters)),
+    );
 
 /// Airing now: still releasing, or from the current season.
 bool _airingNow(dynamic media) {
@@ -685,23 +762,46 @@ class _SignInCard extends StatelessWidget {
 }
 
 class _Shelf extends StatelessWidget {
-  const _Shelf(this.title, this.items, {this.onBack});
+  const _Shelf(
+    this.title,
+    this.items, {
+    this.onBack,
+    this.onSeeAll,
+    this.subtitles,
+    this.onLongPress,
+  });
 
   final String title;
   final List items;
-  final VoidCallback? onBack;
+  final VoidCallback? onBack, onSeeAll;
+
+  /// Per item, replacing the poster's own progress line.
+  final List<String>? subtitles;
+  final ValueChanged<int>? onLongPress;
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
-        child: Text(
-          title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        padding: EdgeInsets.fromLTRB(20, onSeeAll == null ? 28 : 16, 8, 0),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            if (onSeeAll != null)
+              TextButton(onPressed: onSeeAll, child: const Text('See all')),
+          ],
         ),
       ),
+      const SizedBox(height: 12),
       SizedBox(
         height: 272,
         child: ListView.separated(
@@ -709,19 +809,49 @@ class _Shelf extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           itemCount: items.length,
           separatorBuilder: (_, _) => const SizedBox(width: 14),
-          itemBuilder: (context, i) =>
-              SizedBox(width: 136, child: PosterCard(items[i], onBack: onBack)),
+          itemBuilder: (context, i) => SizedBox(
+            width: 136,
+            child: PosterCard(
+              items[i],
+              onBack: onBack,
+              subtitle: subtitles?[i],
+              onLongPress: onLongPress == null ? null : () => onLongPress!(i),
+            ),
+          ),
         ),
       ),
     ],
   );
 }
 
+/// "EP 12 · 2d" until the next episode of a releasing show airs; null when AniList gave no time or it has aired.
+String? airingLabel(Map media) {
+  final next = media['nextAiringEpisode'] as Map?;
+  final at = next?['airingAt'] as int?;
+  if (at == null) return null;
+  final left = DateTime.fromMillisecondsSinceEpoch(at * 1000)
+      .difference(DateTime.now());
+  if (left.isNegative) return null;
+  final when = left.inDays > 0
+      ? '${left.inDays}d'
+      : left.inHours > 0
+      ? '${left.inHours}h'
+      : '${left.inMinutes}m';
+  return 'EP ${next!['episode']} · $when';
+}
+
 class PosterCard extends StatelessWidget {
-  const PosterCard(this.media, {super.key, this.onBack});
+  const PosterCard(
+    this.media, {
+    super.key,
+    this.onBack,
+    this.subtitle,
+    this.onLongPress,
+  });
 
   final Map media;
-  final VoidCallback? onBack;
+  final VoidCallback? onBack, onLongPress;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -729,63 +859,126 @@ class PosterCard extends StatelessWidget {
     final aired = media['nextAiringEpisode']?['episode'] as int?;
     final total =
         media['episodes'] as int? ?? (aired == null ? null : aired - 1);
-    return GestureDetector(
-      onTap: () => openDetails(context, media, onBack: onBack),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final airing = airingLabel(media);
+    final line =
+        subtitle ??
+        (progress == null
+            ? null
+            : 'EP $progress${total == null ? '' : ' / $total'}');
+    return Semantics(
+      button: true,
+      label: [titleOf(media), ?line].join(', '),
+      excludeSemantics: true,
+      child: Stack(
         children: [
-          AspectRatio(
-            aspectRatio: 2 / 3,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _Img(
-                    media['coverImage']['extraLarge'],
-                    color: media['coverImage']['color'],
-                  ),
-                  if (media['averageScore'] != null)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: _Score(media['averageScore'], compact: true),
-                    ),
-                  if (progress != null && total != null && total > 0)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: LinearProgressIndicator(
-                        value: (progress / total).clamp(0.0, 1.0).toDouble(),
-                        minHeight: 4,
-                        backgroundColor: Colors.black54,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AspectRatio(
+                aspectRatio: 2 / 3,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _Img(
+                        media['coverImage']['extraLarge'],
+                        color: media['coverImage']['color'],
                       ),
-                    ),
-                ],
+                      if (media['averageScore'] != null)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: _Score(media['averageScore'], compact: true),
+                        ),
+                      if (airing != null)
+                        Positioned(
+                          left: 8,
+                          bottom: 10,
+                          child: _AiringBadge(airing),
+                        ),
+                      if (progress != null && total != null && total > 0)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: LinearProgressIndicator(
+                            value: (progress / total)
+                                .clamp(0.0, 1.0)
+                                .toDouble(),
+                            minHeight: 4,
+                            backgroundColor: Colors.black54,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                titleOf(media),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.25,
+                ),
+              ),
+              if (line != null)
+                Text(
+                  line,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+            ],
+          ),
+          // On top, so the ripple shows over the artwork.
+          Positioned.fill(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => openDetails(context, media, onBack: onBack),
+                onLongPress: onLongPress,
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            titleOf(media),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
-            ),
-          ),
-          if (progress != null)
-            Text(
-              'EP $progress${total == null ? '' : ' / $total'}',
-              style: const TextStyle(fontSize: 11, color: Colors.white54),
-            ),
         ],
       ),
     );
   }
+}
+
+class _AiringBadge extends StatelessWidget {
+  const _AiringBadge(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: .7),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.schedule_rounded,
+          size: 11,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
 }
 
 // ───────────────────────────── Search ─────────────────────────────
@@ -1301,7 +1494,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
   late final cachedSeason = _ids.then(
     (_) => Downloads.instance.season(widget.media),
   );
-  bool dub = Settings.preferDub, expanded = false;
+  bool dub = Settings.preferDub,
+      expanded = false,
+      newestFirst = Settings.newestFirst;
+
+  /// Chosen page of episodes; null follows the page holding the next unwatched one.
+  int? page;
+  static const _pageSize = 50;
 
   Map get media => widget.media;
 
@@ -1310,6 +1509,86 @@ class _DetailsScreenState extends State<DetailsScreen> {
     super.initState();
     Analytics.screen('/details', title: titleOf(media));
     _loadSites();
+  }
+
+  /// Long-press on an episode: watched state and its download.
+  Future<void> _episodeActions(
+    Episode episode, {
+    required bool watched,
+    required Source? site,
+    required List<Episode> season,
+  }) async {
+    HapticFeedback.mediumImpact();
+    if (!Settings.episodeTipSeen) {
+      setState(() => Settings.episodeTipSeen = true);
+    }
+    final download = Downloads.instance.entry(media, episode.number, dub);
+    final action = await showModalBottomSheet<VoidCallback>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: _sheet,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                'Episode ${epNumber(episode.number)}',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+              leading: Icon(
+                watched ? Icons.remove_done_rounded : Icons.done_all_rounded,
+              ),
+              title: Text(
+                watched ? 'Mark as unwatched' : 'Mark watched up to here',
+              ),
+              onTap: () => Navigator.pop(
+                context,
+                () => _markWatched(
+                  watched ? episode.number.ceil() - 1 : episode.number.toInt(),
+                ),
+              ),
+            ),
+            if (site != null && download == null)
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                leading: const Icon(Icons.download_rounded),
+                title: Text('Download ${dub ? 'dub' : 'sub'}'),
+                onTap: () => Navigator.pop(
+                  context,
+                  () => Downloads.instance.enqueue(
+                    media,
+                    site.name,
+                    [episode],
+                    dub: dub,
+                    season: season,
+                  ),
+                ),
+              ),
+            if (download?.status == DownloadStatus.done)
+              ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                leading: const Icon(Icons.delete_outline_rounded),
+                title: const Text('Delete download'),
+                onTap: () => Navigator.pop(
+                  context,
+                  () => _confirmDelete(this.context, download!),
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    action?.call();
   }
 
   Future<void> _loadSites() async {
@@ -1331,6 +1610,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   // Episodes load only for the chosen site, so a Cloudflare prompt appears only when that site needs one.
   void _select(Source s) => setState(() {
     source = s;
+    page = null;
     episodes = withCloudflare(context, () => loadEpisodes(s, media)).then((
       list,
     ) {
@@ -1469,6 +1749,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       if (total != null) '$total eps',
       (media['status'] as String?)?.replaceAll('_', ' '),
     ].whereType<Object>().join('  ·  ');
+    final airing = airingLabel(media);
     final description = (media['description'] as String? ?? '')
         .replaceAll(RegExp(r'<[^>]*>'), '')
         .trim();
@@ -1553,9 +1834,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             style: const TextStyle(
                               fontSize: 11,
                               letterSpacing: 1,
-                              color: Colors.white54,
+                              color: Colors.white70,
                             ),
                           ),
+                          if (airing != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: _AiringBadge('Next: $airing'),
+                            ),
                           const SizedBox(height: 10),
                           if (media['averageScore'] != null)
                             _Score(media['averageScore']),
@@ -1581,11 +1867,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     runSpacing: 8,
                     children: [
                       for (final genre in media['genres'])
-                        Chip(
+                        ActionChip(
                           label: Text('$genre'),
+                          tooltip: 'Browse $genre',
                           visualDensity: VisualDensity.compact,
                           side: BorderSide.none,
                           backgroundColor: Colors.white.withValues(alpha: .06),
+                          onPressed: () => openSearch(
+                            context,
+                            SearchFilters(genres: {'$genre'}),
+                          ),
                         ),
                     ],
                   ),
@@ -1818,6 +2109,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   /// [site] is null offline, when only downloaded episodes play. Long-press toggles watched.
+  /// Shown [_pageSize] at a time, newest first by default; the player always gets them in order.
   Widget _episodeSliver(List<Episode> list, int progress, Source? site) {
     final playable = site != null
         ? list
@@ -1825,66 +2117,165 @@ class _DetailsScreenState extends State<DetailsScreen> {
             for (final e in list)
               if (Downloads.instance.find(media, e.number) != null) e,
           ];
-    return SliverList.builder(
-      itemCount: list.length,
-      itemBuilder: (context, i) {
-        final episode = list[i];
-        final watched = episode.number <= progress;
-        final saved = site != null || playable.contains(episode);
-        return _EpisodeTile(
-          episode,
-          watched: watched,
-          onLongPress: () => _markWatched(
-            watched ? episode.number.ceil() - 1 : episode.number.toInt(),
-          ),
-          trailing: site == null
-              ? saved
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Icon(
-                          Icons.download_done_rounded,
-                          color: Colors.white54,
-                        ),
-                      )
-                    : null
-              : _DownloadButton(
-                  media: media,
-                  source: site,
-                  episode: episode,
-                  season: list,
-                  dub: dub,
-                ),
-          onTap: () async {
-            if (!saved) {
-              showError(
-                context,
-                "Episode ${epNumber(episode.number)} isn't downloaded",
-              );
-              return;
-            }
-            await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PlayerScreen(
-                  media: media,
-                  source: site,
-                  sourceName:
-                      site?.name ??
-                      Downloads.instance.forMedia(media).firstOrNull?.source,
-                  episodes: playable,
-                  index: playable.indexOf(episode),
-                  dub: dub,
-                ),
-              ),
-            );
-            if (mounted) {
-              setState(
-                () => record = WatchHistory.of(media),
-              ); // progress and resume point changed
-            }
-          },
+    final ordered = [...list]
+      ..sort(
+        (a, b) => newestFirst
+            ? b.number.compareTo(a.number)
+            : a.number.compareTo(b.number),
+      );
+    final pages = [
+      for (var i = 0; i < ordered.length; i += _pageSize)
+        ordered.skip(i).take(_pageSize).toList(),
+    ];
+    final upcoming = ordered
+        .where((e) => e.number > progress)
+        .fold<Episode?>(
+          null,
+          (low, e) => low == null || e.number < low.number ? e : low,
         );
-      },
+    final nextUp = pages.indexWhere((p) => p.contains(upcoming));
+    final current = pages.isEmpty
+        ? 0
+        : (page ?? (nextUp == -1 ? 0 : nextUp)).clamp(0, pages.length - 1);
+    final shown = pages.isEmpty ? const <Episode>[] : pages[current];
+    return SliverMainAxisGroup(
+      slivers: [
+        if (!Settings.episodeTipSeen && ordered.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.touch_app_outlined,
+                    size: 18,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Long-press an episode to mark it watched or manage its download',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Got it',
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    onPressed: () =>
+                        setState(() => Settings.episodeTipSeen = true),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (ordered.length > 1)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 0, 4),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => setState(() {
+                      Settings.newestFirst = newestFirst = !newestFirst;
+                      page = null;
+                    }),
+                    icon: const Icon(Icons.swap_vert_rounded, size: 18),
+                    label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
+                  ),
+                  if (pages.length > 1)
+                    Expanded(
+                      child: SizedBox(
+                        height: 40,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.only(right: 20),
+                          itemCount: pages.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 8),
+                          itemBuilder: (context, i) => ChoiceChip(
+                            label: Text(
+                              '${epNumber(pages[i].first.number)}–${epNumber(pages[i].last.number)}',
+                            ),
+                            selected: i == current,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            onSelected: (_) => setState(() => page = i),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        SliverList.builder(
+          itemCount: shown.length,
+          itemBuilder: (context, i) {
+            final episode = shown[i];
+            final watched = episode.number <= progress;
+            final saved = site != null || playable.contains(episode);
+            return _EpisodeTile(
+              episode,
+              watched: watched,
+              onLongPress: () => _episodeActions(
+                episode,
+                watched: watched,
+                site: site,
+                season: list,
+              ),
+              trailing: site == null
+                  ? saved
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Icon(
+                              Icons.download_done_rounded,
+                              color: Colors.white54,
+                            ),
+                          )
+                        : null
+                  : _DownloadButton(
+                      media: media,
+                      source: site,
+                      episode: episode,
+                      season: list,
+                      dub: dub,
+                    ),
+              onTap: () async {
+                if (!saved) {
+                  showError(
+                    context,
+                    "Episode ${epNumber(episode.number)} isn't downloaded",
+                  );
+                  return;
+                }
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PlayerScreen(
+                      media: media,
+                      source: site,
+                      sourceName:
+                          site?.name ??
+                          Downloads.instance
+                              .forMedia(media)
+                              .firstOrNull
+                              ?.source,
+                      episodes: playable,
+                      index: playable.indexOf(episode),
+                      dub: dub,
+                    ),
+                  ),
+                );
+                if (mounted) {
+                  setState(
+                    () => record = WatchHistory.of(media),
+                  ); // progress and resume point changed
+                }
+              },
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -2025,7 +2416,7 @@ class _MatchSheetState extends State<_MatchSheet> {
                 const SizedBox(height: 4),
                 const Text(
                   'Your choice is remembered for this show.',
-                  style: TextStyle(color: Colors.white54, fontSize: 13),
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -2171,7 +2562,7 @@ class _RelationTile extends StatelessWidget {
                       ].whereType<Object>().join('  ·  '),
                       style: const TextStyle(
                         fontSize: 11,
-                        color: Colors.white54,
+                        color: Colors.white70,
                       ),
                     ),
                   ],
@@ -2512,7 +2903,7 @@ class _EpisodeTile extends StatelessWidget {
                     'Episode ${epNumber(episode.number)}',
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: watched ? Colors.white54 : Colors.white,
+                      color: watched ? Colors.white60 : Colors.white,
                     ),
                   ),
                   if (title != null)
@@ -2532,7 +2923,7 @@ class _EpisodeTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 11.5,
-                        color: Colors.white38,
+                        color: Colors.white60,
                         height: 1.3,
                       ),
                     ),
@@ -2741,8 +3132,58 @@ Future<void> _confirmDelete(BuildContext context, Download d) async {
   if (context.mounted) showSuccess(context, 'Download deleted');
 }
 
-class DownloadsScreen extends StatelessWidget {
+class DownloadsScreen extends StatefulWidget {
   const DownloadsScreen({super.key});
+
+  @override
+  State<DownloadsScreen> createState() => _DownloadsScreenState();
+}
+
+class _DownloadsScreenState extends State<DownloadsScreen> {
+  static const _filters = <String, Set<DownloadStatus>>{
+    'All': {...DownloadStatus.values},
+    'In progress': {DownloadStatus.queued, DownloadStatus.downloading},
+    'Failed': {DownloadStatus.failed},
+    'Done': {DownloadStatus.done},
+  };
+  String filter = 'All';
+
+  /// Shows whose expanded state the user flipped from the default.
+  final toggled = <Object?>{};
+
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/downloads', title: 'Downloads');
+  }
+
+  Future<void> _deleteShow(List<Download> group) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete ${group.length} downloads?'),
+        content: Text(
+          '${titleOf(group.first.media)} · '
+          '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))} will be freed on this device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    for (final d in [...group]) {
+      await Downloads.instance.remove(d);
+    }
+    if (mounted) showSuccess(context, 'Downloads deleted');
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -2756,14 +3197,18 @@ class DownloadsScreen extends StatelessWidget {
           return const EmptyState(
             icon: Icons.download_for_offline_outlined,
             title: 'No downloads yet',
-            message:
-                'Tap the download icon next to an episode to watch it offline.',
+            message: 'Long-press an episode or use ⋮ → Download episodes to watch offline.',
           );
         }
         final shows = <Object?, List<Download>>{};
         for (final d in items) {
           shows.putIfAbsent(d.media['id'], () => []).add(d);
         }
+        // The last failed or active download finished: fall back to everything.
+        if (!items.any((d) => _filters[filter]!.contains(d.status))) {
+          filter = 'All';
+        }
+        final wanted = _filters[filter]!;
         return ListView(
           padding: const EdgeInsets.only(bottom: 32),
           children: [
@@ -2771,35 +3216,90 @@ class DownloadsScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
               child: Text(
                 '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
-                style: const TextStyle(color: Colors.white54, fontSize: 13),
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
               ),
             ),
-            for (final group in shows.values) ...[
-              _DownloadShowHeader(group),
-              for (final d in [
-                ...group,
-              ]..sort((a, b) => a.number.compareTo(b.number)))
-                _DownloadTile(d, group),
-            ],
+            SizedBox(
+              height: 52,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 2),
+                children: [
+                  for (final MapEntry(key: name, value: statuses)
+                      in _filters.entries)
+                    if (name == 'All' ||
+                        items.any((d) => statuses.contains(d.status)))
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text(
+                            '$name · ${items.where((d) => statuses.contains(d.status)).length}',
+                          ),
+                          selected: filter == name,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) => setState(() => filter = name),
+                        ),
+                      ),
+                ],
+              ),
+            ),
+            for (final MapEntry(key: id, value: group) in shows.entries)
+              if (group.any((d) => wanted.contains(d.status)))
+                _show(id, group, single: shows.length == 1),
           ],
         );
       },
     ),
   );
+
+  Widget _show(Object? id, List<Download> group, {required bool single}) {
+    final wanted = _filters[filter]!;
+    // Open by default when there's something to act on, a single show, or a filter narrowing things down.
+    final open =
+        (filter != 'All' ||
+            single ||
+            group.any((d) => d.status != DownloadStatus.done)) !=
+        toggled.contains(id);
+    return Column(
+      children: [
+        _DownloadShowHeader(
+          group,
+          expanded: open,
+          onToggle: () => setState(
+            () => toggled.contains(id) ? toggled.remove(id) : toggled.add(id),
+          ),
+          onDelete: () => _deleteShow(group),
+        ),
+        if (open)
+          for (final d in [
+            for (final d in group)
+              if (wanted.contains(d.status)) d,
+          ]..sort((a, b) => a.number.compareTo(b.number)))
+            _DownloadTile(d, group),
+      ],
+    );
+  }
 }
 
 class _DownloadShowHeader extends StatelessWidget {
-  const _DownloadShowHeader(this.group);
+  const _DownloadShowHeader(
+    this.group, {
+    required this.expanded,
+    required this.onToggle,
+    required this.onDelete,
+  });
 
   final List<Download> group;
+  final bool expanded;
+  final VoidCallback onToggle, onDelete;
 
   @override
   Widget build(BuildContext context) {
     final media = group.first.media;
     return InkWell(
-      onTap: () => openDetails(context, media),
+      onTap: onToggle,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+        padding: const EdgeInsets.fromLTRB(20, 12, 4, 4),
         child: Row(
           children: [
             ClipRRect(
@@ -2830,12 +3330,36 @@ class _DownloadShowHeader extends StatelessWidget {
                   Text(
                     '${group.length} ${group.length == 1 ? 'episode' : 'episodes'} · '
                     '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+            Icon(
+              expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              color: Colors.white70,
+            ),
+            PopupMenuButton<VoidCallback>(
+              tooltip: 'Show actions',
+              color: _sheet,
+              onSelected: (action) => action(),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: () => openDetails(context, media),
+                  child: const ListTile(
+                    leading: Icon(Icons.info_outline_rounded),
+                    title: Text('Open show'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: onDelete,
+                  child: const ListTile(
+                    leading: Icon(Icons.delete_outline_rounded),
+                    title: Text('Delete all'),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -2928,7 +3452,7 @@ class _DownloadTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 12,
-              color: failed ? const Color(0xFFFF8A8E) : Colors.white54,
+              color: failed ? const Color(0xFFFF8A8E) : Colors.white70,
             ),
           ),
           if (active)
@@ -3051,15 +3575,38 @@ class _ContinueFabState extends State<ContinueFab> {
   }
 
   @override
-  Widget build(BuildContext context) => FloatingActionButton(
+  Widget build(BuildContext context) => FloatingActionButton.extended(
     tooltip: '${widget.title} · ${widget.subtitle}',
     onPressed: busy ? null : _run,
-    child: busy
+    icon: busy
         ? const SizedBox.square(
             dimension: 22,
             child: CircularProgressIndicator(strokeWidth: 2.5),
           )
-        : const Icon(Icons.play_arrow_rounded, size: 32),
+        : const Icon(Icons.play_arrow_rounded, size: 28),
+    label: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.sizeOf(context).width * .55,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          Text(
+            widget.subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w400),
+          ),
+        ],
+      ),
+    ),
   );
 }
 

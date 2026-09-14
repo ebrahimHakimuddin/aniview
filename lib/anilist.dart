@@ -45,7 +45,7 @@ class AniList {
   static const _media =
       'id idMal title{userPreferred romaji english} coverImage{extraLarge color} bannerImage '
       'episodes description averageScore genres format status season seasonYear '
-      'nextAiringEpisode{episode} mediaListEntry{progress status}';
+      'nextAiringEpisode{episode airingAt} mediaListEntry{progress status}';
 
   static String? token;
   static Map<String, dynamic>? _viewer;
@@ -160,6 +160,12 @@ class AniList {
     ))['Page'];
     return (data['media'] as List, data['pageInfo']['hasNextPage'] == true);
   }
+
+  static Future<Map> media(int id) async => (await query(
+    r'query($id:Int){Media(id:$id){'
+    '$_media}}',
+    {'id': id},
+  ))['Media'];
 
   /// Anime prequels and sequels of a show as (PREQUEL|SEQUEL, media), prequels first.
   static Future<List<(String, Map)>> relations(int id) async {
