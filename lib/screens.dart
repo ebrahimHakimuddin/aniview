@@ -114,8 +114,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) _refresh();
   }
 
-  Future<void> _account() async {
-    if (Tracker.signedIn) return _openSettings();
+  Future<void> _signIn() async {
     if (AniList.clientId.isEmpty) {
       showError(
         context,
@@ -166,11 +165,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             padding: EdgeInsets.zero,
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
-              _TopBar(
-                viewer: viewer,
-                onAccount: _account,
-                onSettings: _openSettings,
-              ),
+              _TopBar(viewer: viewer, onSettings: _openSettings),
               // Offline: go straight to what can play.
               if (snap.hasError && _downloaded.isNotEmpty) ...[
                 Padding(
@@ -222,7 +217,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   ),
                 if (!Tracker.signedIn)
-                  _SignInCard(onTap: _account)
+                  _SignInCard(onTap: _signIn)
                 else
                   FutureBuilder(
                     future: lists,
@@ -383,14 +378,10 @@ class _Section extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.viewer,
-    required this.onAccount,
-    required this.onSettings,
-  });
+  const _TopBar({required this.viewer, required this.onSettings});
 
   final Future<Map<String, dynamic>?> viewer;
-  final VoidCallback onAccount, onSettings;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -425,20 +416,16 @@ class _TopBar extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const DownloadsScreen()),
             ),
           ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: onSettings,
-          ),
+          // Account lives in Settings, so your avatar is the settings button once signed in.
           FutureBuilder(
             future: viewer,
             builder: (context, snap) {
               final avatar = snap.data?['avatar']?['large'] as String?;
               return IconButton(
-                tooltip: Tracker.signedIn ? 'Account' : 'Sign in',
-                onPressed: onAccount,
+                tooltip: 'Settings',
+                onPressed: onSettings,
                 icon: avatar == null
-                    ? const Icon(Icons.account_circle_outlined)
+                    ? const Icon(Icons.settings_outlined)
                     : CircleAvatar(
                         radius: 15,
                         backgroundImage: NetworkImage(avatar),
