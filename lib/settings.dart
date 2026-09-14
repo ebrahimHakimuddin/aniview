@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'analytics.dart';
 import 'anilist.dart';
 import 'downloads.dart';
 import 'history.dart';
@@ -70,6 +72,22 @@ class Settings {
 
   static int get watchedPercent => _prefs.getInt('watched_percent') ?? 85;
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
+
+  static bool get analytics => _prefs.getBool('analytics') ?? true;
+  static set analytics(bool v) => _prefs.setBool('analytics', v);
+
+  /// Random per-install id for counting users without fingerprinting them.
+  static String get installId =>
+      _prefs.getString('install_id') ??
+      (() {
+        final random = Random.secure();
+        final id = [
+          for (var i = 0; i < 16; i++)
+            random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+        ].join();
+        _prefs.setString('install_id', id);
+        return id;
+      })();
 }
 
 /// App version and opening links in the browser, answered by MainActivity.
@@ -172,6 +190,12 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/settings', title: 'Settings');
+  }
+
   Future<void> _choose<T>(
     String title,
     Map<T, String> options,
@@ -248,6 +272,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await AniList.login(context);
       final me = await AniList.viewer();
+      if (me != null) Analytics.event('sign_in');
       if (mounted && me != null) {
         showSuccess(context, 'Signed in as ${me['name']}');
       }
@@ -548,6 +573,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => checkForUpdate(context),
               ),
             ),
+            if (Analytics.available)
+              SwitchListTile(
+                title: const Text('Share anonymous usage stats'),
+                subtitle: const Text(
+                  'Which screens and features get used. No account, search text or personal data',
+                ),
+                value: Settings.analytics,
+                onChanged: (v) => setState(() => Settings.analytics = v),
+              ),
             for (final (icon, title, url) in const [
               (
                 Icons.code_rounded,

@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
+import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
 import 'downloads.dart';
@@ -83,6 +84,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     ScreenBrightness().application.then((v) => brightness = v).ignore();
+    Analytics.screen('/player', title: 'Player');
     _subs = [
       player.stream.position.listen(_onPosition),
       player.stream.duration.listen(_onDuration),
@@ -179,6 +181,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
       }
       streams = found;
+      Analytics.event('episode_play', {
+        'media_id': widget.media['id'],
+        'episode': target.number,
+        'source': _sourceName,
+        'dub': widget.dub,
+        'downloaded': offline != null,
+      });
       await _play(found.first, at: at);
     } catch (e) {
       if (mounted && index == i) setState(() => error = e);
@@ -259,6 +268,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         position.inMilliseconds >
             duration.inMilliseconds * Settings.watchedPercent / 100) {
       synced = true;
+      Analytics.event('episode_watched', {
+        'media_id': widget.media['id'],
+        'episode': episode.number,
+      });
       _syncProgress();
     }
     if (Settings.skipMode == SkipMode.auto) {

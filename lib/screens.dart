@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'analytics.dart';
 import 'anilist.dart';
 import 'tracker.dart';
 import 'cloudflare.dart';
@@ -60,6 +61,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    Analytics.screen('/', title: 'Home');
     _syncPending();
     checkForUpdate(context, quiet: true);
   }
@@ -126,6 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await AniList.login(context);
       if (!Tracker.signedIn) return; // closed without signing in
       final me = await AniList.viewer();
+      Analytics.event('sign_in');
       if (mounted) {
         showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
       }
@@ -928,6 +931,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   @override
   void initState() {
     super.initState();
+    Analytics.screen('/details', title: titleOf(media));
     _loadSites();
   }
 

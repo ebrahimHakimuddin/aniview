@@ -33,6 +33,8 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "version" -> result.success(packageManager.getPackageInfo(packageName, 0).versionName)
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
+                    // For the analytics user agent, e.g. "Android 14; Pixel 7".
+                    "device" -> result.success("Android ${Build.VERSION.RELEASE}; ${Build.MODEL}")
                     // The system notification opens the installer when tapped.
                     "download" -> {
                         val request = DownloadManager.Request(Uri.parse(call.argument<String>("url")))

@@ -15,9 +15,11 @@ content. Any takedown or copyright concerns should be addressed to the site that
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
 2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig (app type "android"); only its client id
    is used, for public data.
-3. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id>`
+3. Optionally, add a **mobile** site in [Rybbit](https://rybbit.com) for usage analytics and note its site id.
+4. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>`
 
-Either client id can be left out: without AniList's there's no tracking, without MyAnimeList's no fallback.
+Any of these can be left out: without AniList's client id there's no tracking, without MyAnimeList's no fallback,
+without a Rybbit site id no analytics. A self-hosted Rybbit is set with `--dart-define=RYBBIT_HOST=https://…`.
 
 ## Release
 
@@ -30,7 +32,7 @@ install over builds signed with the same key.
 
    ```sh
    fvm flutter build apk --release --split-per-abi --dart-define=ANILIST_CLIENT_ID=<client id> \
-     --dart-define=MAL_CLIENT_ID=<client id>
+     --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>
    git tag v1.5.2 && git push origin main v1.5.2
    gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
    ```
@@ -43,6 +45,14 @@ Home, search and related shows come from AniList, and from MyAnimeList's public 
 Progress goes to AniList only. A save AniList can't take (down, or you're offline) is queued on-device and
 retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
 MyAnimeList get their AniList id from ani.zip when opened.
+
+## Analytics
+
+With a Rybbit site id, the app sends screen views and a fixed set of events (`episode_play`, `episode_watched`,
+`search`, `search_filter`, `download_queue`, `sign_in`) from `lib/analytics.dart`. Events carry AniList ids,
+episode numbers, counts and fixed choices, never search text or account details; users are counted by a random
+per-install id. The Rybbit site must be of type **mobile**: it accepts native traffic with only the public site
+id, so no API key ships in the APK. Users can turn it off in Settings → About.
 
 ## Extras
 
