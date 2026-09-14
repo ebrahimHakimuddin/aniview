@@ -136,6 +136,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _load(int i, {Duration? at}) async {
+    _saveHistory(); // where the outgoing episode stopped, before index moves on
     setState(() {
       index = i;
       streams = [];
@@ -146,6 +147,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _autoSkipped.clear();
       _skipsRequested = null;
     });
+    // The previous episode keeps emitting its (near-end) position while servers load, which would count the new one as watched.
+    await player.stop();
+    if (!mounted) return;
     try {
       final target = widget.episodes[i];
       final source = widget.source;
@@ -250,6 +254,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onPosition(Duration position) {
     final duration = player.state.duration;
     if (!synced &&
+        current != null &&
         duration > Duration.zero &&
         position.inMilliseconds >
             duration.inMilliseconds * Settings.watchedPercent / 100) {
