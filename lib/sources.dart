@@ -708,7 +708,7 @@ class Miruro extends Source {
   // Miruro is keyed by AniList id, so the picker lists AniList's own results.
   @override
   Future<List<SearchResult>> search(String query) async => [
-    for (final m in await AniList.search(query))
+    for (final m in (await AniList.search(query)).$1)
       SearchResult(
         '${m['id']}',
         titleOf(m),

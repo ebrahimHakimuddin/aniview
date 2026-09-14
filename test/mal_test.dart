@@ -39,4 +39,29 @@ void main() {
     expect(media['seasonYear'], 1999);
     expect(media['mediaListEntry'], isNull);
   });
+
+  test('filters MAL results the way AniList would', () {
+    final media = {
+      'season': 'FALL',
+      'seasonYear': 1999,
+      'format': 'TV',
+      'status': 'RELEASING',
+      'genres': ['Action', 'Adventure'],
+    };
+    expect(const SearchFilters().matches(media), isTrue);
+    expect(
+      const SearchFilters(
+        season: 'FALL',
+        year: 1999,
+        format: 'TV',
+        genres: {'Action', 'Adventure'},
+      ).matches(media),
+      isTrue,
+    );
+    expect(const SearchFilters(year: 2000).matches(media), isFalse);
+    expect(
+      const SearchFilters(genres: {'Action', 'Comedy'}).matches(media),
+      isFalse,
+    ); // every genre must match
+  });
 }

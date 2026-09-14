@@ -88,6 +88,12 @@ class Settings {
         _prefs.setString('install_id', id);
         return id;
       })();
+
+  /// Newest first.
+  static List<String> get recentSearches =>
+      _prefs.getStringList('recent_searches') ?? const [];
+  static set recentSearches(List<String> v) =>
+      _prefs.setStringList('recent_searches', v.take(10).toList());
 }
 
 /// App version and opening links in the browser, answered by MainActivity.

@@ -791,38 +791,157 @@ class PosterCard extends StatelessWidget {
 // ───────────────────────────── Search ─────────────────────────────
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  const SearchScreen({super.key, this.filters});
+
+  /// Opens browsing these right away ("See all", a genre chip) instead of an empty search.
+  final SearchFilters? filters;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  Future<List>? results;
+  final controller = TextEditingController();
   String query = '';
+  late SearchFilters filters = widget.filters ?? const SearchFilters();
+  List items = [];
+  Object? error;
+  bool searched = false, loading = false, hasNext = false;
+  int page = 0, _generation = 0;
   Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/search', title: 'Search');
+    if (widget.filters != null) _search('', now: true);
+  }
+
+  /// Keeps a query that led somewhere (a show was opened from its results).
+  void _remember() {
+    if (query.isEmpty) return;
+    Settings.recentSearches = [
+      query,
+      ...Settings.recentSearches.where(
+        (q) => q.toLowerCase() != query.toLowerCase(),
+      ),
+    ];
+  }
+
+  void _setFilters(SearchFilters picked) {
+    setState(() => filters = picked);
+    Analytics.event('search_filter', {
+      'filters': picked.count,
+      'sort': picked.sort,
+    });
+    _search(controller.text, now: true);
+  }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    controller.dispose();
     super.dispose();
   }
 
+  /// Searches [text], or browses by the filters alone when it's empty.
   void _search(String text, {bool now = false}) {
     _debounce?.cancel();
     final q = text.trim();
-    if (q.length < 2) return;
+    final browsing = filters.count > 0 || filters.sort != null;
+    if (q.length == 1 || (q.isEmpty && !browsing)) return;
     _debounce = Timer(
       now ? Duration.zero : const Duration(milliseconds: 450),
       () {
         if (mounted) {
           setState(() {
             query = q;
-            results = Tracker.search(q);
+            searched = true;
           });
+          // Never the text itself.
+          Analytics.event('search', {
+            'has_text': q.isNotEmpty,
+            'filters': filters.count,
+          });
+          _load(fresh: true);
         }
       },
     );
+  }
+
+  /// Fetches the first page when [fresh], otherwise appends the next one.
+  Future<void> _load({bool fresh = false}) async {
+    if (!fresh && (loading || !hasNext)) return;
+    final generation = fresh ? ++_generation : _generation;
+    final next = fresh ? 1 : page + 1;
+    setState(() {
+      loading = true;
+      error = null;
+      if (fresh) items = [];
+    });
+    try {
+      final (found, more) = await Tracker.search(query, filters, page: next);
+      // A newer search replaced this one.
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        items = [...items, ...found];
+        page = next;
+        hasNext = more;
+        loading = false;
+      });
+      // A short page (MyAnimeList results after filtering) may not fill the screen enough to scroll for more.
+      if (more && found.length < 20) _load();
+    } catch (e) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        error = e;
+        loading = false;
+      });
+    }
+  }
+
+  Future<void> _openFilters() async {
+    final picked = await showModalBottomSheet<SearchFilters>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      backgroundColor: _sheet,
+      builder: (_) => _FilterSheet(filters),
+    );
+    if (picked == null || !mounted) return;
+    _setFilters(picked);
+  }
+
+  /// One removable chip per active filter.
+  List<(String, SearchFilters)> get _activeFilters {
+    final f = filters;
+    SearchFilters copy({
+      bool sort = true,
+      bool season = true,
+      bool year = true,
+      bool format = true,
+      bool status = true,
+      Set<String>? genres,
+    }) => SearchFilters(
+      sort: sort ? f.sort : null,
+      season: season ? f.season : null,
+      year: year ? f.year : null,
+      format: format ? f.format : null,
+      status: status ? f.status : null,
+      genres: genres ?? f.genres,
+    );
+    return [
+      if (f.sort != null)
+        (_FilterSheetState._sorts[f.sort]!, copy(sort: false)),
+      if (f.season != null)
+        (_FilterSheetState._seasons[f.season]!, copy(season: false)),
+      if (f.year != null) ('${f.year}', copy(year: false)),
+      if (f.format != null)
+        (_FilterSheetState._formats[f.format]!, copy(format: false)),
+      if (f.status != null)
+        (_FilterSheetState._statuses[f.status]!, copy(status: false)),
+      for (final g in f.genres) (g, copy(genres: {...f.genres}..remove(g))),
+    ];
   }
 
   @override
@@ -830,56 +949,314 @@ class _SearchScreenState extends State<SearchScreen> {
     backgroundColor: background,
     appBar: AppBar(
       titleSpacing: 0,
-      title: Padding(
-        padding: const EdgeInsets.only(right: 16),
-        child: TextField(
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          onChanged: _search,
-          onSubmitted: (text) => _search(text, now: true),
-          decoration: _searchDecoration('Search anime'),
+      bottom: _activeFilters.isEmpty
+          ? null
+          : PreferredSize(
+              preferredSize: const Size.fromHeight(48),
+              child: SizedBox(
+                height: 48,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  children: [
+                    for (final (label, without) in _activeFilters)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: InputChip(
+                          label: Text(label),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _openFilters,
+                          onDeleted: () => _setFilters(without),
+                          deleteButtonTooltipMessage: 'Remove $label',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+      title: TextField(
+        controller: controller,
+        autofocus: widget.filters == null,
+        textInputAction: TextInputAction.search,
+        onChanged: _search,
+        onSubmitted: (text) => _search(text, now: true),
+        decoration: _searchDecoration('Search anime'),
+      ),
+      actions: [
+        IconButton(
+          tooltip: 'Filters',
+          onPressed: _openFilters,
+          icon: Badge(
+            isLabelVisible: filters.count > 0,
+            label: Text('${filters.count}'),
+            child: const Icon(Icons.tune_rounded),
+          ),
         ),
+      ],
+    ),
+    body: _results(),
+  );
+
+  Widget _results() {
+    if (!searched) {
+      final recent = Settings.recentSearches;
+      if (recent.isEmpty) {
+        return const EmptyState(
+          icon: Icons.travel_explore_rounded,
+          title: 'Find your next show',
+          message: 'Search by English or Japanese title, or browse by season, genre and more with filters',
+        );
+      }
+      return ListView(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Recent searches',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      setState(() => Settings.recentSearches = const []),
+                  child: const Text('Clear'),
+                ),
+              ],
+            ),
+          ),
+          for (final q in recent)
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.history_rounded),
+              title: Text(q),
+              onTap: () {
+                controller.text = q;
+                _search(q, now: true);
+              },
+            ),
+        ],
+      );
+    }
+    if (items.isEmpty && loading) {
+      return GridView.builder(
+        padding: const EdgeInsets.all(20),
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: _posterGrid,
+        itemCount: 9,
+        itemBuilder: (_, _) => const PosterSkeleton(),
+      );
+    }
+    if (items.isEmpty && error != null) {
+      return ErrorState(error!, onRetry: () => _load(fresh: true));
+    }
+    if (items.isEmpty) {
+      return EmptyState(
+        icon: Icons.search_off_rounded,
+        title: query.isEmpty
+            ? 'No shows match these filters'
+            : 'No results for “$query”',
+        message: filters.count > 0
+            ? 'Try removing a filter'
+            : 'Check the spelling or try the other title',
+      );
+    }
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n.metrics.extentAfter < 800 && error == null) _load();
+        return false;
+      },
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            sliver: SliverGrid.builder(
+              gridDelegate: _posterGrid,
+              itemCount: items.length,
+              itemBuilder: (context, i) =>
+                  PosterCard(items[i], onBack: _remember),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+              child: error != null
+                  ? ErrorState(error!, compact: true, onRetry: _load)
+                  : loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterSheet extends StatefulWidget {
+  const _FilterSheet(this.filters);
+
+  final SearchFilters filters;
+
+  @override
+  State<_FilterSheet> createState() => _FilterSheetState();
+}
+
+class _FilterSheetState extends State<_FilterSheet> {
+  late String? sort = widget.filters.sort,
+      season = widget.filters.season,
+      format = widget.filters.format,
+      status = widget.filters.status;
+  late int? year = widget.filters.year;
+  late final genres = {...widget.filters.genres};
+
+  static const _sorts = <String?, String>{
+    null: 'Best match',
+    'POPULARITY_DESC': 'Popular',
+    'TRENDING_DESC': 'Trending',
+    'SCORE_DESC': 'Top rated',
+    'START_DATE_DESC': 'Newest',
+  };
+  static const _seasons = <String?, String>{
+    null: 'Any',
+    'WINTER': 'Winter',
+    'SPRING': 'Spring',
+    'SUMMER': 'Summer',
+    'FALL': 'Fall',
+  };
+  static const _formats = <String?, String>{
+    null: 'Any',
+    'TV': 'TV',
+    'MOVIE': 'Movie',
+    'OVA': 'OVA',
+    'ONA': 'ONA',
+    'SPECIAL': 'Special',
+    'TV_SHORT': 'TV short',
+  };
+  static const _statuses = <String?, String>{
+    null: 'Any',
+    'RELEASING': 'Airing',
+    'FINISHED': 'Finished',
+    'NOT_YET_RELEASED': 'Upcoming',
+  };
+  static const _genres = [
+    'Action',
+    'Adventure',
+    'Comedy',
+    'Drama',
+    'Ecchi',
+    'Fantasy',
+    'Horror',
+    'Mahou Shoujo',
+    'Mecha',
+    'Music',
+    'Mystery',
+    'Psychological',
+    'Romance',
+    'Sci-Fi',
+    'Slice of Life',
+    'Sports',
+    'Supernatural',
+    'Thriller',
+  ];
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(top: 16, bottom: 8),
+    child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600)),
+  );
+
+  Widget _choices(
+    Map<String?, String> options,
+    String? selected,
+    ValueChanged<String?> pick,
+  ) => Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: [
+      for (final MapEntry(:key, :value) in options.entries)
+        ChoiceChip(
+          label: Text(value),
+          selected: key == selected,
+          onSelected: (_) => setState(() => pick(key)),
+        ),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Filters',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          _label('Sort by'),
+          _choices(_sorts, sort, (v) => sort = v),
+          _label('Season'),
+          _choices(_seasons, season, (v) => season = v),
+          _label('Year'),
+          DropdownButton<int?>(
+            value: year,
+            dropdownColor: _sheet,
+            menuMaxHeight: 320,
+            items: [
+              const DropdownMenuItem(child: Text('Any')),
+              for (var y = DateTime.now().year + 1; y >= 1970; y--)
+                DropdownMenuItem(value: y, child: Text('$y')),
+            ],
+            onChanged: (v) => setState(() => year = v),
+          ),
+          _label('Format'),
+          _choices(_formats, format, (v) => format = v),
+          _label('Status'),
+          _choices(_statuses, status, (v) => status = v),
+          _label('Genres'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final genre in _genres)
+                FilterChip(
+                  label: Text(genre),
+                  selected: genres.contains(genre),
+                  onSelected: (on) => setState(
+                    () => on ? genres.add(genre) : genres.remove(genre),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, const SearchFilters()),
+                child: const Text('Reset'),
+              ),
+              const Spacer(),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  SearchFilters(
+                    sort: sort,
+                    season: season,
+                    year: year,
+                    format: format,
+                    status: status,
+                    genres: genres,
+                  ),
+                ),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        ],
       ),
     ),
-    body: results == null
-        ? const EmptyState(
-            icon: Icons.travel_explore_rounded,
-            title: 'Find your next show',
-            message: 'Search by English or Japanese title',
-          )
-        : FutureBuilder(
-            future: results,
-            builder: (context, snap) {
-              if (snap.connectionState != ConnectionState.done) {
-                return GridView.builder(
-                  padding: const EdgeInsets.all(20),
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: _posterGrid,
-                  itemCount: 9,
-                  itemBuilder: (_, _) => const PosterSkeleton(),
-                );
-              }
-              if (snap.hasError) {
-                return ErrorState(
-                  snap.error!,
-                  onRetry: () => _search(query, now: true),
-                );
-              }
-              if (snap.data!.isEmpty) {
-                return EmptyState(
-                  icon: Icons.search_off_rounded,
-                  title: 'No results for “$query”',
-                  message: 'Check the spelling or try the other title',
-                );
-              }
-              return GridView.builder(
-                padding: const EdgeInsets.all(20),
-                gridDelegate: _posterGrid,
-                itemCount: snap.data!.length,
-                itemBuilder: (context, i) => PosterCard(snap.data![i]),
-              );
-            },
-          ),
   );
 }
 

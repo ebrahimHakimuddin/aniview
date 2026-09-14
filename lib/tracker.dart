@@ -56,8 +56,15 @@ class Tracker {
 
   static Future<List> season() => _data(AniList.season, MAL.season);
 
-  static Future<List> search(String text) =>
-      _data(() => AniList.search(text), () => MAL.search(text));
+  /// One page of results and whether there's another.
+  static Future<(List, bool)> search(
+    String text,
+    SearchFilters filters, {
+    int page = 1,
+  }) => _data(
+    () => AniList.search(text, filters, page),
+    () => MAL.search(text, filters, page),
+  );
 
   static Future<List<(String, Map)>> relations(Map media) {
     Future<List<(String, Map)>> mal() async =>

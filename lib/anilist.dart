@@ -11,6 +11,34 @@ String titleOf(Map media) =>
     media['title']['english'] ??
     '';
 
+/// Search filters as AniList enum values (season "FALL", format "TV", …); null means any.
+class SearchFilters {
+  const SearchFilters({
+    this.sort,
+    this.season,
+    this.year,
+    this.format,
+    this.status,
+    this.genres = const {},
+  });
+
+  final String? sort, season, format, status;
+  final int? year;
+  final Set<String> genres; // all of them, like AniList's genre_in
+
+  /// How many filters narrow the results; sorting doesn't count.
+  int get count =>
+      [season, year, format, status].whereType<Object>().length + genres.length;
+
+  /// For results that couldn't be filtered server-side (MyAnimeList).
+  bool matches(Map media) =>
+      (season == null || media['season'] == season) &&
+      (year == null || media['seasonYear'] == year) &&
+      (format == null || media['format'] == format) &&
+      (status == null || media['status'] == status) &&
+      genres.every((media['genres'] as List).contains);
+}
+
 /// AniList SSO (implicit grant) and the GraphQL calls the app needs.
 class AniList {
   static const clientId = String.fromEnvironment('ANILIST_CLIENT_ID');
@@ -106,11 +134,32 @@ class AniList {
     ))['Page']['media'];
   }
 
-  static Future<List> search(String text) async => (await query(
-    r'query($s:String){Page(perPage:40){media(search:$s,type:ANIME,isAdult:false,sort:SEARCH_MATCH){'
-    '$_media}}}',
-    {'s': text},
-  ))['Page']['media'];
+  /// One [page] of results and whether there's another. [text] may be empty to browse by [filters] alone.
+  static Future<(List, bool)> search(
+    String text, [
+    SearchFilters filters = const SearchFilters(),
+    int page = 1,
+  ]) async {
+    final data = (await query(
+      r'query($page:Int,$s:String,$sort:[MediaSort],$season:MediaSeason,$year:Int,$format:MediaFormat,$status:MediaStatus,$genres:[String]){'
+      r'Page(page:$page,perPage:40){pageInfo{hasNextPage} media(search:$s,type:ANIME,isAdult:false,sort:$sort,season:$season,'
+      r'seasonYear:$year,format:$format,status:$status,genre_in:$genres){'
+      '$_media}}}',
+      // AniList reads an explicit null as "must be null", so unset filters are left out.
+      {
+        'page': page,
+        's': text.isEmpty ? null : text,
+        'sort':
+            filters.sort ?? (text.isEmpty ? 'POPULARITY_DESC' : 'SEARCH_MATCH'),
+        'season': filters.season,
+        'year': filters.year,
+        'format': filters.format,
+        'status': filters.status,
+        'genres': filters.genres.isEmpty ? null : filters.genres.toList(),
+      }..removeWhere((_, v) => v == null),
+    ))['Page'];
+    return (data['media'] as List, data['pageInfo']['hasNextPage'] == true);
+  }
 
   /// Anime prequels and sequels of a show as (PREQUEL|SEQUEL, media), prequels first.
   static Future<List<(String, Map)>> relations(int id) async {

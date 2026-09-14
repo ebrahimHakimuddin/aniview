@@ -98,8 +98,32 @@ class MAL {
     );
   }
 
-  static Future<List> search(String text) async =>
-      _list(await _get('anime', {'q': text, 'limit': '40', 'fields': _fields}));
+  /// MAL can't filter or sort a search, so filters apply to each fetched page and sorting is ignored.
+  static Future<(List, bool)> search(
+    String text, [
+    SearchFilters filters = const SearchFilters(),
+    int page = 1,
+  ]) async {
+    final (season, year) = (filters.season, filters.year);
+    final paging = {'limit': '100', 'offset': '${(page - 1) * 100}'};
+    final json = text.isNotEmpty
+        ? await _get('anime', {'q': text, ...paging, 'fields': _fields})
+        : season != null && year != null
+        ? await _get('anime/season/$year/${season.toLowerCase()}', {
+            'sort': 'anime_num_list_users',
+            ...paging,
+            'fields': _fields,
+          })
+        : await _get('anime/ranking', {
+            'ranking_type': 'bypopularity',
+            ...paging,
+            'fields': _fields,
+          });
+    return (
+      _list(json).where(filters.matches).toList(),
+      json['paging']?['next'] != null,
+    );
+  }
 
   /// Anime prequels and sequels as (PREQUEL|SEQUEL, media), prequels first.
   static Future<List<(String, Map)>> relations(int malId) async {
