@@ -2015,6 +2015,195 @@ class _DetailsScreenState extends State<DetailsScreen> {
         .replaceAll(RegExp(r'<[^>]*>'), '')
         .trim();
 
+    final info = <Widget>[
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            width: 110,
+            height: 160,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: accent.withValues(alpha: .4),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            child: _Img(
+              media['coverImage']['extraLarge'],
+              color: media['coverImage']['color'],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  titleOf(media),
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  meta,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    letterSpacing: 1,
+                    color: Colors.white70,
+                  ),
+                ),
+                if (airing != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _AiringBadge('Next: $airing'),
+                  ),
+                const SizedBox(height: 10),
+                if (media['averageScore'] != null)
+                  _Score(media['averageScore']),
+              ],
+            ),
+          ),
+        ],
+      ),
+      if (Tracker.signedIn) ...[
+        const SizedBox(height: 20),
+        _ProgressCard(
+          progress: progress,
+          total: total,
+          status: entry?['status'],
+          accent: accent,
+          onTap: _editEntry,
+        ),
+      ],
+      if ((media['genres'] as List).isNotEmpty) ...[
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final genre in media['genres'])
+              ActionChip(
+                label: Text('$genre'),
+                tooltip: 'Browse $genre',
+                visualDensity: VisualDensity.compact,
+                side: BorderSide.none,
+                backgroundColor: Colors.white.withValues(alpha: .06),
+                onPressed: () =>
+                    openSearch(context, SearchFilters(genres: {'$genre'})),
+              ),
+          ],
+        ),
+      ],
+      if (description.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        // An InkWell so the D-pad can reach it on TV to read the rest.
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => expanded = !expanded),
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            alignment: Alignment.topCenter,
+            child: Text(
+              description,
+              maxLines: expanded ? null : (isTv ? 6 : 4),
+              overflow: expanded ? null : TextOverflow.fade,
+              style: const TextStyle(color: Colors.white70, height: 1.5),
+            ),
+          ),
+        ),
+      ],
+      FutureBuilder(
+        future: relations,
+        builder: (context, snap) => Column(
+          children: [
+            for (final (type, related) in snap.data ?? const <(String, Map)>[])
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _RelationTile(type, related),
+              ),
+          ],
+        ),
+      ),
+    ];
+    final episodesHeader = <Widget>[
+      const SizedBox(height: 28),
+      Row(
+        children: [
+          const Text(
+            'Episodes',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const Spacer(),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('SUB')),
+              ButtonSegment(value: true, label: Text('DUB')),
+            ],
+            selected: {dub},
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            onSelectionChanged: (s) => setState(() => dub = s.first),
+          ),
+          FutureBuilder(
+            future: episodes,
+            builder: (context, snap) {
+              final list = snap.data, site = source;
+              if (list == null || list.isEmpty || site == null) {
+                return const SizedBox.shrink();
+              }
+              return PopupMenuButton<VoidCallback>(
+                tooltip: 'Season actions',
+                icon: const Icon(Icons.more_vert_rounded),
+                color: _sheet,
+                onSelected: (action) => action(),
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: () => _downloadSeason(site, list, progress),
+                    child: const ListTile(
+                      leading: Icon(Icons.download_rounded),
+                      title: Text('Download episodes…'),
+                    ),
+                  ),
+                  if (Tracker.signedIn)
+                    PopupMenuItem(
+                      value: () => _markWatched(
+                        list.fold(
+                          0,
+                          (n, e) => e.number > n ? e.number.toInt() : n,
+                        ),
+                      ),
+                      child: const ListTile(
+                        leading: Icon(Icons.done_all_rounded),
+                        title: Text('Mark season watched'),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      _sourcePicker(),
+      if (source != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _fixMatch,
+            icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+            label: const Text('Wrong show? Pick the right one'),
+          ),
+        ),
+    ];
+    if (isTv) return _tvLayout(progress, info, episodesHeader);
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: _continueButton(progress),
@@ -2052,205 +2241,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            sliver: SliverList.list(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Container(
-                      width: 110,
-                      height: 160,
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: accent.withValues(alpha: .4),
-                            blurRadius: 28,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: _Img(
-                        media['coverImage']['extraLarge'],
-                        color: media['coverImage']['color'],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            titleOf(media),
-                            style: const TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              height: 1.15,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            meta,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              letterSpacing: 1,
-                              color: Colors.white70,
-                            ),
-                          ),
-                          if (airing != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: _AiringBadge('Next: $airing'),
-                            ),
-                          const SizedBox(height: 10),
-                          if (media['averageScore'] != null)
-                            _Score(media['averageScore']),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                if (Tracker.signedIn) ...[
-                  const SizedBox(height: 20),
-                  _ProgressCard(
-                    progress: progress,
-                    total: total,
-                    status: entry?['status'],
-                    accent: accent,
-                    onTap: _editEntry,
-                  ),
-                ],
-                if ((media['genres'] as List).isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final genre in media['genres'])
-                        ActionChip(
-                          label: Text('$genre'),
-                          tooltip: 'Browse $genre',
-                          visualDensity: VisualDensity.compact,
-                          side: BorderSide.none,
-                          backgroundColor: Colors.white.withValues(alpha: .06),
-                          onPressed: () => openSearch(
-                            context,
-                            SearchFilters(genres: {'$genre'}),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  GestureDetector(
-                    onTap: () => setState(() => expanded = !expanded),
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 200),
-                      alignment: Alignment.topCenter,
-                      child: Text(
-                        description,
-                        maxLines: expanded ? null : 4,
-                        overflow: expanded ? null : TextOverflow.fade,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-                FutureBuilder(
-                  future: relations,
-                  builder: (context, snap) => Column(
-                    children: [
-                      for (final (type, related)
-                          in snap.data ?? const <(String, Map)>[])
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: _RelationTile(type, related),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    const Text(
-                      'Episodes',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Spacer(),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: false, label: Text('SUB')),
-                        ButtonSegment(value: true, label: Text('DUB')),
-                      ],
-                      selected: {dub},
-                      showSelectedIcon: false,
-                      style: const ButtonStyle(
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      onSelectionChanged: (s) => setState(() => dub = s.first),
-                    ),
-                    FutureBuilder(
-                      future: episodes,
-                      builder: (context, snap) {
-                        final list = snap.data, site = source;
-                        if (list == null || list.isEmpty || site == null) {
-                          return const SizedBox.shrink();
-                        }
-                        return PopupMenuButton<VoidCallback>(
-                          tooltip: 'Season actions',
-                          icon: const Icon(Icons.more_vert_rounded),
-                          color: _sheet,
-                          onSelected: (action) => action(),
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: () =>
-                                  _downloadSeason(site, list, progress),
-                              child: const ListTile(
-                                leading: Icon(Icons.download_rounded),
-                                title: Text('Download episodes…'),
-                              ),
-                            ),
-                            if (Tracker.signedIn)
-                              PopupMenuItem(
-                                value: () => _markWatched(
-                                  list.fold(
-                                    0,
-                                    (n, e) =>
-                                        e.number > n ? e.number.toInt() : n,
-                                  ),
-                                ),
-                                child: const ListTile(
-                                  leading: Icon(Icons.done_all_rounded),
-                                  title: Text('Mark season watched'),
-                                ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _sourcePicker(),
-                if (source != null)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _fixMatch,
-                      icon: const Icon(Icons.swap_horiz_rounded, size: 18),
-                      label: const Text('Wrong show? Pick the right one'),
-                    ),
-                  ),
-              ],
-            ),
+            sliver: SliverList.list(children: [...info, ...episodesHeader]),
           ),
           _episodeList(progress),
           const SliverToBoxAdapter(child: SizedBox(height: 96)),
@@ -2258,6 +2249,67 @@ class _DetailsScreenState extends State<DetailsScreen> {
       ),
     );
   }
+
+  /// TV: the show's art behind two panes, its details (with the play button up top) on the left and the
+  /// episodes on the right, each scrolling on its own as the D-pad moves.
+  Widget _tvLayout(
+    int progress,
+    List<Widget> info,
+    List<Widget> episodesHeader,
+  ) => Scaffold(
+    backgroundColor: background,
+    body: Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: .35,
+          child: _Img(
+            media['bannerImage'] ?? media['coverImage']['extraLarge'],
+            color: media['coverImage']['color'],
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [background, Color(0xCC0A0A0F), Color(0x660A0A0F)],
+            ),
+          ),
+        ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: MediaQuery.sizeOf(context).width * .42,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(32, 32, 16, 32),
+                children: [
+                  ...info.take(1), // poster and title
+                  const SizedBox(height: 20),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _continueButton(progress),
+                  ),
+                  ...info.skip(1),
+                ],
+              ),
+            ),
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 32, 0),
+                    sliver: SliverList.list(children: episodesHeader),
+                  ),
+                  _episodeList(progress),
+                  const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 
   /// Resume the saved spot for this show, else continue after the tracked progress on the selected source.
   Widget _continueButton(int progress) => FutureBuilder(
@@ -2413,10 +2465,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     color: Colors.white70,
                   ),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Long-press an episode to mark it watched or manage its download',
-                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                      isTv
+                          ? 'Hold OK on an episode to mark it watched or manage its download'
+                          : 'Long-press an episode to mark it watched or manage its download',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -3455,10 +3512,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       builder: (context, _) {
         final items = Downloads.instance.items;
         if (items.isEmpty) {
-          return const EmptyState(
+          return EmptyState(
             icon: Icons.download_for_offline_outlined,
             title: 'No downloads yet',
-            message: 'Long-press an episode or use ⋮ → Download episodes to watch offline.',
+            message:
+                '${isTv ? 'Hold OK on' : 'Long-press'} an episode or use ⋮ → Download episodes to watch offline.',
           );
         }
         final shows = <Object?, List<Download>>{};
@@ -3837,6 +3895,7 @@ class _ContinueFabState extends State<ContinueFab> {
 
   @override
   Widget build(BuildContext context) => FloatingActionButton.extended(
+    autofocus: isTv, // the details page's play button on TV
     tooltip: '${widget.title} · ${widget.subtitle}',
     onPressed: busy ? null : _run,
     icon: busy
