@@ -62,9 +62,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   IconData? hintIcon;
   bool controls = true,
       locked = false,
-      cover = false,
       synced = false,
       upNextDismissed = false;
+  /// Fit, fill (crop) or stretch.
+  BoxFit fit = BoxFit.contain;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
   static const _systemVolume = MethodChannel('aniview/volume');
@@ -460,7 +461,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           Video(
             controller: controller,
             controls: NoVideoControls,
-            fit: cover ? BoxFit.cover : BoxFit.contain,
+            fit: fit,
             subtitleViewConfiguration: SubtitleViewConfiguration(
               // media_kit otherwise shrinks text relative to a 1920×1080 view, making it tiny on phones.
               textScaler: TextScaler.noScaling,
@@ -831,11 +832,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
                 IconButton(
-                  tooltip: cover ? 'Fit' : 'Fill',
-                  icon: Icon(
-                    cover ? Icons.fit_screen_rounded : Icons.crop_free_rounded,
-                  ),
-                  onPressed: () => setState(() => cover = !cover),
+                  tooltip: 'Aspect ratio',
+                  icon: Icon(switch (fit) {
+                    BoxFit.cover => Icons.crop_free_rounded,
+                    BoxFit.fill => Icons.open_in_full_rounded,
+                    _ => Icons.fit_screen_rounded,
+                  }),
+                  onPressed: () {
+                    final (next, label) = switch (fit) {
+                      BoxFit.contain => (BoxFit.cover, 'Fill'),
+                      BoxFit.cover => (BoxFit.fill, 'Stretch'),
+                      _ => (BoxFit.contain, 'Fit'),
+                    };
+                    setState(() => fit = next);
+                    _hint(label, icon: Icons.aspect_ratio_rounded);
+                  },
                 ),
               ],
             ),
