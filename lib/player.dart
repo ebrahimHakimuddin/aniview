@@ -76,6 +76,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration _savedAt = Duration.zero;
   late final List<StreamSubscription> _subs;
   final _playFocus = FocusNode();
+  final _keys = FocusNode(debugLabel: 'player keys');
 
   Episode get episode => widget.episodes[index];
   bool get hasNext => index + 1 < widget.episodes.length;
@@ -125,13 +126,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ];
     _load(index, at: widget.start);
     _scheduleHide();
-    if (isTv) HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
   /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
   bool _onKey(KeyEvent event) {
-    if (event is KeyUpEvent || !mounted) return false;
+    if (!isTv || event is KeyUpEvent || !mounted) return false;
     // Leave keys alone while a menu, dialog or the episode list is open, or for the error's buttons.
     if (error != null ||
         ModalRoute.of(context)?.isCurrent != true ||
@@ -152,7 +152,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _load(index + 1);
     } else if (controls && !locked) {
       _scheduleHide(); // browsing the controls keeps them up
-      return false;
+      // Nothing inside has focus yet (just opened): start on play/pause.
+      if (!_keys.hasPrimaryFocus) return false;
+      _playFocus.requestFocus();
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       _seekBy(-seek);
     } else if (key == LogicalKeyboardKey.arrowRight) {
@@ -194,8 +196,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_onKey);
     _playFocus.dispose();
+    _keys.dispose();
     _saveHistory();
     for (final sub in _subs) {
       sub.cancel();
@@ -553,6 +555,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // With the controls hidden, the remote's keys go to the player itself (see _onKey).
+    if (isTv && !controls && !_keys.hasPrimaryFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            !controls &&
+            ModalRoute.of(context)?.isCurrent == true &&
+            _scaffold.currentState?.isEndDrawerOpen != true) {
+          _keys.requestFocus();
+        }
+      });
+    }
+    return Focus(
+      focusNode: _keys,
+      autofocus: isTv,
+      onKeyEvent: (_, event) =>
+          _onKey(event) ? KeyEventResult.handled : KeyEventResult.ignored,
+      child: _player(context),
+    );
+  }
+
+  Widget _player(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final position = player.state.position;
     final skip = Settings.skipMode == SkipMode.button
@@ -746,17 +769,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
             if (upNext != null && !locked && !controls)
-              Positioned(right: 32, bottom: 40, child: upNext)
+              Positioned(
+                right: 32,
+                bottom: 40,
+                // OK takes the offer on TV (see _onKey), so it never holds focus.
+                child: ExcludeFocus(excluding: isTv, child: upNext),
+              )
             else if (skip != null &&
                 !locked &&
                 !controls) // the controls have their own
               Positioned(
                 right: 32,
                 bottom: 110,
-                child: FilledButton.icon(
-                  onPressed: () => player.seek(skip.end),
-                  icon: const Icon(Icons.fast_forward_rounded),
-                  label: Text('Skip ${_skipName(skip.type)}'),
+                child: ExcludeFocus(
+                  excluding: isTv,
+                  child: FilledButton.icon(
+                    onPressed: () => player.seek(skip.end),
+                    icon: const Icon(Icons.fast_forward_rounded),
+                    label: Text('Skip ${_skipName(skip.type)}'),
+                  ),
                 ),
               ),
             if (error != null) _errorView(),
@@ -1183,6 +1214,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: const Text('Back'),
                   ),
                   FilledButton(
+                    autofocus: isTv,
                     onPressed: () => _load(index),
                     child: Text(challenge ? 'Verify' : 'Try again'),
                   ),
@@ -1312,6 +1344,7 @@ class _EpisodeDrawerState extends State<_EpisodeDrawer> {
                   final e = episodes[i];
                   final playing = i == widget.current;
                   return InkWell(
+                    autofocus: isTv && playing,
                     onTap: () => widget.onSelect(i),
                     child: Container(
                       color: playing ? primary.withValues(alpha: .14) : null,
