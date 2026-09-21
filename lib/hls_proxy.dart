@@ -49,8 +49,9 @@ class HlsProxy {
     try {
       if (request.uri.pathSegments case ['local', final id, final file]) {
         // Playlist entries are relative, so segments and keys resolve to this same folder.
-        if (!RegExp(r'^\w[\w.-]*$').hasMatch(file))
+        if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) {
           throw const FormatException();
+        }
         if (file.endsWith('.m3u8')) {
           response.headers.contentType = ContentType(
             'application',

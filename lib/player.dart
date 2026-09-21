@@ -18,6 +18,7 @@ import 'settings.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
+import 'tv.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -74,6 +75,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _hideTimer, _hintTimer;
   Duration _savedAt = Duration.zero;
   late final List<StreamSubscription> _subs;
+  final _playFocus = FocusNode();
 
   Episode get episode => widget.episodes[index];
   bool get hasNext => index + 1 < widget.episodes.length;
@@ -123,10 +125,77 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ];
     _load(index, at: widget.start);
     _scheduleHide();
+    if (isTv) HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
+  /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
+  bool _onKey(KeyEvent event) {
+    if (event is KeyUpEvent || !mounted) return false;
+    // Leave keys alone while a menu, dialog or the episode list is open, or for the error's buttons.
+    if (error != null ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _scaffold.currentState?.isEndDrawerOpen == true) {
+      return false;
+    }
+    final key = event.logicalKey;
+    final seek = Settings.seekSeconds;
+    if (key == LogicalKeyboardKey.mediaPlayPause ||
+        key == LogicalKeyboardKey.mediaPlay ||
+        key == LogicalKeyboardKey.mediaPause) {
+      player.playOrPause();
+    } else if (key == LogicalKeyboardKey.mediaFastForward) {
+      _seekBy(seek);
+    } else if (key == LogicalKeyboardKey.mediaRewind) {
+      _seekBy(-seek);
+    } else if (key == LogicalKeyboardKey.mediaTrackNext && hasNext) {
+      _load(index + 1);
+    } else if (controls && !locked) {
+      _scheduleHide(); // browsing the controls keeps them up
+      return false;
+    } else if (key == LogicalKeyboardKey.arrowLeft) {
+      _seekBy(-seek);
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      _seekBy(seek);
+    } else if (event is KeyDownEvent &&
+        (key == LogicalKeyboardKey.select ||
+            key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.enter) {
+        // OK takes the on-screen skip or up-next offer, when there is one.
+        final position = player.state.position;
+        final skip = Settings.skipMode == SkipMode.button
+            ? _activeSkip(position)
+            : null;
+        if (_upNext(position) != null) {
+          _load(index + 1);
+          return true;
+        }
+        if (skip != null) {
+          player.seek(skip.end);
+          return true;
+        }
+        player.playOrPause();
+      }
+      setState(() {
+        controls = true;
+        locked = false;
+      });
+      _scheduleHide();
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _playFocus.requestFocus(),
+      );
+    } else {
+      return false;
+    }
+    return true;
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _playFocus.dispose();
     _saveHistory();
     for (final sub in _subs) {
       sub.cancel();
@@ -199,8 +268,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (Settings.externalPlayer) {
         final stopped = await _playExternal(found.first, at: at);
         if (!mounted) return;
-        if (stopped == null)
+        if (stopped == null) {
           throw Exception('No video player app is installed');
+        }
         return Navigator.pop(context);
       }
       await _play(found.first, at: at);
@@ -493,193 +563,205 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final swipes = !locked && Settings.swipeGestures;
     final upNext = _upNext(position);
 
-    return Scaffold(
-      key: _scaffold,
-      backgroundColor: Colors.black,
-      endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
-      endDrawer: _EpisodeDrawer(
-        episodes: widget.episodes,
-        current: index,
-        media: widget.media,
-        onSelect: (i) {
-          _scaffold.currentState?.closeEndDrawer();
-          if (i != index) _load(i);
-        },
-      ),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Video(
-            controller: controller,
-            controls: NoVideoControls,
-            fit: fit,
-            subtitleViewConfiguration: SubtitleViewConfiguration(
-              // media_kit otherwise shrinks text relative to a 1920×1080 view, making it tiny on phones.
-              textScaler: TextScaler.noScaling,
-              style: TextStyle(
-                fontSize: Settings.subtitleSize,
-                color: Colors.white,
-                shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
-              ),
-            ),
-          ),
-          IgnorePointer(
-            child: AnimatedOpacity(
-              opacity: controls && !locked ? 1 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Color(0xCC000000),
-                      Color(0x33000000),
-                      Color(0x33000000),
-                      Color(0xDD000000),
-                    ],
-                    stops: [0, .3, .65, 1],
-                  ),
+    // On TV, Back first hides the controls, like Netflix.
+    return PopScope(
+      canPop: !(isTv && controls && !locked),
+      onPopInvokedWithResult: (didPop, _) =>
+          didPop ? null : setState(() => controls = false),
+      child: Scaffold(
+        key: _scaffold,
+        backgroundColor: Colors.black,
+        endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
+        endDrawer: _EpisodeDrawer(
+          episodes: widget.episodes,
+          current: index,
+          media: widget.media,
+          onSelect: (i) {
+            _scaffold.currentState?.closeEndDrawer();
+            if (i != index) _load(i);
+          },
+        ),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Video(
+              controller: controller,
+              controls: NoVideoControls,
+              fit: fit,
+              subtitleViewConfiguration: SubtitleViewConfiguration(
+                // media_kit otherwise shrinks text relative to a 1920×1080 view, making it tiny on phones.
+                textScaler: TextScaler.noScaling,
+                style: TextStyle(
+                  fontSize: Settings.subtitleSize,
+                  color: Colors.white,
+                  shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
                 ),
               ),
             ),
-          ),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _toggleControls,
-            onDoubleTapDown: locked
-                ? null
-                : (d) => doubleTapX = d.localPosition.dx,
-            onDoubleTap: locked
-                ? null
-                : () => _seekBy(
-                    doubleTapX < size.width / 2
-                        ? -Settings.seekSeconds
-                        : Settings.seekSeconds,
-                  ),
-            onLongPressStart: locked
-                ? null
-                : (_) {
-                    HapticFeedback.mediumImpact();
-                    player.setRate(2);
-                    _hint('2× speed', sticky: true);
-                  },
-            onLongPressEnd: locked
-                ? null
-                : (_) {
-                    player.setRate(rate);
-                    _clearHint();
-                  },
-            onVerticalDragStart: !swipes
-                ? null
-                : (_) => _systemVolume
-                      .invokeMethod<double>(
-                        'get',
-                      ) // may have changed with the volume keys
-                      .then((v) => volume = v ?? volume)
-                      .ignore(),
-            onVerticalDragUpdate: !swipes
-                ? null
-                : (d) => _verticalDrag(d, size),
-            onVerticalDragEnd: !swipes ? null : _clearHint,
-            onHorizontalDragStart: !swipes
-                ? null
-                : (_) => seekTarget = player.state.position,
-            onHorizontalDragUpdate: !swipes
-                ? null
-                : (d) {
-                    seekTarget = _clamp(
-                      seekTarget! +
-                          Duration(milliseconds: (d.delta.dx * 250).round()),
-                    );
-                    final diff = (seekTarget! - position).inSeconds;
-                    _hint(
-                      '${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)',
-                      sticky: true,
-                    );
-                  },
-            onHorizontalDragEnd: !swipes
-                ? null
-                : (_) {
-                    player.seek(seekTarget!);
-                    seekTarget = null;
-                    _clearHint();
-                  },
-          ),
-          if (loading)
             IgnorePointer(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(color: Colors.white),
-                    const SizedBox(height: 16),
-                    Text(
-                      current == null
-                          ? 'Finding servers on $_sourceName…'
-                          : 'Loading video…',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (hint != null)
-            IgnorePointer(
-              child: Align(
-                alignment: const Alignment(0, -.62),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 10,
-                  ),
+              child: AnimatedOpacity(
+                opacity: controls && !locked ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: const DecoratedBox(
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: .7),
-                    borderRadius: BorderRadius.circular(24),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0xCC000000),
+                        Color(0x33000000),
+                        Color(0x33000000),
+                        Color(0xDD000000),
+                      ],
+                      stops: [0, .3, .65, 1],
+                    ),
                   ),
-                  child: Row(
+                ),
+              ),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleControls,
+              onDoubleTapDown: locked
+                  ? null
+                  : (d) => doubleTapX = d.localPosition.dx,
+              onDoubleTap: locked
+                  ? null
+                  : () => _seekBy(
+                      doubleTapX < size.width / 2
+                          ? -Settings.seekSeconds
+                          : Settings.seekSeconds,
+                    ),
+              onLongPressStart: locked
+                  ? null
+                  : (_) {
+                      HapticFeedback.mediumImpact();
+                      player.setRate(2);
+                      _hint('2× speed', sticky: true);
+                    },
+              onLongPressEnd: locked
+                  ? null
+                  : (_) {
+                      player.setRate(rate);
+                      _clearHint();
+                    },
+              onVerticalDragStart: !swipes
+                  ? null
+                  : (_) => _systemVolume
+                        .invokeMethod<double>(
+                          'get',
+                        ) // may have changed with the volume keys
+                        .then((v) => volume = v ?? volume)
+                        .ignore(),
+              onVerticalDragUpdate: !swipes
+                  ? null
+                  : (d) => _verticalDrag(d, size),
+              onVerticalDragEnd: !swipes ? null : _clearHint,
+              onHorizontalDragStart: !swipes
+                  ? null
+                  : (_) => seekTarget = player.state.position,
+              onHorizontalDragUpdate: !swipes
+                  ? null
+                  : (d) {
+                      seekTarget = _clamp(
+                        seekTarget! +
+                            Duration(milliseconds: (d.delta.dx * 250).round()),
+                      );
+                      final diff = (seekTarget! - position).inSeconds;
+                      _hint(
+                        '${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)',
+                        sticky: true,
+                      );
+                    },
+              onHorizontalDragEnd: !swipes
+                  ? null
+                  : (_) {
+                      player.seek(seekTarget!);
+                      seekTarget = null;
+                      _clearHint();
+                    },
+            ),
+            if (loading)
+              IgnorePointer(
+                child: Center(
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (hintIcon != null) ...[
-                        Icon(hintIcon, size: 20),
-                        const SizedBox(width: 8),
-                      ],
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: 16),
                       Text(
-                        hint!,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        current == null
+                            ? 'Finding servers on $_sourceName…'
+                            : 'Loading video…',
+                        style: const TextStyle(color: Colors.white70),
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
-          IgnorePointer(
-            ignoring: !controls,
-            child: AnimatedOpacity(
-              opacity: controls ? 1 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: locked ? _lockedOverlay() : _overlay(position, loading),
-            ),
-          ),
-          if (upNext != null && !locked && !controls)
-            Positioned(right: 32, bottom: 40, child: upNext)
-          else if (skip != null &&
-              !locked &&
-              !controls) // the controls have their own
-            Positioned(
-              right: 32,
-              bottom: 110,
-              child: FilledButton.icon(
-                onPressed: () => player.seek(skip.end),
-                icon: const Icon(Icons.fast_forward_rounded),
-                label: Text('Skip ${_skipName(skip.type)}'),
+            if (hint != null)
+              IgnorePointer(
+                child: Align(
+                  alignment: const Alignment(0, -.62),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .7),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (hintIcon != null) ...[
+                          Icon(hintIcon, size: 20),
+                          const SizedBox(width: 8),
+                        ],
+                        Text(
+                          hint!,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            IgnorePointer(
+              ignoring: !controls,
+              // Hidden controls can't hold D-pad focus.
+              child: ExcludeFocus(
+                excluding: !controls,
+                child: AnimatedOpacity(
+                  opacity: controls ? 1 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: locked
+                      ? _lockedOverlay()
+                      : _overlay(position, loading),
+                ),
               ),
             ),
-          if (error != null) _errorView(),
-        ],
+            if (upNext != null && !locked && !controls)
+              Positioned(right: 32, bottom: 40, child: upNext)
+            else if (skip != null &&
+                !locked &&
+                !controls) // the controls have their own
+              Positioned(
+                right: 32,
+                bottom: 110,
+                child: FilledButton.icon(
+                  onPressed: () => player.seek(skip.end),
+                  icon: const Icon(Icons.fast_forward_rounded),
+                  label: Text('Skip ${_skipName(skip.type)}'),
+                ),
+              ),
+            if (error != null) _errorView(),
+          ],
+        ),
       ),
     );
   }
@@ -937,6 +1019,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           _scheduleHide();
                         },
                         big: true,
+                        focusNode: _playFocus,
                       ),
                 const SizedBox(width: 28),
                 _RoundButton(_forwardIcon, () => _seekBy(Settings.seekSeconds)),
@@ -1358,15 +1441,22 @@ String _skipName(SkipType type) => switch (type) {
 };
 
 class _RoundButton extends StatelessWidget {
-  const _RoundButton(this.icon, this.onPressed, {this.big = false});
+  const _RoundButton(
+    this.icon,
+    this.onPressed, {
+    this.big = false,
+    this.focusNode,
+  });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final bool big;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) => IconButton(
     onPressed: onPressed,
+    focusNode: focusNode,
     iconSize: big ? 48 : 28,
     padding: EdgeInsets.all(big ? 16 : 10),
     style: IconButton.styleFrom(

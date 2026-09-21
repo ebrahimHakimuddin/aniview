@@ -6,9 +6,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.UiModeManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.media.AudioManager
 import android.os.Build
@@ -44,6 +46,10 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "version" -> result.success(packageManager.getPackageInfo(packageName, 0).versionName)
+                    "tv" -> result.success(
+                        (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType ==
+                            Configuration.UI_MODE_TYPE_TELEVISION,
+                    )
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
                     // For the analytics user agent, e.g. "Android 14; Pixel 7".
                     "device" -> result.success("Android ${Build.VERSION.RELEASE}; ${Build.MODEL}")

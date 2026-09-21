@@ -6,6 +6,7 @@ import 'downloads.dart';
 import 'screens.dart';
 import 'settings.dart';
 import 'sources.dart';
+import 'tv.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +16,7 @@ Future<void> main() async {
     AniList.load(),
     Settings.load(),
     Downloads.instance.load(),
+    detectTv(),
   ]);
   runApp(const App());
 }
@@ -46,6 +48,7 @@ class App extends StatelessWidget {
           behavior: SnackBarBehavior.floating,
         ),
       ),
+      builder: isTv ? (context, child) => FocusRing(child: child!) : null,
       home: const HomeScreen(),
     );
   }
