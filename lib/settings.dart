@@ -85,6 +85,10 @@ class Settings {
   static int get downloadQuality => _prefs.getInt('download_quality') ?? 0;
   static set downloadQuality(int v) => _prefs.setInt('download_quality', v);
 
+  /// Also copy finished downloads to the phone's gallery (Movies/AniView) as MP4.
+  static bool get saveToGallery => _prefs.getBool('save_to_gallery') ?? false;
+  static set saveToGallery(bool v) => _prefs.setBool('save_to_gallery', v);
+
   static bool get episodeNotifications =>
       _prefs.getBool('episode_notifications') ?? true;
   static set episodeNotifications(bool v) =>
@@ -548,6 +552,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Settings.downloadQuality,
                 (v) => Settings.downloadQuality = v,
               ),
+            ),
+            SwitchListTile(
+              title: const Text('Save downloads to gallery'),
+              subtitle: const Text(
+                'Also copies each finished episode to Movies/AniView',
+              ),
+              value: Settings.saveToGallery,
+              onChanged: (v) => setState(() => Settings.saveToGallery = v),
             ),
             ListenableBuilder(
               listenable: Downloads.instance,

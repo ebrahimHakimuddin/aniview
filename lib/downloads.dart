@@ -119,6 +119,7 @@ class Downloads extends ChangeNotifier {
   bool _running = false, _cancel = false;
   Future<void> _saving = Future.value();
   static const _notifications = MethodChannel('aniview/downloads');
+  static const _app = MethodChannel('aniview/app');
   var _notifiedPercent = -1;
   var _notifiedAt = DateTime(0);
 
@@ -347,6 +348,7 @@ class Downloads extends ChangeNotifier {
 
   Future<void> _download(Download d) async {
     final done = _activeDone = Completer<void>();
+    String? note; // shown in the finished notification
     _active = d;
     _cancel = false;
     _notifiedPercent = -1;
@@ -378,6 +380,7 @@ class Downloads extends ChangeNotifier {
         ..skips = community.isNotEmpty ? community : stream.skips
         ..status = DownloadStatus.done
         ..progress = 1;
+      if (Settings.saveToGallery) note = await _saveToGallery(d, dir);
     } catch (e) {
       if (_cancel) return; // removed while downloading
       d
@@ -386,11 +389,26 @@ class Downloads extends ChangeNotifier {
             ? '${d.source} needs a quick verification: play any episode from it once, then retry'
             : friendlyError(e);
     } finally {
-      _post(_cancel ? 'cancel' : d.status.name, d, {'text': d.error});
+      _post(_cancel ? 'cancel' : d.status.name, d, {'text': d.error ?? note});
       _active = null;
       _activeDone = null;
       if (!_cancel) _notify(save: true);
       done.complete();
+    }
+  }
+
+  /// Copies a finished episode to the gallery; returns why it couldn't, or null.
+  Future<String?> _saveToGallery(Download d, Directory dir) async {
+    final name =
+        '${titleOf(d.media)} - Episode ${epNumber(d.number)}${d.dub ? ' (Dub)' : ''}'
+            .replaceAll(RegExp(r'[\\/:*?"<>|]'), '');
+    try {
+      await _app.invokeMethod('gallery', {'dir': dir.path, 'name': name});
+      return 'Downloaded · saved to gallery';
+    } on PlatformException catch (e) {
+      return 'Downloaded · not saved to gallery: ${e.message}';
+    } on MissingPluginException {
+      return null; // not on Android
     }
   }
 

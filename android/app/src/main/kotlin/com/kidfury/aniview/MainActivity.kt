@@ -57,6 +57,15 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "external" -> playExternal(call.arguments as Map<*, *>, result)
+                    "gallery" -> Thread {
+                        val error = try {
+                            GalleryExport.save(this, java.io.File(call.argument<String>("dir")!!), call.argument<String>("name")!!)
+                            null
+                        } catch (e: Exception) {
+                            e.message ?: "Couldn't save to the gallery"
+                        }
+                        runOnUiThread { if (error == null) result.success(null) else result.error("gallery", error, null) }
+                    }.start()
                     "open" -> {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
                         result.success(null)
