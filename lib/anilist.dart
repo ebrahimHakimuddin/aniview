@@ -201,6 +201,24 @@ class AniList {
     return out;
   }
 
+  /// The latest episode that aired in the past week of each show in [ids], newest first, as
+  /// {episode, airingAt, media}.
+  static Future<List<Map>> airedThisWeek(Iterable<int> ids) async {
+    if (ids.isEmpty) return const [];
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final data = await query(
+      r'query($ids:[Int],$from:Int,$to:Int){Page(perPage:50){airingSchedules(mediaId_in:$ids,'
+      r'airingAt_greater:$from,airingAt_lesser:$to,sort:TIME_DESC){episode airingAt media{'
+      '$_media}}}}',
+      {'ids': ids.toSet().toList(), 'from': now - 7 * 24 * 3600, 'to': now},
+    );
+    final seen = <Object>{};
+    return [
+      for (final s in data['Page']['airingSchedules'] as List)
+        if (seen.add(s['media']['id'])) s as Map,
+    ];
+  }
+
   static Future<int> progressOf(int mediaId) async =>
       (await query(r'query($id:Int){Media(id:$id){mediaListEntry{progress}}}', {
         'id': mediaId,

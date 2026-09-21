@@ -61,10 +61,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Object? error;
   String? hint;
   IconData? hintIcon;
-  bool controls = true,
-      locked = false,
-      synced = false,
-      upNextDismissed = false;
+  bool controls = true, locked = false, synced = false, upNextDismissed = false;
+
   /// Fit, fill (crop) or stretch.
   BoxFit fit = BoxFit.contain;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
@@ -201,7 +199,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (Settings.externalPlayer) {
         final stopped = await _playExternal(found.first, at: at);
         if (!mounted) return;
-        if (stopped == null) throw Exception('No video player app is installed');
+        if (stopped == null)
+          throw Exception('No video player app is installed');
         return Navigator.pop(context);
       }
       await _play(found.first, at: at);

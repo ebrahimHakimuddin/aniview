@@ -59,6 +59,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
   late Future<List<Map<String, dynamic>>> history = WatchHistory.all();
 
+  late Future<List<Map>> released = _released();
+
+  /// New episodes of the shows on your watching list and the ones you watched recently.
+  Future<List<Map>> _released() async {
+    final watching = await lists.then(
+      (l) => l['CURRENT'] ?? const [],
+      onError: (Object _) => const [], // still check the recently watched ones
+    );
+    return AniList.airedThisWeek([
+      for (final m in [...watching, for (final r in await history) r['media']])
+        if (m['id'] is int) m['id'] as int,
+    ]);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -97,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       lists = Tracker.lists();
       history = WatchHistory.all();
+      released = _released();
     });
     _scheduleNotifications();
   }
@@ -129,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       trending = Tracker.trending();
       season = Tracker.season();
       history = WatchHistory.all();
+      released = _released();
     });
     _syncPending();
     _scheduleNotifications();
@@ -169,9 +185,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final (name, year) = AniList.currentSeason;
-    final seasonTitle =
-        'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: FutureBuilder(
@@ -225,109 +238,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 _recentlyWatched,
                 _Shelf('Downloaded', _downloaded, onBack: _reloadLists),
-              ] else ...[
-                _Hero(
-                  items: snap.data?.take(6).toList() ?? const [],
-                  loading: snap.connectionState != ConnectionState.done,
-                  error: snap.error,
-                  onRetry: _refresh,
-                ),
-                if (Tracker.signedIn)
-                  FutureBuilder(
-                    future: lists,
-                    builder: (context, snap) {
-                      const title = 'Continue watching · This season';
-                      if (snap.connectionState != ConnectionState.done) {
-                        return const ShelfSkeleton(title: title);
-                      }
-                      final airing = (snap.data?['CURRENT'] ?? const [])
-                          .where(_airingNow)
-                          .toList();
-                      return airing.isEmpty
-                          ? const SizedBox.shrink()
-                          : _Shelf(title, airing, onBack: _reloadLists);
-                    },
-                  ),
-                if (!Tracker.signedIn)
-                  _SignInCard(onTap: _signIn)
-                else
-                  FutureBuilder(
-                    future: lists,
-                    builder: (context, snap) {
-                      if (snap.connectionState != ConnectionState.done) {
-                        return const ShelfSkeleton(title: 'Continue watching');
-                      }
-                      if (snap.hasError) {
-                        return _Section(
-                          'Your list',
-                          child: ErrorState(
-                            snap.error!,
-                            compact: true,
-                            onRetry: _reloadLists,
-                          ),
-                        );
-                      }
-                      final watching = snap.data!['CURRENT'] ?? const [];
-                      final current = watching
-                          .where((m) => !_airingNow(m))
-                          .toList(); // airing ones are in the top row
-                      final planning = snap.data!['PLANNING'] ?? const [];
-                      if (watching.isEmpty && planning.isEmpty) {
-                        return EmptyState(
-                          compact: true,
-                          icon: Icons.video_library_outlined,
-                          title: 'Your list is empty',
-                          message:
-                              'Shows you watch or plan to watch show up here.',
-                          action: FilledButton.tonalIcon(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const SearchScreen(),
-                              ),
-                            ),
-                            icon: const Icon(Icons.search_rounded),
-                            label: const Text('Find a show'),
-                          ),
-                        );
-                      }
-                      return Column(
-                        children: [
-                          if (current.isNotEmpty)
-                            _Shelf(
-                              'Continue watching',
-                              current,
-                              onBack: _reloadLists,
-                            ),
-                          if (planning.isNotEmpty)
-                            _Shelf(
-                              'Plan to watch',
-                              planning,
-                              onBack: _reloadLists,
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                _recentlyWatched,
-                _shelf(
-                  seasonTitle,
-                  season,
-                  onRetry: () => setState(() => season = Tracker.season()),
-                  seeAll: SearchFilters(
-                    season: AniList.currentSeason.$1,
-                    year: AniList.currentSeason.$2,
-                    sort: 'POPULARITY_DESC',
-                  ),
-                ),
-                _shelf(
-                  'Trending now',
-                  trending,
-                  onRetry: _refresh,
-                  showError: false, // the hero already shows it
-                  seeAll: const SearchFilters(sort: 'TRENDING_DESC'),
-                ),
-              ],
+              ] else
+                for (final (section, shown) in Settings.homeSections)
+                  if (shown) _section(section, snap),
               const SizedBox(
                 height: 96,
               ), // room for the continue-watching button
@@ -336,6 +249,131 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Widget _section(HomeSection section, AsyncSnapshot<List> trendingSnap) {
+    final showAiring = Settings.homeSections.contains((
+      HomeSection.airing,
+      true,
+    ));
+    return switch (section) {
+      HomeSection.featured => _Hero(
+        items: trendingSnap.data?.take(6).toList() ?? const [],
+        loading: trendingSnap.connectionState != ConnectionState.done,
+        error: trendingSnap.error,
+        onRetry: _refresh,
+      ),
+      HomeSection.newEpisodes => FutureBuilder(
+        future: released,
+        builder: (context, snap) {
+          final aired = snap.data ?? const [];
+          if (aired.isEmpty) return const SizedBox.shrink();
+          return _Shelf(
+            section.label,
+            [for (final a in aired) a['media']],
+            onBack: _reloadLists,
+            subtitles: [
+              for (final a in aired)
+                'EP ${a['episode']} · ${_ago(a['airingAt'] as int)}',
+            ],
+          );
+        },
+      ),
+      HomeSection.airing when Tracker.signedIn => FutureBuilder(
+        future: lists,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return ShelfSkeleton(title: section.label);
+          }
+          final airing = (snap.data?['CURRENT'] ?? const [])
+              .where(_airingNow)
+              .toList();
+          return airing.isEmpty
+              ? const SizedBox.shrink()
+              : _Shelf(section.label, airing, onBack: _reloadLists);
+        },
+      ),
+      HomeSection.watching when !Tracker.signedIn => _SignInCard(
+        onTap: _signIn,
+      ),
+      HomeSection.watching ||
+      HomeSection.planning when Tracker.signedIn => FutureBuilder(
+        future: lists,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return ShelfSkeleton(title: section.label);
+          }
+          if (snap.hasError) {
+            return section == HomeSection.planning
+                ? const SizedBox.shrink() // shown once, by watching
+                : _Section(
+                    'Your list',
+                    child: ErrorState(
+                      snap.error!,
+                      compact: true,
+                      onRetry: _reloadLists,
+                    ),
+                  );
+          }
+          final watching = snap.data!['CURRENT'] ?? const [];
+          final planning = snap.data!['PLANNING'] ?? const [];
+          if (section == HomeSection.planning) {
+            return planning.isEmpty
+                ? const SizedBox.shrink()
+                : _Shelf(section.label, planning, onBack: _reloadLists);
+          }
+          if (watching.isEmpty && planning.isEmpty) {
+            return EmptyState(
+              compact: true,
+              icon: Icons.video_library_outlined,
+              title: 'Your list is empty',
+              message: 'Shows you watch or plan to watch show up here.',
+              action: FilledButton.tonalIcon(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SearchScreen()),
+                ),
+                icon: const Icon(Icons.search_rounded),
+                label: const Text('Find a show'),
+              ),
+            );
+          }
+          // Airing ones have their own row when it's shown.
+          final current = showAiring
+              ? watching.where((m) => !_airingNow(m)).toList()
+              : watching;
+          return current.isEmpty
+              ? const SizedBox.shrink()
+              : _Shelf(section.label, current, onBack: _reloadLists);
+        },
+      ),
+      HomeSection.recent => _recentlyWatched,
+      HomeSection.season => _shelf(
+        () {
+          final (name, year) = AniList.currentSeason;
+          return 'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
+        }(),
+        season,
+        onRetry: () => setState(() => season = Tracker.season()),
+        seeAll: SearchFilters(
+          season: AniList.currentSeason.$1,
+          year: AniList.currentSeason.$2,
+          sort: 'POPULARITY_DESC',
+        ),
+      ),
+      HomeSection.trending => _shelf(
+        section.label,
+        trending,
+        onRetry: _refresh,
+        // The banner already shows the error.
+        showError: !Settings.homeSections.contains((
+          HomeSection.featured,
+          true,
+        )),
+        seeAll: const SearchFilters(sort: 'TRENDING_DESC'),
+      ),
+      _ => const SizedBox.shrink(), // list rows while signed out
+    };
   }
 
   Widget get _recentlyWatched => FutureBuilder(
@@ -420,6 +458,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     },
   );
+}
+
+/// "today", "yesterday" or "3d ago" for a unix time in the past.
+String _ago(int airingAt) {
+  final days = DateTime.now()
+      .difference(DateTime.fromMillisecondsSinceEpoch(airingAt * 1000))
+      .inDays;
+  return switch (days) {
+    0 => 'today',
+    1 => 'yesterday',
+    _ => '${days}d ago',
+  };
 }
 
 Future<void> openSearch(BuildContext context, SearchFilters filters) =>

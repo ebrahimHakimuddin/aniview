@@ -18,6 +18,27 @@ import 'states.dart';
 
 enum SkipMode { button, auto, off }
 
+/// Rows of the home screen, in their default order.
+enum HomeSection {
+  featured('Featured', 'Trending shows at the top'),
+  newEpisodes(
+    'New episodes this week',
+    "Episodes that aired in the past 7 days of shows you're watching",
+  ),
+  airing(
+    'Continue watching · This season',
+    "Shows you're watching that are airing",
+  ),
+  watching('Continue watching', 'The rest of your watching list'),
+  planning('Plan to watch', 'Your planning list'),
+  recent('Recently watched', 'Where you stopped, on this device'),
+  season('This season', 'Popular shows this season'),
+  trending('Trending now', 'Trending on AniList');
+
+  const HomeSection(this.label, this.description);
+  final String label, description;
+}
+
 /// User preferences; read synchronously after [load] runs at startup.
 class Settings {
   static late SharedPreferences _prefs;
@@ -115,6 +136,27 @@ class Settings {
       _prefs.getStringList('recent_searches') ?? const [];
   static set recentSearches(List<String> v) =>
       _prefs.setStringList('recent_searches', v.take(10).toList());
+
+  /// Every home section in the chosen order, with whether it's shown.
+  static List<(HomeSection, bool)> get homeSections {
+    final saved = [
+      for (final name in _prefs.getStringList('home_sections') ?? const [])
+        if (HomeSection.values.asNameMap()[name.replaceFirst('-', '')]
+            case final section?)
+          (section, !name.startsWith('-')),
+    ];
+    return [
+      ...saved,
+      // Sections added in an update show up, at the end.
+      for (final section in HomeSection.values)
+        if (!saved.any((s) => s.$1 == section)) (section, true),
+    ];
+  }
+
+  static set homeSections(List<(HomeSection, bool)> v) => _prefs.setStringList(
+    'home_sections',
+    [for (final (section, shown) in v) '${shown ? '' : '-'}${section.name}'],
+  );
 
   static bool get episodeTipSeen => _prefs.getBool('episode_tip_seen') ?? false;
   static set episodeTipSeen(bool v) => _prefs.setBool('episode_tip_seen', v);
@@ -380,6 +422,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
                 Settings.watchedPercent,
                 (v) => Settings.watchedPercent = v,
+              ),
+            ),
+          ]),
+          _Group('Home screen', [
+            ListTile(
+              title: const Text('Sections'),
+              subtitle: const Text('Choose and reorder the rows on home'),
+              trailing: const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white38,
+              ),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const _HomeSectionsScreen()),
               ),
             ),
           ]),
@@ -750,6 +806,58 @@ class _Choice extends StatelessWidget {
       children: [
         Text(value, style: const TextStyle(color: Colors.white60)),
         const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+      ],
+    ),
+  );
+}
+
+class _HomeSectionsScreen extends StatefulWidget {
+  const _HomeSectionsScreen();
+
+  @override
+  State<_HomeSectionsScreen> createState() => _HomeSectionsScreenState();
+}
+
+class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
+  final sections = Settings.homeSections;
+
+  void _save() => setState(() => Settings.homeSections = sections);
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Home sections'),
+      actions: [
+        TextButton(
+          onPressed: () {
+            sections
+              ..clear()
+              ..addAll([for (final s in HomeSection.values) (s, true)]);
+            _save();
+          },
+          child: const Text('Reset'),
+        ),
+      ],
+    ),
+    body: ReorderableListView(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 32),
+      onReorderItem: (from, to) {
+        sections.insert(to, sections.removeAt(from));
+        _save();
+      },
+      children: [
+        for (final (i, (section, shown)) in sections.indexed)
+          SwitchListTile(
+            key: ValueKey(section),
+            secondary: const Icon(Icons.drag_handle_rounded),
+            title: Text(section.label),
+            subtitle: Text(section.description),
+            value: shown,
+            onChanged: (v) {
+              sections[i] = (section, v);
+              _save();
+            },
+          ),
       ],
     ),
   );
