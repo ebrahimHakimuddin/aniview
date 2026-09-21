@@ -14,7 +14,9 @@ import 'downloads.dart';
 import 'history.dart';
 import 'notifications.dart';
 import 'sources.dart';
+import 'pairing.dart';
 import 'states.dart';
+import 'tv.dart';
 
 enum SkipMode { button, auto, off }
 
@@ -405,6 +407,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               },
             ),
+            if (signedIn && !isTv)
+              ListTile(
+                leading: const Icon(Icons.tv_rounded),
+                title: const Text('Sign in a TV'),
+                subtitle: const Text(
+                  'Sign AniView on your TV in with this account, over Wi-Fi',
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.white38,
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const PhonePairScreen()),
+                ),
+              ),
             SwitchListTile(
               title: const Text('Update progress automatically'),
               subtitle: const Text('Marks the episode watched on AniList'),

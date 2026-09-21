@@ -5,6 +5,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'pairing.dart';
+import 'tv.dart';
+
 String titleOf(Map media) =>
     media['title']['userPreferred'] ??
     media['title']['romaji'] ??
@@ -57,14 +60,22 @@ class AniList {
   }
 
   /// Shows AniList's authorize page in-app and captures the token from the `aniview://auth#access_token=…` redirect.
+  /// A TV first offers signing in from a phone, since typing a password with a remote is painful.
   static Future<void> login(BuildContext context) async {
-    final value = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => const _LoginPage(),
-      ),
-    );
-    if (value == null) return; // closed without authorizing
+    var value = !isTv
+        ? TvPairScreen.signInHere
+        : await Navigator.of(context).push<String>(
+            MaterialPageRoute(builder: (_) => const TvPairScreen()),
+          );
+    if (value == TvPairScreen.signInHere && context.mounted) {
+      value = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => const _LoginPage(),
+        ),
+      );
+    }
+    if (value == null || value.isEmpty) return; // closed without authorizing
     token = value;
     await (await SharedPreferences.getInstance()).setString(
       'anilist_token',
