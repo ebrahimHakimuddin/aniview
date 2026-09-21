@@ -858,6 +858,7 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
       ],
     ),
     body: ReorderableListView(
+      buildDefaultDragHandles: !isTv,
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 32),
       onReorderItem: (from, to) {
         sections.insert(to, sections.removeAt(from));
@@ -867,7 +868,28 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
         for (final (i, (section, shown)) in sections.indexed)
           SwitchListTile(
             key: ValueKey(section),
-            secondary: const Icon(Icons.drag_handle_rounded),
+            // Dragging needs touch; a remote moves rows with buttons.
+            secondary: !isTv
+                ? const Icon(Icons.drag_handle_rounded)
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final (icon, to, label) in [
+                        (Icons.arrow_upward_rounded, i - 1, 'Move up'),
+                        (Icons.arrow_downward_rounded, i + 1, 'Move down'),
+                      ])
+                        IconButton(
+                          tooltip: label,
+                          icon: Icon(icon),
+                          onPressed: to < 0 || to >= sections.length
+                              ? null
+                              : () {
+                                  sections.insert(to, sections.removeAt(i));
+                                  _save();
+                                },
+                        ),
+                    ],
+                  ),
             title: Text(section.label),
             subtitle: Text(section.description),
             value: shown,
