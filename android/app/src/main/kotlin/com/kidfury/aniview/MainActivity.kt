@@ -6,17 +6,20 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.media.AudioManager
 import android.os.Build
+import android.os.Parcelable
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var notifications: MethodChannel? = null
+    private var externalResult: MethodChannel.Result? = null
 
     /** A new-episode notification tapped while the app is already running. */
     override fun onNewIntent(intent: Intent) {
@@ -53,6 +56,7 @@ class MainActivity : FlutterActivity() {
                         (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
                         result.success(null)
                     }
+                    "external" -> playExternal(call.arguments as Map<*, *>, result)
                     "open" -> {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
                         result.success(null)
@@ -91,6 +95,57 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toDouble() / max)
             }
+    }
+
+    /**
+     * Hands a stream to another video app. MX Player and VLC take the title, start position and subtitles, and
+     * report where playback stopped, which comes back as {position, duration, completed} (empty from other apps).
+     */
+    private fun playExternal(args: Map<*, *>, result: MethodChannel.Result) {
+        val subtitles = args["subtitles"] as List<*>
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(Uri.parse(args["url"] as String), "video/*")
+            .putExtra("title", args["title"] as String)
+            .putExtra("position", (args["position"] as Number).toInt())
+            .putExtra("return_result", true)
+        @Suppress("UNCHECKED_CAST")
+        (args["headers"] as Map<String, String>?)?.let { headers ->
+            intent.putExtra("headers", headers.flatMap { listOf(it.key, it.value) }.toTypedArray())
+        }
+        if (subtitles.isNotEmpty()) {
+            // Parcelable[], not Array<Uri>, which would be sent as a Serializable that MX Player ignores.
+            val uris = subtitles.map<Any?, Parcelable> { Uri.parse((it as Map<*, *>)["url"] as String) }
+            intent.putExtra("subs", uris.toTypedArray())
+                .putExtra("subs.name", subtitles.map { (it as Map<*, *>)["label"] as String }.toTypedArray())
+                .putExtra("subs.enable", arrayOf<Parcelable>(uris.first()))
+                .putExtra("subtitles_location", uris.first().toString())
+        }
+        try {
+            startActivityForResult(intent, EXTERNAL_REQUEST)
+            externalResult?.success(emptyMap<String, Any>())
+            externalResult = result
+        } catch (_: ActivityNotFoundException) {
+            result.error("no_player", "No video player app is installed", null)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != EXTERNAL_REQUEST) return
+        val extras = data?.extras
+        // MX Player: position/duration as Int ms; VLC: extra_position/extra_duration as Long ms.
+        fun ms(vararg keys: String) = keys.firstNotNullOfOrNull { key ->
+            (extras?.get(key) as? Number)?.toLong()
+        }
+        externalResult?.success(
+            mapOf(
+                "position" to ms("position", "extra_position"),
+                "duration" to ms("duration", "extra_duration"),
+                "completed" to (extras?.getString("end_by") == "playback_completion"),
+            ),
+        )
+        externalResult = null
     }
 
     /** One ongoing notification while an episode downloads, then a dismissable one saying how it ended. */
@@ -139,5 +194,6 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val CHANNEL = "downloads"
         const val PROGRESS_ID = 1
+        const val EXTERNAL_REQUEST = 1
     }
 }

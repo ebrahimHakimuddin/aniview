@@ -56,6 +56,10 @@ class Settings {
   static int get skipSeconds => _prefs.getInt('skip_seconds') ?? 85;
   static set skipSeconds(int v) => _prefs.setInt('skip_seconds', v);
 
+  /// Hand episodes to another video app (MX Player, VLC, …) instead of the built-in player.
+  static bool get externalPlayer => _prefs.getBool('external_player') ?? false;
+  static set externalPlayer(bool v) => _prefs.setBool('external_player', v);
+
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
   static set speed(double v) => _prefs.setDouble('speed', v);
 
@@ -450,6 +454,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Settings.skipMode,
                 (v) => Settings.skipMode = v,
               ),
+            ),
+            SwitchListTile(
+              title: const Text('Use an external player'),
+              subtitle: const Text(
+                'Play episodes in MX Player, VLC or another installed app',
+              ),
+              value: Settings.externalPlayer,
+              onChanged: (v) => setState(() => Settings.externalPlayer = v),
             ),
             SwitchListTile(
               title: const Text('Swipe gestures'),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -69,6 +70,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
   static const _systemVolume = MethodChannel('aniview/volume');
+  static const _app = MethodChannel('aniview/app');
   Duration? seekTarget;
   Duration? _startAt; // where the current server was asked to start
   Timer? _hideTimer, _hintTimer;
@@ -196,6 +198,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         'dub': widget.dub,
         'downloaded': offline != null,
       });
+      if (Settings.externalPlayer) {
+        final stopped = await _playExternal(found.first, at: at);
+        if (!mounted) return;
+        if (stopped == null) throw Exception('No video player app is installed');
+        return Navigator.pop(context);
+      }
       await _play(found.first, at: at);
     } catch (e) {
       if (mounted && index == i) setState(() => error = e);
@@ -227,6 +235,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (at != null && at > Duration.zero) await player.seek(at);
     await _applySubtitle(stream);
     await player.setRate(rate);
+  }
+
+  /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that
+  /// position (zero when the app doesn't report it), or null when no app can play it.
+  Future<Duration?> _playExternal(VideoStream stream, {Duration? at}) async {
+    setState(() => current = stream);
+    // Other apps can't send the stream's headers or read app storage, so both go through the local proxy.
+    final dir = stream.isLocal ? File(stream.url).parent.path : null;
+    Future<String> address(String url) => dir != null
+        ? HlsProxy.localFile(dir, url.split('/').last)
+        : HlsProxy.url(
+            url,
+            stream.headers,
+            ext: stream.isHls && url == stream.url
+                ? 'm3u8'
+                : Uri.parse(url).path.split('.').last,
+          );
+    try {
+      final result = await _app.invokeMapMethod<String, Object?>('external', {
+        'url': stream.isHls ? await address(stream.url) : stream.url,
+        'headers': stream.isHls ? null : stream.headers, // MX Player only
+        'title':
+            '${titleOf(widget.media)} · Episode ${epNumber(episode.number)}',
+        'position': (at ?? Duration.zero).inMilliseconds,
+        'subtitles': [
+          for (final s in stream.subtitles)
+            {'label': s.label, 'url': await address(s.url)},
+        ],
+      });
+      final duration = Duration(milliseconds: result?['duration'] as int? ?? 0);
+      final position = result?['completed'] == true
+          ? duration
+          : Duration(milliseconds: result?['position'] as int? ?? 0);
+      _checkWatched(position, duration);
+      _saveHistory(position, duration);
+      return position;
+    } on PlatformException catch (e) {
+      _hint(e.message ?? 'No video player app', icon: Icons.error_outline);
+      return null;
+    }
   }
 
   Future<void> _applySubtitle(VideoStream stream) async {
@@ -269,19 +317,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPosition(Duration position) {
-    final duration = player.state.duration;
-    if (!synced &&
-        current != null &&
-        duration > Duration.zero &&
-        position.inMilliseconds >
-            duration.inMilliseconds * Settings.watchedPercent / 100) {
-      synced = true;
-      Analytics.event('episode_watched', {
-        'media_id': widget.media['id'],
-        'episode': episode.number,
-      });
-      _syncProgress();
-    }
+    _checkWatched(position, player.state.duration);
     if (Settings.skipMode == SkipMode.auto) {
       final skip = _activeSkip(position);
       if (skip != null && _autoSkipped.add(skip)) {
@@ -294,6 +330,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _saveHistory();
     }
     _refresh();
+  }
+
+  void _checkWatched(Duration position, Duration duration) {
+    if (!synced &&
+        current != null &&
+        duration > Duration.zero &&
+        position.inMilliseconds >
+            duration.inMilliseconds * Settings.watchedPercent / 100) {
+      synced = true;
+      Analytics.event('episode_watched', {
+        'media_id': widget.media['id'],
+        'episode': episode.number,
+      });
+      _syncProgress();
+    }
   }
 
   /// Once the length is known, ask AniSkip; its community times replace the site's own when found.
@@ -314,8 +365,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   SkipTime? _activeSkip(Duration position) =>
       skips.where((s) => s.contains(position)).firstOrNull;
 
-  void _saveHistory() {
-    final position = player.state.position, duration = player.state.duration;
+  void _saveHistory([Duration? position, Duration? duration]) {
+    position ??= player.state.position;
+    duration ??= player.state.duration;
     if (current == null || position < const Duration(seconds: 5)) return;
     final finished =
         duration > Duration.zero &&
@@ -819,6 +871,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         ),
                     ],
                   ),
+                IconButton(
+                  tooltip: 'Open in another app',
+                  icon: const Icon(Icons.open_in_new_rounded),
+                  onPressed: current == null
+                      ? null
+                      : () async {
+                          player.pause();
+                          final at = await _playExternal(
+                            current!,
+                            at: player.state.position,
+                          );
+                          if (at != null && at > Duration.zero) player.seek(at);
+                        },
+                ),
                 PopupMenuButton<double>(
                   tooltip: 'Speed',
                   icon: const Icon(Icons.speed_rounded),

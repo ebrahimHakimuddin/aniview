@@ -10,6 +10,7 @@ import 'sources.dart';
 class HlsProxy {
   // ponytail: header sets are never evicted; one small map per opened stream is fine for a session
   static final _headers = <Map<String, String>>[];
+  static final _dirs = <String>[];
   static final Future<HttpServer> _server = HttpServer.bind(
     InternetAddress.loopbackIPv4,
     0,
@@ -27,6 +28,18 @@ class HlsProxy {
     return _local(port, _headers.length - 1, upstream, ext);
   }
 
+  /// Serves [file] from download folder [dir] to other apps (an external player), which can't read app storage.
+  /// Only registered folders are served, so other apps can't reach the rest of the app's files.
+  static Future<String> localFile(String dir, String file) async {
+    final port = (await _server).port;
+    var id = _dirs.indexOf(dir);
+    if (id == -1) {
+      _dirs.add(dir);
+      id = _dirs.length - 1;
+    }
+    return 'http://127.0.0.1:$port/local/$id/$file';
+  }
+
   // The upstream URL lives in the path (no query) so FFmpeg's segment-extension check sees `.ts`/`.m3u8`.
   static String _local(int port, int id, String upstream, String ext) =>
       'http://127.0.0.1:$port/$id/${base64Url.encode(utf8.encode(upstream)).replaceAll('=', '')}.$ext';
@@ -34,6 +47,20 @@ class HlsProxy {
   static Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     try {
+      if (request.uri.pathSegments case ['local', final id, final file]) {
+        // Playlist entries are relative, so segments and keys resolve to this same folder.
+        if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) throw const FormatException();
+        if (file.endsWith('.m3u8')) {
+          response.headers.contentType = ContentType(
+            'application',
+            'vnd.apple.mpegurl',
+          );
+        }
+        final local = File('${_dirs[int.parse(id)]}/$file');
+        if (!await local.exists()) throw const FileSystemException();
+        await response.addStream(local.openRead());
+        return await response.close();
+      }
       final [id, file] = request.uri.pathSegments;
       final encoded = file.substring(0, file.lastIndexOf('.'));
       final upstream = Uri.parse(
