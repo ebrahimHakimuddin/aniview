@@ -2526,75 +2526,93 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
             ),
           ),
-        SliverList.builder(
-          itemCount: shown.length,
-          itemBuilder: (context, i) {
-            final episode = shown[i];
-            final watched = episode.number <= progress;
-            final saved = site != null || playable.contains(episode);
-            return _EpisodeTile(
-              episode,
-              watched: watched,
-              onLongPress: () => _episodeActions(
+        FutureBuilder(
+          future: record,
+          builder: (context, resume) => SliverList.builder(
+            itemCount: shown.length,
+            itemBuilder: (context, i) {
+              final episode = shown[i];
+              final watched = episode.number <= progress;
+              final saved = site != null || playable.contains(episode);
+              return _EpisodeTile(
                 episode,
                 watched: watched,
-                site: site,
-                season: list,
-              ),
-              trailing: site == null
-                  ? saved
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Icon(
-                              Icons.download_done_rounded,
-                              color: Colors.white54,
-                            ),
-                          )
-                        : null
-                  : _DownloadButton(
-                      media: media,
-                      source: site,
-                      episode: episode,
-                      season: list,
-                      dub: dub,
-                    ),
-              onTap: () async {
-                if (!saved) {
-                  showError(
+                upNext: episode == upcoming,
+                watchedPart: _resumedPart(resume.data, episode),
+                onLongPress: () => _episodeActions(
+                  episode,
+                  watched: watched,
+                  site: site,
+                  season: list,
+                ),
+                trailing: site == null
+                    ? saved
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: Icon(
+                                Icons.download_done_rounded,
+                                color: Colors.white54,
+                              ),
+                            )
+                          : null
+                    : _DownloadButton(
+                        media: media,
+                        source: site,
+                        episode: episode,
+                        season: list,
+                        dub: dub,
+                      ),
+                onTap: () async {
+                  if (!saved) {
+                    showError(
+                      context,
+                      "Episode ${epNumber(episode.number)} isn't downloaded",
+                    );
+                    return;
+                  }
+                  await Navigator.push(
                     context,
-                    "Episode ${epNumber(episode.number)} isn't downloaded",
-                  );
-                  return;
-                }
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PlayerScreen(
-                      media: media,
-                      source: site,
-                      sourceName:
-                          site?.name ??
-                          Downloads.instance
-                              .forMedia(media)
-                              .firstOrNull
-                              ?.source,
-                      episodes: playable,
-                      index: playable.indexOf(episode),
-                      dub: dub,
+                    MaterialPageRoute(
+                      builder: (_) => PlayerScreen(
+                        media: media,
+                        source: site,
+                        sourceName:
+                            site?.name ??
+                            Downloads.instance
+                                .forMedia(media)
+                                .firstOrNull
+                                ?.source,
+                        episodes: playable,
+                        index: playable.indexOf(episode),
+                        dub: dub,
+                      ),
                     ),
-                  ),
-                );
-                if (mounted) {
-                  setState(
-                    () => record = WatchHistory.of(media),
-                  ); // progress and resume point changed
-                }
-              },
-            );
-          },
+                  );
+                  if (mounted) {
+                    setState(
+                      () => record = WatchHistory.of(media),
+                    ); // progress and resume point changed
+                  }
+                },
+              );
+            },
+          ),
         ),
       ],
     );
+  }
+
+  /// How far into [episode] the saved resume point in [record] is, 0–1; null without one.
+  static double? _resumedPart(Map<String, dynamic>? record, Episode episode) {
+    final position = record?['position'] as int?;
+    final duration = record?['duration'] as int?;
+    if (record?['episode'] != episode.number ||
+        position == null ||
+        duration == null ||
+        duration <= 0) {
+      return null;
+    }
+    return (position / duration).clamp(0.0, 1.0);
   }
 
   /// Downloaded episodes, shown when the site can't be reached.
@@ -3145,12 +3163,17 @@ class _EpisodeTile extends StatelessWidget {
     this.episode, {
     required this.watched,
     required this.onTap,
+    this.upNext = false,
+    this.watchedPart,
     this.onLongPress,
     this.trailing,
   });
 
   final Episode episode;
-  final bool watched;
+  final bool watched, upNext;
+
+  /// How far into this episode the saved resume point is, 0–1.
+  final double? watchedPart;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final Widget? trailing;
@@ -3160,6 +3183,8 @@ class _EpisodeTile extends StatelessWidget {
     final thumbnail = episode.thumbnail;
     final title = episode.title;
     final overview = episode.overview;
+    final accent = Theme.of(context).colorScheme.primary;
+    final part = watchedPart;
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -3168,11 +3193,17 @@ class _EpisodeTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: SizedBox(
-                width: 128,
-                height: 72,
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              width: 128,
+              height: 72,
+              foregroundDecoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border: upNext ? Border.all(color: accent, width: 2) : null,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -3189,23 +3220,36 @@ class _EpisodeTile extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (thumbnail != null) _Img(thumbnail, transparent: true),
-                    if (watched)
-                      const ColoredBox(
-                        color: Color(0x99000000),
-                        child: Center(
-                          child: Icon(
-                            Icons.check_circle_rounded,
-                            color: Colors.white,
-                          ),
-                        ),
-                      )
-                    else if (thumbnail != null)
+                    if (thumbnail != null)
+                      AnimatedOpacity(
+                        opacity: watched ? .4 : 1,
+                        duration: const Duration(milliseconds: 250),
+                        child: _Img(thumbnail, transparent: true),
+                      ),
+                    if (!watched && thumbnail != null)
                       Center(
                         child: Icon(
                           Icons.play_circle_fill_rounded,
                           size: 30,
                           color: Colors.white.withValues(alpha: .9),
+                        ),
+                      ),
+                    if (watched)
+                      const Positioned(
+                        top: 6,
+                        right: 6,
+                        child: _WatchedBadge(),
+                      ),
+                    if (part != null && !watched)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: LinearProgressIndicator(
+                          value: part,
+                          minHeight: 3,
+                          color: accent,
+                          backgroundColor: Colors.black54,
                         ),
                       ),
                   ],
@@ -3217,21 +3261,39 @@ class _EpisodeTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Episode ${epNumber(episode.number)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: watched ? Colors.white60 : Colors.white,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Episode ${epNumber(episode.number)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: watched ? Colors.white54 : Colors.white,
+                          ),
+                        ),
+                      ),
+                      if (upNext) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          part != null ? 'RESUME' : 'UP NEXT',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            letterSpacing: .8,
+                            fontWeight: FontWeight.w800,
+                            color: accent,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   if (title != null)
                     Text(
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
-                        color: Colors.white70,
+                        color: watched ? Colors.white38 : Colors.white70,
                       ),
                     ),
                   if (overview != null)
@@ -3239,9 +3301,9 @@ class _EpisodeTile extends StatelessWidget {
                       overview,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11.5,
-                        color: Colors.white60,
+                        color: watched ? Colors.white30 : Colors.white60,
                         height: 1.3,
                       ),
                     ),
@@ -3254,6 +3316,26 @@ class _EpisodeTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _WatchedBadge extends StatelessWidget {
+  const _WatchedBadge();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.primary,
+      shape: BoxShape.circle,
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(2),
+      child: Icon(
+        Icons.check_rounded,
+        size: 14,
+        color: Theme.of(context).colorScheme.onPrimary,
+      ),
+    ),
+  );
 }
 
 // ───────────────────────────── Downloads ─────────────────────────────

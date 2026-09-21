@@ -452,6 +452,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         source: _sourceName,
         episode: finished ? widget.episodes[index + 1].number : episode.number,
         position: finished ? Duration.zero : position,
+        duration: finished ? null : duration,
         dub: widget.dub,
       );
     }

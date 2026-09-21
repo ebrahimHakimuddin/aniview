@@ -21,6 +21,7 @@ class WatchHistory {
     required String source,
     required num episode,
     required Duration position,
+    Duration? duration,
     required bool dub,
   }) async {
     final entries = [
@@ -29,6 +30,7 @@ class WatchHistory {
         'source': source,
         'episode': episode,
         'position': position.inMilliseconds,
+        'duration': ?duration?.inMilliseconds,
         'dub': dub,
       },
       ...(await all()).where((r) => r['media']['id'] != media['id']),
