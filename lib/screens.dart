@@ -14,6 +14,7 @@ import 'player.dart';
 import 'settings.dart';
 import 'sources.dart';
 import 'states.dart';
+import 'tv.dart';
 
 const background = Color(0xFF0A0A0F);
 const _sheet = Color(0xFF14141C);
@@ -183,8 +184,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) _refresh();
   }
 
+  void _push(Widget screen) => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => screen),
+  ).then((_) => mounted ? _reloadLists() : null);
+
+  /// Netflix-style TV home: a side rail, a billboard for the focused show, and rows of posters under it.
+  Widget _tvHome() => Scaffold(
+    backgroundColor: background,
+    body: Row(
+      children: [
+        _TvRail(
+          onSearch: () => _push(const SearchScreen()),
+          onDownloads: () => _push(const DownloadsScreen()),
+          onSettings: _openSettings,
+        ),
+        Expanded(
+          child: FutureBuilder(
+            future: trending,
+            builder: (context, snap) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  height: MediaQuery.sizeOf(context).height * .42,
+                  child: ValueListenableBuilder(
+                    valueListenable: focusedMedia,
+                    builder: (context, focused, _) {
+                      final media = focused ?? snap.data?.firstOrNull;
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: media == null
+                            ? const SizedBox.expand()
+                            : _Billboard(media, key: ValueKey(media['id'])),
+                      );
+                    },
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.only(bottom: 48),
+                    children: [
+                      if (snap.hasError && _downloaded.isNotEmpty)
+                        _Shelf('Downloaded', _downloaded, onBack: _reloadLists),
+                      for (final (section, shown) in Settings.homeSections)
+                        if (shown && section != HomeSection.featured)
+                          _section(section, snap),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
+    if (isTv) return _tvHome();
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: FutureBuilder(
@@ -750,6 +808,156 @@ class _HeroPage extends StatelessWidget {
   }
 }
 
+class _TvRail extends StatelessWidget {
+  const _TvRail({
+    required this.onSearch,
+    required this.onDownloads,
+    required this.onSettings,
+  });
+
+  final VoidCallback onSearch, onDownloads, onSettings;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: 76,
+    color: Colors.black.withValues(alpha: .35),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (final (icon, label, onTap) in [
+          (Icons.home_rounded, 'Home', null),
+          (Icons.search_rounded, 'Search', onSearch),
+          (Icons.download_for_offline_outlined, 'Downloads', onDownloads),
+          (Icons.settings_outlined, 'Settings', onSettings),
+        ])
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: IconButton(
+              tooltip: label,
+              iconSize: 28,
+              autofocus: onTap == null,
+              isSelected: onTap == null,
+              color: Colors.white60,
+              selectedIcon: Icon(
+                icon,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              icon: Icon(icon),
+              onPressed: onTap ?? () {},
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+/// The focused show on the TV home: its artwork on the right, fading into its details on the left.
+class _Billboard extends StatelessWidget {
+  const _Billboard(this.media, {super.key});
+
+  final Map media;
+
+  @override
+  Widget build(BuildContext context) {
+    final description = (media['description'] as String? ?? '')
+        .replaceAll(RegExp(r'<[^>]*>'), '')
+        .trim();
+    final meta = [
+      media['format'],
+      media['seasonYear'],
+      if (media['episodes'] != null) '${media['episodes']} eps',
+      ...(media['genres'] as List).take(3),
+    ].whereType<Object>().join('  ·  ');
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        FractionallySizedBox(
+          alignment: Alignment.centerRight,
+          widthFactor: .65,
+          child: _Img(
+            media['bannerImage'] ?? media['coverImage']['extraLarge'],
+            color: media['coverImage']['color'],
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [background, background, Colors.transparent],
+              stops: [0, .35, .75],
+            ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.transparent, background],
+              stops: [.6, 1],
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 28, 0, 12),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: .48,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  titleOf(media),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (media['averageScore'] != null) ...[
+                      _Score(media['averageScore'], compact: true),
+                      const SizedBox(width: 10),
+                    ],
+                    Flexible(
+                      child: Text(
+                        meta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (description.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    description,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.white70,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _SignInCard extends StatelessWidget {
   const _SignInCard({required this.onTap});
 
@@ -853,14 +1061,15 @@ class _Shelf extends StatelessWidget {
       ),
       const SizedBox(height: 12),
       SizedBox(
-        height: 272,
+        // Smaller on TV, so the billboard and more than one row fit on screen.
+        height: isTv ? 222 : 272,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
           itemCount: items.length,
           separatorBuilder: (_, _) => const SizedBox(width: 14),
           itemBuilder: (context, i) => SizedBox(
-            width: 136,
+            width: isTv ? 104 : 136,
             child: PosterCard(
               items[i],
               onBack: onBack,
@@ -992,6 +1201,8 @@ class PosterCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 onTap: () => openDetails(context, media, onBack: onBack),
                 onLongPress: onLongPress,
+                onFocusChange: (focused) =>
+                    focused ? focusedMedia.value = media : null,
               ),
             ),
           ),
