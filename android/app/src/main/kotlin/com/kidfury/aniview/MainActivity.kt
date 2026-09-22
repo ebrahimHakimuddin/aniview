@@ -15,6 +15,7 @@ import android.net.Uri
 import android.media.AudioManager
 import android.os.Build
 import android.os.Parcelable
+import android.speech.RecognizerIntent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -23,6 +24,7 @@ class MainActivity : FlutterActivity() {
     private var notifications: MethodChannel? = null
     private var externalResult: MethodChannel.Result? = null
     private var tv: MethodChannel? = null
+    private var voiceResult: MethodChannel.Result? = null
 
     /** A new-episode notification, or a show in the TV launcher's Continue watching row, opened while the app runs. */
     override fun onNewIntent(intent: Intent) {
@@ -31,6 +33,12 @@ class MainActivity : FlutterActivity() {
         if (id != 0) notifications?.invokeMethod("open", id)
         val resume = intent.getIntExtra(WatchNext.EXTRA_RESUME_ID, 0)
         if (resume != 0) tv?.invokeMethod("resume", resume)
+    }
+
+    /** The remote's search key, when Flutter leaves it unhandled: search in the app, not the system. */
+    override fun onSearchRequested(): Boolean {
+        tv?.invokeMethod("search", null)
+        return tv != null
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -91,6 +99,18 @@ class MainActivity : FlutterActivity() {
                         } catch (_: Exception) {} // no TV provider on this device
                         runOnUiThread { result.success(null) }
                     }.start()
+                    "voice" -> {
+                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Search anime")
+                        try {
+                            startActivityForResult(intent, VOICE_REQUEST)
+                            voiceResult?.success(null)
+                            voiceResult = result
+                        } catch (_: ActivityNotFoundException) {
+                            result.error("no_voice", "Voice search isn't available on this device", null)
+                        }
+                    }
                     // The show of the Continue watching card that launched the app, handed out once.
                     "launchResume" -> {
                         val id = intent.getIntExtra(WatchNext.EXTRA_RESUME_ID, 0)
@@ -169,6 +189,11 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == VOICE_REQUEST) {
+            voiceResult?.success(data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull())
+            voiceResult = null
+            return
+        }
         if (requestCode != EXTERNAL_REQUEST) return
         val extras = data?.extras
         // MX Player: position/duration as Int ms; VLC: extra_position/extra_duration as Long ms.
@@ -232,5 +257,6 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL = "downloads"
         const val PROGRESS_ID = 1
         const val EXTERNAL_REQUEST = 1
+        const val VOICE_REQUEST = 2
     }
 }

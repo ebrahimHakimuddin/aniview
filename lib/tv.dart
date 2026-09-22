@@ -16,11 +16,22 @@ Future<void> detectTv() async {
 
 const _tv = MethodChannel('aniview/tv');
 
+/// Speech to text through Android's recognizer, for search; null when dismissed. Throws when there's none.
+Future<String?> recognizeSpeech() => _tv.invokeMethod<String>('voice');
+
 /// Resumes a show (by AniList id) picked from the TV launcher's Continue watching row, whether it launched the
-/// app or came while it runs.
-Future<void> listenTv({required void Function(int id) resume}) async {
+/// app or came while it runs, and opens search for the remote's search key.
+Future<void> listenTv({
+  required void Function(int id) resume,
+  required VoidCallback search,
+}) async {
   _tv.setMethodCallHandler((call) async {
-    if (call.method == 'resume') resume(call.arguments as int);
+    switch (call.method) {
+      case 'resume':
+        resume(call.arguments as int);
+      case 'search':
+        search();
+    }
   });
   try {
     final launched = await _tv.invokeMethod<int>('launchResume');

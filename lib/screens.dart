@@ -82,7 +82,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncPending();
     _scheduleNotifications();
     EpisodeNotifications.listen(_openFromNotification);
-    listenTv(resume: _resumeFromLauncher);
+    listenTv(
+      resume: _resumeFromLauncher,
+      search: () => _push(const SearchScreen(voice: true)),
+    );
     checkForUpdate(context, quiet: true);
   }
 
@@ -1327,10 +1330,13 @@ class _AiringBadge extends StatelessWidget {
 // ───────────────────────────── Search ─────────────────────────────
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, this.filters});
+  const SearchScreen({super.key, this.filters, this.voice = false});
 
   /// Opens browsing these right away ("See all", a genre chip) instead of an empty search.
   final SearchFilters? filters;
+
+  /// Opens listening for a spoken query (the TV remote's search key).
+  final bool voice;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -1351,6 +1357,20 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     Analytics.screen('/search', title: 'Search');
     if (widget.filters != null) _search('', now: true);
+    if (widget.voice) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _listen());
+    }
+  }
+
+  Future<void> _listen() async {
+    try {
+      final spoken = await recognizeSpeech();
+      if (spoken == null || spoken.isEmpty || !mounted) return;
+      controller.text = spoken;
+      _search(spoken, now: true);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
   }
 
   /// Keeps a query that led somewhere (a show was opened from its results).
@@ -1512,13 +1532,20 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
       title: TextField(
         controller: controller,
-        autofocus: widget.filters == null,
+        autofocus: widget.filters == null && !widget.voice,
         textInputAction: TextInputAction.search,
         onChanged: _search,
         onSubmitted: (text) => _search(text, now: true),
         decoration: _searchDecoration('Search anime'),
       ),
       actions: [
+        // Phones already have a mic on the keyboard; a remote's on-screen keyboard is slow going.
+        if (isTv)
+          IconButton(
+            tooltip: 'Search by voice',
+            onPressed: _listen,
+            icon: const Icon(Icons.mic_rounded),
+          ),
         IconButton(
           tooltip: 'Filters',
           onPressed: _openFilters,
