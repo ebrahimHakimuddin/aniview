@@ -88,6 +88,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _railHome.dispose();
+    _tvList.dispose();
     super.dispose();
   }
 
@@ -190,53 +192,81 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ).then((_) => mounted ? _reloadLists() : null);
 
   /// Netflix-style TV home: a side rail, a billboard for the focused show, and rows of posters under it.
-  Widget _tvHome() => Scaffold(
-    backgroundColor: background,
-    body: Row(
-      children: [
-        _TvRail(
-          onSearch: () => _push(const SearchScreen()),
-          onDownloads: () => _push(const DownloadsScreen()),
-          onSettings: _openSettings,
-        ),
-        Expanded(
-          child: FutureBuilder(
-            future: trending,
-            builder: (context, snap) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  height: MediaQuery.sizeOf(context).height * .42,
-                  child: ValueListenableBuilder(
-                    valueListenable: focusedMedia,
-                    builder: (context, focused, _) {
-                      final media = focused ?? snap.data?.firstOrNull;
-                      return AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        child: media == null
-                            ? const SizedBox.expand()
-                            : _Billboard(media, key: ValueKey(media['id'])),
-                      );
-                    },
+  final _railHome = FocusNode();
+  final _tvList = ScrollController();
+
+  /// Back from anywhere on the TV home goes up to the rail first; from the rail it leaves the app.
+  Widget _tvHome() => PopScope(
+    canPop: false,
+    onPopInvokedWithResult: (didPop, _) {
+      if (didPop) return;
+      if (_railHome.hasFocus) {
+        SystemNavigator.pop();
+        return;
+      }
+      if (_tvList.hasClients) {
+        _tvList.animateTo(
+          0,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+        );
+      }
+      _railHome.requestFocus();
+    },
+    child: Scaffold(
+      backgroundColor: background,
+      body: Row(
+        children: [
+          _TvRail(
+            homeFocus: _railHome,
+            onSearch: () => _push(const SearchScreen()),
+            onDownloads: () => _push(const DownloadsScreen()),
+            onSettings: _openSettings,
+          ),
+          Expanded(
+            child: FutureBuilder(
+              future: trending,
+              builder: (context, snap) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    height: MediaQuery.sizeOf(context).height * .42,
+                    child: ValueListenableBuilder(
+                      valueListenable: focusedMedia,
+                      builder: (context, focused, _) {
+                        final media = focused ?? snap.data?.firstOrNull;
+                        return AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: media == null
+                              ? const SizedBox.expand()
+                              : _Billboard(media, key: ValueKey(media['id'])),
+                        );
+                      },
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.only(bottom: 48),
-                    children: [
-                      if (snap.hasError && _downloaded.isNotEmpty)
-                        _Shelf('Downloaded', _downloaded, onBack: _reloadLists),
-                      for (final (section, shown) in Settings.homeSections)
-                        if (shown && section != HomeSection.featured)
-                          _section(section, snap),
-                    ],
+                  Expanded(
+                    child: ListView(
+                      controller: _tvList,
+                      padding: const EdgeInsets.only(bottom: 48),
+                      children: [
+                        if (snap.hasError && _downloaded.isNotEmpty)
+                          _Shelf(
+                            'Downloaded',
+                            _downloaded,
+                            onBack: _reloadLists,
+                          ),
+                        for (final (section, shown) in Settings.homeSections)
+                          if (shown && section != HomeSection.featured)
+                            _section(section, snap),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     ),
   );
 
@@ -810,11 +840,13 @@ class _HeroPage extends StatelessWidget {
 
 class _TvRail extends StatelessWidget {
   const _TvRail({
+    required this.homeFocus,
     required this.onSearch,
     required this.onDownloads,
     required this.onSettings,
   });
 
+  final FocusNode homeFocus;
   final VoidCallback onSearch, onDownloads, onSettings;
 
   @override
@@ -836,6 +868,7 @@ class _TvRail extends StatelessWidget {
               tooltip: label,
               iconSize: 28,
               autofocus: onTap == null,
+              focusNode: onTap == null ? homeFocus : null,
               isSelected: onTap == null,
               color: Colors.white60,
               selectedIcon: Icon(
