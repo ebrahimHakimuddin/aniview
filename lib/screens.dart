@@ -1140,9 +1140,12 @@ class PosterCard extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      _Img(
-                        media['coverImage']['extraLarge'],
-                        color: media['coverImage']['color'],
+                      LayoutBuilder(
+                        builder: (context, box) => _Img(
+                          media['coverImage']['extraLarge'],
+                          color: media['coverImage']['color'],
+                          decodeWidth: box.maxWidth,
+                        ),
                       ),
                       if (media['averageScore'] != null)
                         Positioned(
@@ -3224,7 +3227,11 @@ class _EpisodeTile extends StatelessWidget {
                       AnimatedOpacity(
                         opacity: watched ? .4 : 1,
                         duration: const Duration(milliseconds: 250),
-                        child: _Img(thumbnail, transparent: true),
+                        child: _Img(
+                          thumbnail,
+                          transparent: true,
+                          decodeWidth: 128,
+                        ),
                       ),
                     if (!watched && thumbnail != null)
                       Center(
@@ -3833,7 +3840,8 @@ class _DownloadTile extends StatelessWidget {
                   ),
                 ),
               ),
-              if (d.thumbnail != null) _Img(d.thumbnail, transparent: true),
+              if (d.thumbnail != null)
+                _Img(d.thumbnail, transparent: true, decodeWidth: 88),
             ],
           ),
         ),
@@ -4020,12 +4028,17 @@ class _Img extends StatelessWidget {
     this.color,
     this.alignment = Alignment.center,
     this.transparent = false,
+    this.decodeWidth,
   });
 
   final String? url;
   final String? color;
   final Alignment alignment;
   final bool transparent; // draw over a placeholder instead of a filled box
+
+  /// Logical width to decode at. Episode stills often come at 1080p, which is ~8 MB each once decoded;
+  /// a list of them thrashes the image cache and stutters while scrolling.
+  final double? decodeWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -4040,6 +4053,10 @@ class _Img extends StatelessWidget {
               url,
               fit: BoxFit.cover,
               alignment: alignment,
+              cacheWidth: decodeWidth == null
+                  ? null
+                  : (decodeWidth! * MediaQuery.devicePixelRatioOf(context))
+                        .round(),
               frameBuilder: (context, child, frame, sync) => sync
                   ? child
                   : AnimatedOpacity(
