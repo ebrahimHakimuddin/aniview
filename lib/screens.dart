@@ -23,10 +23,11 @@ Future<void> openDetails(
   BuildContext context,
   Map media, {
   VoidCallback? onBack,
+  Object? heroTag,
 }) async {
   await Navigator.push(
     context,
-    MaterialPageRoute(builder: (_) => DetailsScreen(media)),
+    MaterialPageRoute(builder: (_) => DetailsScreen(media, heroTag: heroTag)),
   );
   onBack?.call();
 }
@@ -1155,6 +1156,30 @@ String? airingLabel(Map media) {
   return 'EP ${next!['episode']} · $when';
 }
 
+/// Poster artwork that flies between a card and the details cover. It flies as the card's already-decoded image
+/// (the cover's may still be loading), clipped to the shared corner radius the whole way.
+class _PosterHero extends StatelessWidget {
+  const _PosterHero({required this.tag, required this.child});
+
+  final Object? tag;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => tag == null
+      ? child
+      : Hero(
+          tag: tag!,
+          flightShuttleBuilder: (_, _, direction, from, to) => ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child:
+                ((direction == HeroFlightDirection.push ? from : to).widget
+                        as Hero)
+                    .child,
+          ),
+          child: child,
+        );
+}
+
 Timer? _billboardDelay;
 
 /// TV: keeps a focused poster a couple of posters in from the shelf's edge, so what's next stays in view,
@@ -1219,11 +1244,15 @@ class PosterCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        LayoutBuilder(
-                          builder: (context, box) => _Img(
-                            media['coverImage']['extraLarge'],
-                            color: media['coverImage']['color'],
-                            decodeWidth: box.maxWidth,
+                        // Tagged with this card's element: unique even when a show is in two shelves, and stable across rebuilds.
+                        _PosterHero(
+                          tag: context,
+                          child: LayoutBuilder(
+                            builder: (context, box) => _Img(
+                              media['coverImage']['extraLarge'],
+                              color: media['coverImage']['color'],
+                              decodeWidth: box.maxWidth,
+                            ),
                           ),
                         ),
                         if (media['averageScore'] != null)
@@ -1281,7 +1310,12 @@ class PosterCard extends StatelessWidget {
                 color: Colors.transparent,
                 child: InkWell(
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => openDetails(context, media, onBack: onBack),
+                  onTap: () => openDetails(
+                    context,
+                    media,
+                    onBack: onBack,
+                    heroTag: context,
+                  ),
                   onLongPress: onLongPress,
                   onHighlightChanged: onHighlightChanged,
                   onFocusChange: (focused) {
@@ -1841,9 +1875,12 @@ InputDecoration _searchDecoration(String hint, {Widget? suffix}) =>
 // ───────────────────────────── Details ─────────────────────────────
 
 class DetailsScreen extends StatefulWidget {
-  const DetailsScreen(this.media, {super.key});
+  const DetailsScreen(this.media, {super.key, this.heroTag});
 
   final Map media;
+
+  /// The tapped poster's [Hero] tag, so its artwork flies into the cover.
+  final Object? heroTag;
 
   @override
   State<DetailsScreen> createState() => _DetailsScreenState();
@@ -2142,9 +2179,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ],
             ),
-            child: _Img(
-              media['coverImage']['extraLarge'],
-              color: media['coverImage']['color'],
+            child: _PosterHero(
+              tag: widget.heroTag,
+              child: _Img(
+                media['coverImage']['extraLarge'],
+                color: media['coverImage']['color'],
+                // A shelf poster's size, so the one that just flew in is already decoded.
+                decodeWidth: 136,
+              ),
             ),
           ),
           const SizedBox(width: 16),
@@ -3349,12 +3391,20 @@ class _EpisodeTile extends StatelessWidget {
                             color: Colors.white.withValues(alpha: .9),
                           ),
                         ),
-                      if (watched)
-                        const Positioned(
-                          top: 6,
-                          right: 6,
-                          child: _WatchedBadge(),
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 280),
+                          switchInCurve: Curves.easeOutBack,
+                          switchOutCurve: Curves.easeIn,
+                          transitionBuilder: (child, animation) =>
+                              ScaleTransition(scale: animation, child: child),
+                          child: watched
+                              ? const _WatchedBadge()
+                              : const SizedBox.shrink(),
                         ),
+                      ),
                       if (part != null && !watched)
                         Positioned(
                           left: 0,
@@ -4118,8 +4168,25 @@ class _ContinueFabState extends State<ContinueFab> {
     }
   }
 
+  /// Rises and fades in once, instead of popping up when history loads.
   @override
-  Widget build(BuildContext context) => FloatingActionButton.extended(
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+    tween: Tween(begin: 0, end: 1),
+    duration: MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 420),
+    curve: Curves.easeOutCubic,
+    builder: (context, t, child) => Opacity(
+      opacity: t,
+      child: Transform.translate(
+        offset: Offset(0, 24 * (1 - t)),
+        child: Transform.scale(scale: .92 + .08 * t, child: child),
+      ),
+    ),
+    child: _fab(context),
+  );
+
+  Widget _fab(BuildContext context) => FloatingActionButton.extended(
     autofocus: isTv, // the details page's play button on TV
     tooltip: '${widget.title} · ${widget.subtitle}',
     onPressed: busy ? null : _run,
