@@ -34,11 +34,30 @@ class FocusRing extends StatefulWidget {
 // ever costs noticeable frames
 class _FocusRingState extends State<FocusRing>
     with SingleTickerProviderStateMixin {
-  late final Ticker _ticker = createTicker((_) {
+  late final Ticker _ticker = createTicker((elapsed) {
     final next = _focusedRect();
-    if (next != rect) setState(() => rect = next);
+    if (next == rect) return;
+    // Glide to a newly focused widget (following it if a scroll carries it along meanwhile), then track
+    // exactly while a scroll moves it.
+    if (rect == null ||
+        next == null ||
+        next.size != rect!.size ||
+        (next.center - rect!.center).distance > 24) {
+      _glideUntil = elapsed + _glide;
+    }
+    setState(() {
+      glide = elapsed < _glideUntil ? _glide : Duration.zero;
+      rect = next;
+      if (next != null) shown = next;
+    });
   })..start();
+  static const _glide = Duration(milliseconds: 160);
+  Duration _glideUntil = Duration.zero;
   Rect? rect;
+
+  /// The last focused rect, where the ring fades out when focus goes somewhere it isn't drawn.
+  Rect shown = Rect.zero;
+  Duration glide = Duration.zero;
   bool _selectDown = false;
   bool _held = false;
   int _pointer = 1 << 20; // synthetic pointers, clear of real ones
@@ -142,18 +161,26 @@ class _FocusRingState extends State<FocusRing>
           child: widget.child,
         ),
       ),
-      if (rect case final r?)
-        Positioned.fromRect(
-          rect: r.inflate(4),
-          child: IgnorePointer(
+      AnimatedPositioned.fromRect(
+        rect: shown.inflate(4),
+        duration: glide,
+        curve: Curves.easeOutCubic,
+        child: IgnorePointer(
+          child: AnimatedOpacity(
+            opacity: rect == null ? 0 : 1,
+            duration: const Duration(milliseconds: 120),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.white, width: 3),
                 borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x66FFFFFF), blurRadius: 12),
+                ],
               ),
             ),
           ),
         ),
+      ),
     ],
   );
 }
