@@ -10,9 +10,9 @@ void main() {
   test('reads the top anime sites from everythingmoe markup', () {
     const html =
         '<div id="sec-anime" class="section"><div class="section-notes">x</div>'
-        '<div data-rank="1" data-filter="Scraper" class="section-item">1. <a href="/s/anikoto" '
+        '<div data-rank="1" data-filter="Scraper" class="section-item"><span style="color:#ffc844;">1.</span> <a href="/s/anikoto" '
         'data-link="https://anikototv.to/home"><img src="a.png" alt=""> Anikoto</a></div>'
-        '<div data-rank="2" data-filter="Hard-sub" class="section-item">2. <a href="/s/animepahe" '
+        '<div data-rank="2" data-filter="Hard-sub" class="section-item"><span style="color:#d8ba76;">2.</span> <a href="/s/animepahe" '
         'data-link="https://animepahe.pw"><img src="b.png" alt=""> animepahe</a></div>'
         '<div data-rank="3" class="section-item">3. <a href="/s/reanime" data-link="https://reanime.to/home">'
         '<img src="c.png" alt=""> Re:Anime</a></div>'

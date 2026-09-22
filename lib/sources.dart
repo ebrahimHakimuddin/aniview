@@ -192,7 +192,7 @@ List<(String, String)> parseTopSites(String html) {
   final end = html.indexOf('id="sec-', start + 1);
   final section = html.substring(start, end == -1 ? html.length : end);
   return RegExp(
-        r'class="section-item">\d+\.\s*<a href="[^"]*" data-link="([^"]+)"[^>]*>(?:<img[^>]*>)?\s*([^<]+)</a>',
+        r'class="section-item">(?:<span[^>]*>)?\d+\.(?:</span>)?\s*<a href="[^"]*" data-link="([^"]+)"[^>]*>(?:<img[^>]*>)?\s*([^<]+)</a>',
       )
       .allMatches(section)
       .map((m) => (m[2]!.trim(), Uri.parse(m[1]!).origin))
