@@ -131,7 +131,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
   /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
   bool _onKey(KeyEvent event) {
-    if (!isTv || event is KeyUpEvent || !mounted) return false;
+    if (!isTv || !mounted) return false;
+    // Releasing a held left/right lands the scrub with one seek.
+    if (event is KeyUpEvent) {
+      final to = _scrubTo;
+      _scrubTo = null;
+      if (to != null && _scrubbed) player.seek(to);
+      _scrubbed = false;
+      return false;
+    }
     // Leave keys alone while a menu, dialog or the episode list is open, or for the error's buttons.
     if (error != null ||
         ModalRoute.of(context)?.isCurrent != true ||
@@ -155,10 +163,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Nothing inside has focus yet (just opened): start on play/pause.
       if (!_keys.hasPrimaryFocus) return false;
       _playFocus.requestFocus();
-    } else if (key == LogicalKeyboardKey.arrowLeft) {
-      _seekBy(-seek);
-    } else if (key == LogicalKeyboardKey.arrowRight) {
-      _seekBy(seek);
+    } else if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight) {
+      final step = key == LogicalKeyboardKey.arrowLeft ? -seek : seek;
+      if (event is KeyRepeatEvent && _scrubTo != null) {
+        // Held: move the target only; seeking on every repeat (~20/s) makes mpv stutter.
+        _scrubbed = true;
+        _scrubTo = _clamp(_scrubTo! + Duration(seconds: step));
+        _hint(
+          formatDuration(_scrubTo!),
+          icon: step > 0 ? _forwardIcon : _replayIcon,
+        );
+      } else {
+        _seekBy(step);
+        _scrubTo = _clamp(player.state.position + Duration(seconds: step));
+      }
     } else if (event is KeyDownEvent &&
         (key == LogicalKeyboardKey.select ||
             key == LogicalKeyboardKey.enter ||
@@ -510,6 +529,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (t < Duration.zero) return Duration.zero;
     return duration > Duration.zero && t > duration ? duration : t;
   }
+
+  /// Where a held left/right on the remote will seek to on release.
+  Duration? _scrubTo;
+  bool _scrubbed = false;
 
   void _seekBy(int seconds) {
     HapticFeedback.selectionClick();
