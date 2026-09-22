@@ -1099,6 +1099,28 @@ String? airingLabel(Map media) {
   return 'EP ${next!['episode']} · $when';
 }
 
+Timer? _billboardDelay;
+
+/// TV: keeps a focused poster a couple of posters in from the shelf's edge, so what's next stays in view,
+/// and shows it on the billboard once focus rests there, not for every poster the D-pad passes.
+void _focusPoster(BuildContext context, Map media) {
+  final shelf = Scrollable.maybeOf(context, axis: Axis.horizontal)?.position;
+  final card = context.findRenderObject();
+  if (shelf != null && card != null) {
+    shelf.ensureVisible(
+      card,
+      alignment: .3,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+    );
+  }
+  _billboardDelay?.cancel();
+  _billboardDelay = Timer(
+    const Duration(milliseconds: 220),
+    () => focusedMedia.value = media,
+  );
+}
+
 class PosterCard extends StatelessWidget {
   const PosterCard(
     this.media, {
@@ -1206,8 +1228,9 @@ class PosterCard extends StatelessWidget {
                   onTap: () => openDetails(context, media, onBack: onBack),
                   onLongPress: onLongPress,
                   onHighlightChanged: onHighlightChanged,
-                  onFocusChange: (focused) =>
-                      focused ? focusedMedia.value = media : null,
+                  onFocusChange: (focused) {
+                    if (focused) _focusPoster(context, media);
+                  },
                 ),
               ),
             ),
