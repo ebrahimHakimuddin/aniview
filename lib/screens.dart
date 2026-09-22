@@ -1128,88 +1128,91 @@ class PosterCard extends StatelessWidget {
       button: true,
       label: [titleOf(media), ?line].join(', '),
       excludeSemantics: true,
-      child: Stack(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AspectRatio(
-                aspectRatio: 2 / 3,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      LayoutBuilder(
-                        builder: (context, box) => _Img(
-                          media['coverImage']['extraLarge'],
-                          color: media['coverImage']['color'],
-                          decodeWidth: box.maxWidth,
-                        ),
-                      ),
-                      if (media['averageScore'] != null)
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: _Score(media['averageScore'], compact: true),
-                        ),
-                      if (airing != null)
-                        Positioned(
-                          left: 8,
-                          bottom: 10,
-                          child: _AiringBadge(airing),
-                        ),
-                      if (progress != null && total != null && total > 0)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: (progress / total)
-                                .clamp(0.0, 1.0)
-                                .toDouble(),
-                            minHeight: 4,
-                            backgroundColor: Colors.black54,
+      child: PressScale(
+        builder: (onHighlightChanged) => Stack(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AspectRatio(
+                  aspectRatio: 2 / 3,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        LayoutBuilder(
+                          builder: (context, box) => _Img(
+                            media['coverImage']['extraLarge'],
+                            color: media['coverImage']['color'],
+                            decodeWidth: box.maxWidth,
                           ),
                         ),
-                    ],
+                        if (media['averageScore'] != null)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: _Score(media['averageScore'], compact: true),
+                          ),
+                        if (airing != null)
+                          Positioned(
+                            left: 8,
+                            bottom: 10,
+                            child: _AiringBadge(airing),
+                          ),
+                        if (progress != null && total != null && total > 0)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: LinearProgressIndicator(
+                              value: (progress / total)
+                                  .clamp(0.0, 1.0)
+                                  .toDouble(),
+                              minHeight: 4,
+                              backgroundColor: Colors.black54,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                titleOf(media),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  height: 1.25,
-                ),
-              ),
-              if (line != null)
+                const SizedBox(height: 8),
                 Text(
-                  line,
-                  maxLines: 1,
+                  titleOf(media),
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.25,
+                  ),
                 ),
-            ],
-          ),
-          // On top, so the ripple shows over the artwork.
-          Positioned.fill(
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () => openDetails(context, media, onBack: onBack),
-                onLongPress: onLongPress,
-                onFocusChange: (focused) =>
-                    focused ? focusedMedia.value = media : null,
+                if (line != null)
+                  Text(
+                    line,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+              ],
+            ),
+            // On top, so the ripple shows over the artwork.
+            Positioned.fill(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => openDetails(context, media, onBack: onBack),
+                  onLongPress: onLongPress,
+                  onHighlightChanged: onHighlightChanged,
+                  onFocusChange: (focused) =>
+                      focused ? focusedMedia.value = media : null,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3188,137 +3191,140 @@ class _EpisodeTile extends StatelessWidget {
     final overview = episode.overview;
     final accent = Theme.of(context).colorScheme.primary;
     final part = watchedPart;
-    return InkWell(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              width: 128,
-              height: 72,
-              foregroundDecoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: upNext ? Border.all(color: accent, width: 2) : null,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ColoredBox(
-                      color: Colors.white.withValues(alpha: .05),
-                      child: Center(
-                        child: Text(
-                          epNumber(episode.number),
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white24,
+    return PressScale(
+      builder: (onHighlightChanged) => InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        onHighlightChanged: onHighlightChanged,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                width: 128,
+                height: 72,
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: upNext ? Border.all(color: accent, width: 2) : null,
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      ColoredBox(
+                        color: Colors.white.withValues(alpha: .05),
+                        child: Center(
+                          child: Text(
+                            epNumber(episode.number),
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white24,
+                            ),
                           ),
                         ),
                       ),
+                      if (thumbnail != null)
+                        AnimatedOpacity(
+                          opacity: watched ? .4 : 1,
+                          duration: const Duration(milliseconds: 250),
+                          child: _Img(
+                            thumbnail,
+                            transparent: true,
+                            decodeWidth: 128,
+                          ),
+                        ),
+                      if (!watched && thumbnail != null)
+                        Center(
+                          child: Icon(
+                            Icons.play_circle_fill_rounded,
+                            size: 30,
+                            color: Colors.white.withValues(alpha: .9),
+                          ),
+                        ),
+                      if (watched)
+                        const Positioned(
+                          top: 6,
+                          right: 6,
+                          child: _WatchedBadge(),
+                        ),
+                      if (part != null && !watched)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: LinearProgressIndicator(
+                            value: part,
+                            minHeight: 3,
+                            color: accent,
+                            backgroundColor: Colors.black54,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'Episode ${epNumber(episode.number)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: watched ? Colors.white54 : Colors.white,
+                            ),
+                          ),
+                        ),
+                        if (upNext) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            part != null ? 'RESUME' : 'UP NEXT',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              letterSpacing: .8,
+                              fontWeight: FontWeight.w800,
+                              color: accent,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                    if (thumbnail != null)
-                      AnimatedOpacity(
-                        opacity: watched ? .4 : 1,
-                        duration: const Duration(milliseconds: 250),
-                        child: _Img(
-                          thumbnail,
-                          transparent: true,
-                          decodeWidth: 128,
+                    if (title != null)
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: watched ? Colors.white38 : Colors.white70,
                         ),
                       ),
-                    if (!watched && thumbnail != null)
-                      Center(
-                        child: Icon(
-                          Icons.play_circle_fill_rounded,
-                          size: 30,
-                          color: Colors.white.withValues(alpha: .9),
-                        ),
-                      ),
-                    if (watched)
-                      const Positioned(
-                        top: 6,
-                        right: 6,
-                        child: _WatchedBadge(),
-                      ),
-                    if (part != null && !watched)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: LinearProgressIndicator(
-                          value: part,
-                          minHeight: 3,
-                          color: accent,
-                          backgroundColor: Colors.black54,
+                    if (overview != null)
+                      Text(
+                        overview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: watched ? Colors.white30 : Colors.white60,
+                          height: 1.3,
                         ),
                       ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          'Episode ${epNumber(episode.number)}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: watched ? Colors.white54 : Colors.white,
-                          ),
-                        ),
-                      ),
-                      if (upNext) ...[
-                        const SizedBox(width: 8),
-                        Text(
-                          part != null ? 'RESUME' : 'UP NEXT',
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            letterSpacing: .8,
-                            fontWeight: FontWeight.w800,
-                            color: accent,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  if (title != null)
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: watched ? Colors.white38 : Colors.white70,
-                      ),
-                    ),
-                  if (overview != null)
-                    Text(
-                      overview,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: watched ? Colors.white30 : Colors.white60,
-                        height: 1.3,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            ?trailing,
-          ],
+              ?trailing,
+            ],
+          ),
         ),
       ),
     );
@@ -3342,6 +3348,32 @@ class _WatchedBadge extends StatelessWidget {
         color: Theme.of(context).colorScheme.onPrimary,
       ),
     ),
+  );
+}
+
+/// Shrinks its child a touch while it's held, easing back on release or when a scroll takes the gesture.
+/// [builder] gets the callback to hand an InkWell's `onHighlightChanged`.
+class PressScale extends StatefulWidget {
+  const PressScale({super.key, required this.builder});
+
+  final Widget Function(ValueChanged<bool> onHighlightChanged) builder;
+
+  @override
+  State<PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<PressScale> {
+  bool pressed = false;
+
+  @override
+  Widget build(BuildContext context) => AnimatedScale(
+    scale: pressed && !MediaQuery.disableAnimationsOf(context) ? .97 : 1,
+    // Quick to press in, slower to settle back, like something with a little weight.
+    duration: Duration(milliseconds: pressed ? 90 : 220),
+    curve: pressed ? Curves.easeOut : Curves.easeOutBack,
+    child: widget.builder((v) {
+      if (v != pressed) setState(() => pressed = v);
+    }),
   );
 }
 
