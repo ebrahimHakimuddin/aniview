@@ -858,19 +858,46 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
       ],
     ),
     body: ReorderableListView(
-      buildDefaultDragHandles: !isTv,
+      // The handle drags straight away; the rest of the row still scrolls and toggles.
+      buildDefaultDragHandles: false,
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 32),
+      onReorderStart: (_) => HapticFeedback.selectionClick(),
       onReorderItem: (from, to) {
         sections.insert(to, sections.removeAt(from));
+        HapticFeedback.lightImpact();
         _save();
       },
+      proxyDecorator: (child, _, animation) => AnimatedBuilder(
+        animation: animation,
+        builder: (context, child) {
+          final t = Curves.easeOutCubic.transform(animation.value);
+          return Transform.scale(
+            scale: 1 + .03 * t,
+            child: Material(
+              color: Color.lerp(Colors.transparent, const Color(0xFF1E1E2A), t),
+              elevation: 12 * t,
+              shadowColor: Colors.black,
+              borderRadius: BorderRadius.circular(16),
+              child: child,
+            ),
+          );
+        },
+        child: child,
+      ),
       children: [
         for (final (i, (section, shown)) in sections.indexed)
           SwitchListTile(
             key: ValueKey(section),
             // Dragging needs touch; a remote moves rows with buttons.
             secondary: !isTv
-                ? const Icon(Icons.drag_handle_rounded)
+                ? ReorderableDragStartListener(
+                    index: i,
+                    child: const Padding(
+                      // A roomier target than the bare icon.
+                      padding: EdgeInsets.all(8),
+                      child: Icon(Icons.drag_indicator_rounded),
+                    ),
+                  )
                 : Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -881,12 +908,15 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
                         IconButton(
                           tooltip: label,
                           icon: Icon(icon),
-                          onPressed: to < 0 || to >= sections.length
-                              ? null
-                              : () {
-                                  sections.insert(to, sections.removeAt(i));
-                                  _save();
-                                },
+                          // Kept enabled at the ends: disabling the focused button would drop the remote's focus.
+                          color: to < 0 || to >= sections.length
+                              ? Colors.white24
+                              : null,
+                          onPressed: () {
+                            if (to < 0 || to >= sections.length) return;
+                            sections.insert(to, sections.removeAt(i));
+                            _save();
+                          },
                         ),
                     ],
                   ),
