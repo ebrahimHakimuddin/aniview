@@ -82,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _syncPending();
     _scheduleNotifications();
     EpisodeNotifications.listen(_openFromNotification);
+    listenTv(resume: _resumeFromLauncher);
     checkForUpdate(context, quiet: true);
   }
 
@@ -130,9 +131,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// A show picked from the TV launcher's Continue watching row: straight back into the player, or its page
+  /// when that can't happen (history cleared since, or the episode isn't reachable).
+  Future<void> _resumeFromLauncher(int id) async {
+    Analytics.event('watch_next_open', {'media_id': id});
+    final record = (await WatchHistory.all())
+        .where((r) => r['media']['id'] == id)
+        .firstOrNull;
+    if (!mounted) return;
+    if (record == null) return _openFromNotification(id);
+    Navigator.popUntil(context, (route) => route.isFirst);
+    try {
+      await resumeWatching(context, record);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) _reloadLists();
+  }
+
   /// Keeps the background new-episode check current with recently watched shows and the AniList sign-in.
   Future<void> _scheduleNotifications() async {
     final recent = await history;
+    syncWatchNext(recent);
     if (Settings.episodeNotifications &&
         (Tracker.signedIn || recent.isNotEmpty)) {
       EpisodeNotifications.requestPermission();

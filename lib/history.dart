@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'tv.dart';
+
 /// Where the user stopped in each show (newest first), kept on-device for the continue-watching buttons.
 class WatchHistory {
   static const _key = 'watch_history';
@@ -32,6 +34,7 @@ class WatchHistory {
         'position': position.inMilliseconds,
         'duration': ?duration?.inMilliseconds,
         'dub': dub,
+        'at': DateTime.now().millisecondsSinceEpoch,
       },
       ...(await all()).where((r) => r['media']['id'] != media['id']),
     ];
@@ -44,9 +47,11 @@ class WatchHistory {
 
   static Future<void> clear() => _write(const []);
 
-  static Future<void> _write(List<Map> entries) async =>
-      (await SharedPreferences.getInstance()).setString(
-        _key,
-        jsonEncode(entries),
-      );
+  static Future<void> _write(List<Map<String, dynamic>> entries) async {
+    await (await SharedPreferences.getInstance()).setString(
+      _key,
+      jsonEncode(entries),
+    );
+    syncWatchNext(entries);
+  }
 }

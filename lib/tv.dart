@@ -14,6 +14,46 @@ Future<void> detectTv() async {
   } catch (_) {} // not on Android
 }
 
+const _tv = MethodChannel('aniview/tv');
+
+/// Resumes a show (by AniList id) picked from the TV launcher's Continue watching row, whether it launched the
+/// app or came while it runs.
+Future<void> listenTv({required void Function(int id) resume}) async {
+  _tv.setMethodCallHandler((call) async {
+    if (call.method == 'resume') resume(call.arguments as int);
+  });
+  try {
+    final launched = await _tv.invokeMethod<int>('launchResume');
+    if (launched != null) resume(launched);
+  } catch (_) {} // not on Android
+}
+
+/// Mirrors watch history (newest first) into the TV launcher's Continue watching row.
+Future<void> syncWatchNext(List<Map<String, dynamic>> history) async {
+  if (!isTv) return;
+  final now = DateTime.now().millisecondsSinceEpoch;
+  try {
+    await _tv.invokeMethod('watchNext', [
+      for (final (i, r) in history.take(10).indexed)
+        if (r['media']['id'] is int)
+          {
+            'id': r['media']['id'],
+            'title':
+                r['media']['title']['userPreferred'] ??
+                r['media']['title']['romaji'] ??
+                r['media']['title']['english'] ??
+                '',
+            'episode': '${r['episode']}',
+            'image': r['media']['coverImage']?['extraLarge'],
+            'position': r['position'],
+            'duration': r['duration'],
+            // Entries saved before this was recorded keep their order.
+            'at': r['at'] ?? now - i * 60000,
+          },
+    ]);
+  } catch (_) {} // not on Android
+}
+
 /// The show whose poster has D-pad focus, for the TV home billboard.
 final focusedMedia = ValueNotifier<Map?>(null);
 

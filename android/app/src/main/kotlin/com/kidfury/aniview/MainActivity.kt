@@ -22,12 +22,15 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var notifications: MethodChannel? = null
     private var externalResult: MethodChannel.Result? = null
+    private var tv: MethodChannel? = null
 
-    /** A new-episode notification tapped while the app is already running. */
+    /** A new-episode notification, or a show in the TV launcher's Continue watching row, opened while the app runs. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val id = intent.getIntExtra(EpisodeJob.EXTRA_MEDIA_ID, 0)
         if (id != 0) notifications?.invokeMethod("open", id)
+        val resume = intent.getIntExtra(WatchNext.EXTRA_RESUME_ID, 0)
+        if (resume != 0) tv?.invokeMethod("resume", resume)
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -79,6 +82,25 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        tv = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/tv").apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "watchNext" -> Thread {
+                        try {
+                            WatchNext.sync(this@MainActivity, call.arguments as List<*>)
+                        } catch (_: Exception) {} // no TV provider on this device
+                        runOnUiThread { result.success(null) }
+                    }.start()
+                    // The show of the Continue watching card that launched the app, handed out once.
+                    "launchResume" -> {
+                        val id = intent.getIntExtra(WatchNext.EXTRA_RESUME_ID, 0)
+                        intent.removeExtra(WatchNext.EXTRA_RESUME_ID)
+                        result.success(if (id == 0) null else id)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
         notifications = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/notifications").apply {
             setMethodCallHandler { call, result ->
                 when (call.method) {
