@@ -425,9 +425,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _checkWatched(Duration position, Duration duration) {
     if (!synced &&
         current != null &&
-        duration > Duration.zero &&
-        position.inMilliseconds >
-            duration.inMilliseconds * Settings.watchedPercent / 100) {
+        WatchHistory.finished(position, duration)) {
       synced = true;
       Analytics.event('episode_watched', {
         'media_id': widget.media['id'],
@@ -458,23 +456,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _saveHistory([Duration? position, Duration? duration]) {
     position ??= player.state.position;
     duration ??= player.state.duration;
-    if (current == null || position < const Duration(seconds: 5)) return;
-    final finished =
-        duration > Duration.zero &&
-        position.inMilliseconds >
-            duration.inMilliseconds * Settings.watchedPercent / 100;
-    if (finished && !hasNext) {
-      WatchHistory.remove(widget.media);
-    } else {
-      WatchHistory.save(
-        widget.media,
-        source: _sourceName,
-        episode: finished ? widget.episodes[index + 1].number : episode.number,
-        position: finished ? Duration.zero : position,
-        duration: finished ? null : duration,
-        dub: widget.dub,
-      );
-    }
+    if (current == null) return;
+    WatchHistory.played(
+      widget.media,
+      source: _sourceName,
+      episodes: widget.episodes,
+      index: index,
+      position: position,
+      duration: duration,
+      dub: widget.dub,
+    );
   }
 
   Future<void> _syncProgress() async {

@@ -2487,8 +2487,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
         future: episodes,
         builder: (context, snap) {
           final list = snap.data;
-          final next = list?.indexWhere((e) => e.number > progress) ?? -1;
-          if (list == null || next == -1) return const SizedBox.shrink();
+          final upNext = list == null
+              ? null
+              : EpisodePlan(list, progress: progress).upNext;
+          if (list == null || upNext == null) return const SizedBox.shrink();
+          final next = list.indexOf(upNext);
           final current = source!;
           return ContinueFab(
             title: progress == 0
@@ -2581,30 +2584,36 @@ class _DetailsScreenState extends State<DetailsScreen> {
             for (final e in list)
               if (Downloads.instance.find(media, e.number) != null) e,
           ];
-    final ordered = [...list]
-      ..sort(
-        (a, b) => newestFirst
-            ? b.number.compareTo(a.number)
-            : a.number.compareTo(b.number),
-      );
-    final pages = [
-      for (var i = 0; i < ordered.length; i += _pageSize)
-        ordered.skip(i).take(_pageSize).toList(),
-    ];
-    final upcoming = ordered
-        .where((e) => e.number > progress)
-        .fold<Episode?>(
-          null,
-          (low, e) => low == null || e.number < low.number ? e : low,
-        );
-    final nextUp = pages.indexWhere((p) => p.contains(upcoming));
-    final current = pages.isEmpty
-        ? 0
-        : (page ?? (nextUp == -1 ? 0 : nextUp)).clamp(0, pages.length - 1);
-    final shown = pages.isEmpty ? const <Episode>[] : pages[current];
+    return FutureBuilder(
+      future: record,
+      builder: (context, saved) => _episodePage(
+        list,
+        playable,
+        site,
+        EpisodePlan(
+          list,
+          progress: progress,
+          record: saved.data,
+          newestFirst: newestFirst,
+          page: page,
+          pageSize: _pageSize,
+        ),
+      ),
+    );
+  }
+
+  Widget _episodePage(
+    List<Episode> list,
+    List<Episode> playable,
+    Source? site,
+    EpisodePlan plan,
+  ) {
+    final pages = plan.pages;
+    final current = plan.page;
+    final shown = plan.shown;
     return SliverMainAxisGroup(
       slivers: [
-        if (!Settings.episodeTipSeen && ordered.isNotEmpty)
+        if (!Settings.episodeTipSeen && list.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
@@ -2637,7 +2646,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
             ),
           ),
-        if (ordered.length > 1)
+        if (list.length > 1)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 0, 4),
@@ -2677,93 +2686,77 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
             ),
           ),
-        FutureBuilder(
-          future: record,
-          builder: (context, resume) => SliverList.builder(
-            itemCount: shown.length,
-            itemBuilder: (context, i) {
-              final episode = shown[i];
-              final watched = episode.number <= progress;
-              final saved = site != null || playable.contains(episode);
-              return _EpisodeTile(
+        SliverList.builder(
+          itemCount: shown.length,
+          itemBuilder: (context, i) {
+            final episode = shown[i];
+            final watched = plan.watched(episode);
+            final saved = site != null || playable.contains(episode);
+            return _EpisodeTile(
+              episode,
+              watched: watched,
+              upNext: episode == plan.upNext,
+              watchedPart: plan.resumedPart(episode),
+              onLongPress: () => _episodeActions(
                 episode,
                 watched: watched,
-                upNext: episode == upcoming,
-                watchedPart: _resumedPart(resume.data, episode),
-                onLongPress: () => _episodeActions(
-                  episode,
-                  watched: watched,
-                  site: site,
-                  season: list,
-                ),
-                trailing: site == null
-                    ? saved
-                          ? const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: Icon(
-                                Icons.download_done_rounded,
-                                color: Colors.white54,
-                              ),
-                            )
-                          : null
-                    : _DownloadButton(
-                        media: media,
-                        source: site,
-                        episode: episode,
-                        season: list,
-                        dub: dub,
-                      ),
-                onTap: () async {
-                  if (!saved) {
-                    showError(
-                      context,
-                      "Episode ${epNumber(episode.number)} isn't downloaded",
-                    );
-                    return;
-                  }
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => PlayerScreen(
-                        media: media,
-                        source: site,
-                        sourceName:
-                            site?.name ??
-                            Downloads.instance
-                                .forMedia(media)
-                                .firstOrNull
-                                ?.source,
-                        episodes: playable,
-                        index: playable.indexOf(episode),
-                        dub: dub,
-                      ),
+                site: site,
+                season: list,
+              ),
+              trailing: site == null
+                  ? saved
+                        ? const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Icon(
+                              Icons.download_done_rounded,
+                              color: Colors.white54,
+                            ),
+                          )
+                        : null
+                  : _DownloadButton(
+                      media: media,
+                      source: site,
+                      episode: episode,
+                      season: list,
+                      dub: dub,
                     ),
+              onTap: () async {
+                if (!saved) {
+                  showError(
+                    context,
+                    "Episode ${epNumber(episode.number)} isn't downloaded",
                   );
-                  if (mounted) {
-                    setState(
-                      () => record = WatchHistory.of(media),
-                    ); // progress and resume point changed
-                  }
-                },
-              );
-            },
-          ),
+                  return;
+                }
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PlayerScreen(
+                      media: media,
+                      source: site,
+                      sourceName:
+                          site?.name ??
+                          Downloads.instance
+                              .forMedia(media)
+                              .firstOrNull
+                              ?.source,
+                      episodes: playable,
+                      index: playable.indexOf(episode),
+                      dub: dub,
+                    ),
+                  ),
+                );
+                if (mounted) {
+                  setState(
+                    () => record = WatchHistory.of(media),
+                  ); // progress and resume point changed
+                }
+              },
+            );
+          },
         ),
       ],
     );
-  }
-
-  /// How far into [episode] the saved resume point in [record] is, 0–1; null without one.
-  static double? _resumedPart(Map<String, dynamic>? record, Episode episode) {
-    final position = record?['position'] as int?;
-    final duration = record?['duration'] as int?;
-    if (record?['episode'] != episode.number ||
-        position == null ||
-        duration == null ||
-        duration <= 0) {
-      return null;
-    }
-    return (position / duration).clamp(0.0, 1.0);
   }
 
   /// Downloaded episodes, shown when the site can't be reached.
