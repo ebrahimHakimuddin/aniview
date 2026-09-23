@@ -20,6 +20,7 @@ import 'states.dart';
 import 'tracker.dart';
 import 'tv.dart';
 import 'platform.dart';
+import 'playback.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -53,17 +54,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final player = Player();
   late final controller = VideoController(player);
   final _scaffold = GlobalKey<ScaffoldState>();
-  late int index = widget.index;
-  List<VideoStream> streams = [];
-  VideoStream? current;
-  List<SkipTime> skips = [];
-  final _autoSkipped = <SkipTime>{};
+  late final session = PlaybackSession(widget.episodes, widget.index);
   int? _skipsRequested;
   String subtitle = 'Auto';
   Object? error;
   String? hint;
   IconData? hintIcon;
-  bool controls = true, locked = false, synced = false, upNextDismissed = false;
+  bool controls = true, locked = false;
 
   /// Fit, fill (crop) or stretch.
   BoxFit fit = BoxFit.contain;
@@ -73,13 +70,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Duration? seekTarget;
   Duration? _startAt; // where the current server was asked to start
   Timer? _hideTimer, _hintTimer;
-  Duration _savedAt = Duration.zero;
   late final List<StreamSubscription> _subs;
   final _playFocus = FocusNode();
   final _keys = FocusNode(debugLabel: 'player keys');
 
-  Episode get episode => widget.episodes[index];
-  bool get hasNext => index + 1 < widget.episodes.length;
+  int get index => session.index;
+  List<VideoStream> get streams => session.streams;
+  VideoStream? get current => session.current;
+  List<SkipTime> get skips => session.skips;
+  Episode get episode => session.episode;
+  bool get hasNext => session.hasNext;
   String get _sourceName =>
       widget.sourceName ?? widget.source?.name ?? 'Downloads';
 
@@ -107,19 +107,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
           return;
         }
         // Aggregated sources often list dead servers; move on before giving up.
-        final next = streams.indexOf(current!) + 1;
-        if (next > 0 && next < streams.length) {
+        if (session.fallback() case final next?) {
           _hint(
-            '${current!.label} failed · trying ${streams[next].label}',
+            '${current!.label} failed · trying ${next.label}',
             icon: Icons.dns_rounded,
           );
-          _play(streams[next], at: _startAt);
+          _play(next, at: _startAt);
         } else {
           setState(() => error = Exception(e));
         }
       }),
       player.stream.completed.listen((done) {
-        if (done && hasNext && Settings.autoNext && !upNextDismissed) {
+        if (done && session.advancesOnFinish) {
           _load(index + 1);
         }
       }),
@@ -134,10 +133,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!isTv || !mounted) return false;
     // Releasing a held left/right lands the scrub with one seek.
     if (event is KeyUpEvent) {
-      final to = _scrubTo;
-      _scrubTo = null;
-      if (to != null && _scrubbed) player.seek(to);
-      _scrubbed = false;
+      if (session.release() case final to?) player.seek(to);
       return false;
     }
     // Leave keys alone while a menu, dialog or the episode list is open, or for the error's buttons.
@@ -166,17 +162,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } else if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowRight) {
       final step = key == LogicalKeyboardKey.arrowLeft ? -seek : seek;
-      if (event is KeyRepeatEvent && _scrubTo != null) {
-        // Held: move the target only; seeking on every repeat (~20/s) makes mpv stutter.
-        _scrubbed = true;
-        _scrubTo = _clamp(_scrubTo! + Duration(seconds: step));
+      final held = event is KeyRepeatEvent
+          ? session.hold(player.state.duration, step)
+          : null;
+      if (held != null) {
         _hint(
-          formatDuration(_scrubTo!),
+          formatDuration(held),
           icon: step > 0 ? _forwardIcon : _replayIcon,
         );
       } else {
         _seekBy(step);
-        _scrubTo = _clamp(player.state.position + Duration(seconds: step));
       }
     } else if (event is KeyDownEvent &&
         (key == LogicalKeyboardKey.select ||
@@ -184,20 +179,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
             key == LogicalKeyboardKey.arrowUp ||
             key == LogicalKeyboardKey.arrowDown)) {
       if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.enter) {
-        // OK takes the on-screen skip or up-next offer, when there is one.
-        final position = player.state.position;
-        final skip = Settings.skipMode == SkipMode.button
-            ? _activeSkip(position)
-            : null;
-        if (_upNext(position) != null) {
-          _load(index + 1);
-          return true;
+        switch (error == null
+            ? session.ok(player.state.position, player.state.duration)
+            : PlayPause()) {
+          case PlayNext():
+            _load(index + 1);
+            return true;
+          case SkipTo(:final position):
+            player.seek(position);
+            return true;
+          case PlayPause():
+            player.playOrPause();
         }
-        if (skip != null) {
-          player.seek(skip.end);
-          return true;
-        }
-        player.playOrPause();
       }
       setState(() {
         controls = true;
@@ -237,14 +230,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _load(int i, {Duration? at}) async {
     _saveHistory(); // where the outgoing episode stopped, before index moves on
     setState(() {
-      index = i;
-      streams = [];
-      current = null;
+      session.start(i);
       error = null;
-      synced = false;
-      upNextDismissed = false;
-      skips = [];
-      _autoSkipped.clear();
       _skipsRequested = null;
     });
     // The previous episode keeps emitting its (near-end) position while servers load, which would count the new one as watched.
@@ -278,7 +265,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           'No ${widget.dub ? 'dub' : 'sub'} servers for this episode on $_sourceName',
         );
       }
-      streams = found;
+      session.streams = found;
       Analytics.event('episode_play', {
         'media_id': widget.media['id'],
         'episode': target.number,
@@ -302,10 +289,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _play(VideoStream stream, {Duration? at}) async {
     _startAt = at;
-    setState(() {
-      current = stream;
-      if (skips.isEmpty) skips = stream.skips;
-    });
+    setState(() => session.playing(stream));
     await player.open(
       // HLS goes through the local proxy; direct files (mp4) get their headers from mpv itself.
       Media(
@@ -330,7 +314,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that
   /// position (zero when the app doesn't report it), or null when no app can play it.
   Future<Duration?> _playExternal(VideoStream stream, {Duration? at}) async {
-    setState(() => current = stream);
+    setState(() => session.current = stream);
     // Other apps can't send the stream's headers or read app storage, so both go through the local proxy.
     final dir = stream.isLocal ? File(stream.url).parent.path : null;
     Future<String> address(String url) => dir != null
@@ -407,25 +391,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _onPosition(Duration position) {
     _checkWatched(position, player.state.duration);
-    if (Settings.skipMode == SkipMode.auto) {
-      final skip = _activeSkip(position);
-      if (skip != null && _autoSkipped.add(skip)) {
-        player.seek(skip.end);
-        _hint('Skipped ${_skipName(skip.type)}');
-      }
+    if (session.autoSkip(position) case final skip?) {
+      player.seek(skip.end);
+      _hint('Skipped ${_skipName(skip.type)}');
     }
-    if ((position - _savedAt).abs() >= const Duration(seconds: 10)) {
-      _savedAt = position;
-      _saveHistory();
-    }
+    if (session.dueForSave(position)) _saveHistory();
     _refresh();
   }
 
   void _checkWatched(Duration position, Duration duration) {
-    if (!synced &&
-        current != null &&
-        WatchHistory.finished(position, duration)) {
-      synced = true;
+    if (session.reachedWatched(position, duration)) {
       Analytics.event('episode_watched', {
         'media_id': widget.media['id'],
         'episode': episode.number,
@@ -444,13 +419,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final requested = _skipsRequested = index;
     aniSkip(widget.media['idMal'], episode.number, duration).then((found) {
       if (mounted && index == requested && found.isNotEmpty) {
-        setState(() => skips = found);
+        setState(() => session.skips = found);
       }
     });
   }
-
-  SkipTime? _activeSkip(Duration position) =>
-      skips.where((s) => s.contains(position)).firstOrNull;
 
   void _saveHistory([Duration? position, Duration? duration]) {
     position ??= player.state.position;
@@ -512,19 +484,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  Duration _clamp(Duration t) {
-    final duration = player.state.duration;
-    if (t < Duration.zero) return Duration.zero;
-    return duration > Duration.zero && t > duration ? duration : t;
-  }
-
-  /// Where a held left/right on the remote will seek to on release.
-  Duration? _scrubTo;
-  bool _scrubbed = false;
+  Duration _clamp(Duration t) =>
+      PlaybackSession.clamp(t, player.state.duration);
 
   void _seekBy(int seconds) {
     HapticFeedback.selectionClick();
-    player.seek(_clamp(player.state.position + Duration(seconds: seconds)));
+    player.seek(
+      session.press(player.state.position, player.state.duration, seconds),
+    );
     _hint(seconds > 0 ? '+${seconds}s' : '${seconds}s');
   }
 
@@ -590,9 +557,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _player(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final position = player.state.position;
-    final skip = Settings.skipMode == SkipMode.button
-        ? _activeSkip(position)
-        : null;
+    final skip = session.skipButton(position);
     final loading =
         error == null && (current == null || player.state.buffering);
     final swipes = !locked && Settings.swipeGestures;
@@ -809,17 +774,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Offers the next episode during the outro or the last 20 seconds; cancelling also stops auto-play.
   Widget? _upNext(Duration position) {
-    final duration = player.state.duration;
-    if (!hasNext || upNextDismissed || error != null) return null;
-    if (duration <= Duration.zero) return null;
-    final remaining = duration - position;
-    final inOutro = skips.any(
-      (s) => s.type == SkipType.outro && s.contains(position),
-    );
-    if (!inOutro && remaining > const Duration(seconds: 20)) return null;
-    final next = widget.episodes[index + 1];
-    final countdown =
-        Settings.autoNext && remaining <= const Duration(seconds: 20);
+    if (error != null) return null;
+    final offer = session.upNext(position, player.state.duration);
+    if (offer == null) return null;
+    final (:next, :remaining, :countdown) = offer;
     return Container(
       width: 300,
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
@@ -852,7 +810,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton(
-                onPressed: () => setState(() => upNextDismissed = true),
+                onPressed: () => setState(() => session.upNextDismissed = true),
                 child: const Text('Cancel'),
               ),
               const SizedBox(width: 4),
@@ -890,7 +848,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _overlay(Duration position, bool loading) {
     final skip = Settings.skipMode == SkipMode.off
         ? null
-        : _activeSkip(position);
+        : session.activeSkip(position);
     final duration = player.state.duration;
     final shown = seekTarget ?? position;
     final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);

@@ -8,6 +8,9 @@ drop a finished show). Distinct from **tracked progress**, the episode count on 
 **Episode plan** (`EpisodePlan`): a show's episode list as the details page shows it: pages, the page it opens on,
 the **up next** episode (lowest-numbered one not yet watched), and each episode's watched state and resume point.
 
+**Playback session** (`lib/playback.dart`, `PlaybackSession`): the player's decisions about the episode playing,
+apart from painting it: server fallback, when it counts as watched, when to save the spot, which skip applies,
+when to offer or start the next episode (**up next**), what OK on a TV remote does, and where a held seek lands.
 
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order. A
 **source** is one site's adapter (Anikoto, animepahe, Re:Anime, Miruro); history and downloads remember it by name.
