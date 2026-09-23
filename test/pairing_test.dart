@@ -1,5 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:aniview/pairing.dart';
+import 'package:aniview/settings.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('phone and TV derive the same code and key, and only that key opens the token', () {
@@ -15,4 +21,64 @@ void main() {
     expect(spoofed.code, isNot(b.code));
     expect(() => unseal(b.key, seal(spoofed.key, 'token')), throwsA(anything));
   });
+
+  test(
+    'a TV pairs a remote only while waiting, and refuses strangers and replays',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      HttpOverrides.global = null; // the binding fakes every request otherwise
+      SharedPreferences.setMockInitialValues({});
+      await Settings.load();
+      await TvLink.start();
+      final base = 'http://127.0.0.1:${TvLink.address!.split(':').last}';
+      Future<http.Response> post(String path, Map body) =>
+          http.post(Uri.parse('$base$path'), body: jsonEncode(body));
+
+      final phone = PairKeys();
+      expect(
+        (await post('/pair', {
+          'pub': base64.encode(phone.publicKey),
+        })).statusCode,
+        HttpStatus.forbidden, // no pairing screen open on the TV
+      );
+
+      final paired = TvLink.pair();
+      final tv = jsonDecode(
+        (await post('/pair', {'pub': base64.encode(phone.publicKey)})).body,
+      );
+      final key = phone.agree(base64.decode(tv['pub'])).key;
+      expect(TvLink.code.value, isNotNull);
+      final res = await post('/remote', {
+        'data': base64.encode(seal(key, jsonEncode({'token': 'abc'}))),
+      });
+      expect(res.statusCode, 200);
+      expect(await paired, 'abc'); // the phone's sign-in rides along
+      expect(Settings.remoteKeys, [base64.encode(key)]);
+
+      // Nothing has focus here, so typing is turned away, but only after the press was let in.
+      final press = {
+        'id': remoteKeyId(key),
+        'data': base64.encode(
+          seal(
+            key,
+            jsonEncode({
+              'text': 'a',
+              't': DateTime.now().millisecondsSinceEpoch,
+            }),
+          ),
+        ),
+      };
+      expect((await post('/key', press)).statusCode, HttpStatus.conflict);
+      expect((await post('/key', press)).statusCode, HttpStatus.badRequest);
+
+      final stranger = PairKeys().agree(PairKeys().publicKey).key;
+      expect(
+        (await post('/key', {
+          ...press,
+          'id': remoteKeyId(stranger),
+        })).statusCode,
+        HttpStatus.forbidden,
+      );
+    },
+  );
 }

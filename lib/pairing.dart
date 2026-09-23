@@ -6,13 +6,16 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:pointycastle/export.dart' hide State;
+import 'package:pointycastle/export.dart' hide Padding, State;
 
 import 'anilist.dart';
+import 'settings.dart';
 import 'states.dart';
 import 'platform.dart';
+import 'tv.dart';
 
-/// Signing a TV in from a phone that's already signed in, over the local network.
+/// Pairing a phone with a TV over the local network: one pairing makes the phone a remote and, when the phone
+/// is signed in and the TV isn't, signs the TV in to the same AniList account.
 ///
 /// The phone finds the TV with a UDP broadcast (or the address typed from the TV screen), then the two run an
 /// ECDH key exchange over HTTP. Both show a 6-digit code derived from the shared secret; the user checks they
@@ -94,30 +97,23 @@ String unseal(Uint8List key, Uint8List sealed) => utf8.decode(
 
 // ───────────────────────────── TV side ─────────────────────────────
 
-/// Waits for a phone to sign this TV in; pops with the AniList token. "Sign in on this TV" pops with
-/// [signInHere] to fall back to the web sign-in.
-class TvPairScreen extends StatefulWidget {
-  const TvPairScreen({super.key});
+/// The TV's end of the Wi-Fi link to phones, running while the app is open on a TV. It answers phones looking
+/// for a TV, pairs with one while [TvPairScreen] is open, and presses the keys that paired remotes send.
+class TvLink {
+  static HttpServer? _server;
 
-  static const signInHere = '';
+  /// "192.168.1.20:40123", for typing into a phone that can't find the TV.
+  static String? address;
 
-  @override
-  State<TvPairScreen> createState() => _TvPairScreenState();
-}
+  /// The code to compare with the phone's, once one has started pairing.
+  static final code = ValueNotifier<String?>(null);
 
-class _TvPairScreenState extends State<TvPairScreen> {
-  HttpServer? _server;
-  RawDatagramSocket? _discovery;
-  String? address, code;
-  ({String code, Uint8List key})? _agreed;
+  static ({String code, Uint8List key})? _agreed;
+  static Completer<String?>? _paired; // while a pairing screen is open
+  static final _lastPress = <String, int>{};
 
-  @override
-  void initState() {
-    super.initState();
-    _start();
-  }
-
-  Future<void> _start() async {
+  static Future<void> start() async {
+    if (_server != null) return;
     try {
       final server = _server = await HttpServer.bind(
         InternetAddress.anyIPv4,
@@ -128,12 +124,10 @@ class _TvPairScreenState extends State<TvPairScreen> {
           .expand((i) => i.addresses)
           .where((a) => !a.isLoopback)
           .firstOrNull;
+      address = '${ip?.address ?? '?'}:${server.port}';
       final device = await AndroidApp.device().catchError((Object _) => null);
-      if (mounted) {
-        setState(() => address = '${ip?.address ?? '?'}:${server.port}');
-      }
       // Answer phones looking for a TV; without it (port taken, broadcasts blocked) the address still works.
-      final discovery = _discovery = await RawDatagramSocket.bind(
+      final discovery = await RawDatagramSocket.bind(
         InternetAddress.anyIPv4,
         _discoveryPort,
       );
@@ -146,6 +140,7 @@ class _TvPairScreenState extends State<TvPairScreen> {
             jsonEncode({
               'name': device?.split('; ').last ?? 'Android TV',
               'port': server.port,
+              'id': Settings.installId,
             }),
           ),
           packet.address,
@@ -155,87 +150,168 @@ class _TvPairScreenState extends State<TvPairScreen> {
     } catch (_) {}
   }
 
-  Future<void> _handle(HttpRequest request) async {
+  /// Waits for a phone to pair as a remote; completes with its AniList token, or null when it isn't signed in.
+  /// Phones can only pair while this is waiting.
+  static Future<String?> pair() {
+    stopPairing();
+    return (_paired = Completer()).future;
+  }
+
+  static void stopPairing() {
+    _agreed = null;
+    _paired = null;
+    code.value = null;
+  }
+
+  static Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     try {
       final body = jsonDecode(await utf8.decodeStream(request)) as Map;
+      final agreed = _agreed;
       switch (request.uri.path) {
-        case '/pair': // a new attempt replaces any earlier one
+        case '/pair'
+            when _paired != null: // a new attempt replaces any earlier one
           final keys = PairKeys();
           final agreed = _agreed = keys.agree(base64.decode(body['pub']));
-          if (mounted) setState(() => code = agreed.code);
+          code.value = agreed.code;
           response.write(jsonEncode({'pub': base64.encode(keys.publicKey)}));
-        case '/token':
-          final token = unseal(_agreed!.key, base64.decode(body['data']));
-          await response.close();
-          if (mounted) Navigator.pop(context, token);
-          return;
+        case '/remote' when _paired != null && agreed != null:
+          // Opening it proves the phone holds the key the codes vouched for.
+          final sent = jsonDecode(
+            unseal(agreed.key, base64.decode(body['data'])),
+          ) as Map;
+          Settings.remoteKeys = [
+            ...Settings.remoteKeys,
+            base64.encode(agreed.key),
+          ];
+          response.write(jsonEncode({'id': Settings.installId}));
+          _paired?.complete(sent['token'] as String?);
+          stopPairing();
+        case '/key':
+          final key = Settings.remoteKeys
+              .map(base64.decode)
+              .where((k) => remoteKeyId(k) == body['id'])
+              .firstOrNull;
+          if (key == null) {
+            response.statusCode = HttpStatus.forbidden;
+            break;
+          }
+          final press =
+              jsonDecode(unseal(key, base64.decode(body['data']))) as Map;
+          // Each press is sent once: a replayed or stale one is refused.
+          final at = press['t'] as int;
+          final now = DateTime.now().millisecondsSinceEpoch;
+          if (at <= (_lastPress[body['id']] ?? 0) ||
+              (now - at).abs() > const Duration(minutes: 5).inMilliseconds) {
+            throw const FormatException();
+          }
+          _lastPress[body['id']] = at;
+          if (press['text'] case final String text) {
+            if (!typeText(text)) response.statusCode = HttpStatus.conflict;
+          } else {
+            final key = press['k'] as String;
+            if (key != 'back' && !remoteKeys.containsKey(key)) {
+              throw const FormatException();
+            }
+            await pressKey(key, hold: press['hold'] == true);
+          }
         default:
-          response.statusCode = HttpStatus.notFound;
+          response.statusCode = HttpStatus.forbidden;
       }
     } catch (_) {
       response.statusCode = HttpStatus.badRequest;
     }
     await response.close();
   }
+}
+
+/// Names a remote's key without giving it away.
+String remoteKeyId(Uint8List key) =>
+    base64Url.encode(_sha256('id', key).sublist(0, 9));
+
+/// Waits for a phone to pair as a remote, which also signs this TV in when the phone is signed in and the TV
+/// isn't. "Sign in on this TV" pops with [signInHere] to fall back to the web sign-in.
+class TvPairScreen extends StatefulWidget {
+  const TvPairScreen({super.key});
+
+  static const signInHere = '';
+
+  @override
+  State<TvPairScreen> createState() => _TvPairScreenState();
+}
+
+class _TvPairScreenState extends State<TvPairScreen> {
+  @override
+  void initState() {
+    super.initState();
+    TvLink.pair().then((token) async {
+      final signIn = token != null && AniList.token == null;
+      if (signIn) await AniList.useToken(token);
+      if (!mounted) return;
+      showSuccess(
+        context,
+        signIn
+            ? 'Paired, and signed in with your phone'
+            : 'Your phone is now a remote',
+      );
+      Navigator.pop(context);
+    });
+  }
 
   @override
   void dispose() {
-    _server?.close(force: true);
-    _discovery?.close();
+    TvLink.stopPairing();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
+    final paired = Settings.remoteKeys.length;
+    final signedIn = AniList.token != null;
     return Scaffold(
-      appBar: AppBar(title: const Text('Sign in with AniList')),
+      appBar: AppBar(title: const Text('Pair your phone')),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.phonelink_rounded, size: 56, color: primary),
+              Icon(
+                Icons.phonelink_rounded,
+                size: 56,
+                color: Theme.of(context).colorScheme.primary,
+              ),
               const SizedBox(height: 16),
               const Text(
-                'Sign in with your phone',
+                'Pair your phone',
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'On a phone signed in to AniView, on the same Wi-Fi, open\nSettings → Sign in a TV',
+              Text(
+                'On your phone, on the same Wi-Fi, open AniView and go to\nSettings → TV remote.'
+                '${signedIn ? '' : ' It becomes a remote and signs this TV in.'}',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, height: 1.5),
+                style: const TextStyle(color: Colors.white70, height: 1.5),
               ),
               const SizedBox(height: 24),
-              if (code != null) ...[
-                const Text('Check that your phone shows'),
+              const _PairingCode(),
+              if (!signedIn) ...[
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () =>
+                      Navigator.pop(context, TvPairScreen.signInHere),
+                  child: const Text('Sign in on this TV instead'),
+                ),
+              ],
+              if (paired > 0) ...[
                 const SizedBox(height: 8),
-                Text(
-                  code!,
-                  style: TextStyle(
-                    fontSize: 44,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 6,
-                    color: primary,
+                TextButton(
+                  onPressed: () => setState(() => Settings.remoteKeys = []),
+                  child: Text(
+                    'Unpair ${paired == 1 ? 'the paired phone' : 'all $paired paired phones'}',
                   ),
                 ),
-              ] else
-                const CircularProgressIndicator(),
-              const SizedBox(height: 24),
-              if (address != null)
-                Text(
-                  "Phone can't find this TV? Enter $address",
-                  style: const TextStyle(fontSize: 13, color: Colors.white54),
-                ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: () =>
-                    Navigator.pop(context, TvPairScreen.signInHere),
-                child: const Text('Sign in on this TV instead'),
-              ),
+              ],
             ],
           ),
         ),
@@ -244,38 +320,49 @@ class _TvPairScreenState extends State<TvPairScreen> {
   }
 }
 
-// ───────────────────────────── Phone side ─────────────────────────────
-
-/// Finds TVs waiting to be signed in and sends them this phone's AniList sign-in.
-class PhonePairScreen extends StatefulWidget {
-  const PhonePairScreen({super.key});
+/// The pairing code once a phone has started, and the address to type when it can't find the TV.
+class _PairingCode extends StatelessWidget {
+  const _PairingCode();
 
   @override
-  State<PhonePairScreen> createState() => _PhonePairScreenState();
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: TvLink.code,
+    builder: (context, code, _) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (code != null) ...[
+          const Text('Check that your phone shows'),
+          const SizedBox(height: 8),
+          Text(
+            code,
+            style: TextStyle(
+              fontSize: 44,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 6,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ] else
+          const CircularProgressIndicator(),
+        const SizedBox(height: 24),
+        if (TvLink.address case final address?)
+          Text(
+            "Phone can't find this TV? Enter $address",
+            style: const TextStyle(fontSize: 13, color: Colors.white54),
+          ),
+      ],
+    ),
+  );
 }
 
-class _PhonePairScreenState extends State<PhonePairScreen> {
-  final found = <String, String>{}; // "host:port" → TV name
-  final manual = TextEditingController();
-  bool scanning = false, sending = false;
+// ───────────────────────────── Phone side ─────────────────────────────
 
-  @override
-  void initState() {
-    super.initState();
-    _scan();
-  }
+typedef FoundTv = ({String address, String name, String? id});
 
-  @override
-  void dispose() {
-    manual.dispose();
-    super.dispose();
-  }
-
-  Future<void> _scan() async {
-    setState(() {
-      scanning = true;
-      found.clear();
-    });
+/// TVs with AniView open on this network, as they answer a broadcast.
+Stream<FoundTv> findTvs() {
+  final found = StreamController<FoundTv>();
+  () async {
     try {
       final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0)
         ..broadcastEnabled = true;
@@ -284,12 +371,11 @@ class _PhonePairScreenState extends State<PhonePairScreen> {
         if (event != RawSocketEvent.read || packet == null) return;
         try {
           final reply = jsonDecode(utf8.decode(packet.data)) as Map;
-          if (mounted) {
-            setState(
-              () => found['${packet.address.address}:${reply['port']}'] =
-                  reply['name'] as String,
-            );
-          }
+          found.add((
+            address: '${packet.address.address}:${reply['port']}',
+            name: reply['name'] as String,
+            id: reply['id'] as String?,
+          ));
         } catch (_) {} // not a TV's answer
       });
       for (var i = 0; i < 3; i++) {
@@ -302,128 +388,404 @@ class _PhonePairScreenState extends State<PhonePairScreen> {
       }
       socket.close();
     } catch (_) {}
-    if (mounted) setState(() => scanning = false);
-  }
+    await found.close();
+  }();
+  return found.stream;
+}
 
-  Future<void> _pair(String address) async {
-    final token = AniList.token;
-    if (token == null) return;
-    setState(() => sending = true);
-    try {
-      final base = 'http://${address.trim()}';
-      final keys = PairKeys();
-      final res = await http
-          .post(
-            Uri.parse('$base/pair'),
-            body: jsonEncode({'pub': base64.encode(keys.publicKey)}),
-          )
-          .timeout(const Duration(seconds: 8));
-      final agreed = keys.agree(
-        base64.decode((jsonDecode(res.body) as Map)['pub']),
-      );
-      if (!mounted) return;
-      final same = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Does your TV show this code?'),
-          content: Text(
-            agreed.code,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 36,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 4,
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('No'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Yes, sign in'),
-            ),
-          ],
-        ),
-      );
-      if (same != true) {
-        if (mounted) showError(context, 'Not signed in: the codes must match');
-        return;
-      }
-      final sent = await http
-          .post(
-            Uri.parse('$base/token'),
-            body: jsonEncode({'data': base64.encode(seal(agreed.key, token))}),
-          )
-          .timeout(const Duration(seconds: 8));
-      if (sent.statusCode != 200) throw HttpException('${sent.statusCode}');
-      if (!mounted) return;
-      showSuccess(context, 'Your TV is signed in');
-      Navigator.pop(context);
-    } catch (e) {
-      if (mounted) showError(context, e);
-    } finally {
-      if (mounted) setState(() => sending = false);
-    }
+/// Starts pairing with the TV at [base] and asks whether both screens show the same code; null when they don't.
+Future<({String code, Uint8List key})?> _handshake(
+  BuildContext context,
+  String base, {
+  required String confirm,
+}) async {
+  final keys = PairKeys();
+  final res = await http
+      .post(
+        Uri.parse('$base/pair'),
+        body: jsonEncode({'pub': base64.encode(keys.publicKey)}),
+      )
+      .timeout(const Duration(seconds: 8));
+  if (res.statusCode != 200) {
+    throw Exception(
+      "The TV isn't waiting to pair. Open the pairing screen on it first",
+    );
   }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Sign in a TV'),
-      bottom: sending || scanning
-          ? const PreferredSize(
-              preferredSize: Size.fromHeight(2),
-              child: LinearProgressIndicator(minHeight: 2),
-            )
-          : null,
-    ),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text(
-          'On the TV, choose Sign in in AniView. Keep both on the same Wi-Fi.',
-          style: TextStyle(color: Colors.white70, height: 1.5),
+  final agreed = keys.agree(
+    base64.decode((jsonDecode(res.body) as Map)['pub']),
+  );
+  if (!context.mounted) return null;
+  final same = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Does your TV show this code?'),
+      content: Text(
+        agreed.code,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 36,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 4,
         ),
-        const SizedBox(height: 16),
-        for (final MapEntry(key: address, value: name) in found.entries)
-          ListTile(
-            leading: const Icon(Icons.tv_rounded),
-            title: Text(name),
-            subtitle: Text(address),
-            onTap: sending ? null : () => _pair(address),
-          ),
-        if (found.isEmpty && !scanning)
-          const ListTile(
-            leading: Icon(Icons.search_off_rounded),
-            title: Text('No TV found'),
-            subtitle: Text('Enter the address shown on the TV instead'),
-          ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: scanning ? null : _scan,
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Search again'),
-          ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('No'),
         ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: manual,
-          keyboardType: TextInputType.url,
-          textInputAction: TextInputAction.go,
-          onSubmitted: sending ? null : _pair,
-          decoration: InputDecoration(
-            labelText: 'TV address',
-            hintText: '192.168.1.20:40123',
-            suffixIcon: IconButton(
-              icon: const Icon(Icons.arrow_forward_rounded),
-              onPressed: sending ? null : () => _pair(manual.text),
-            ),
-          ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(confirm),
         ),
       ],
     ),
   );
+  if (same == true) return agreed;
+  if (context.mounted) showError(context, 'Not paired: the codes must match');
+  return null;
+}
+
+/// This phone as a remote for a TV running AniView: a D-pad, Back, playback keys and typing into the TV's
+/// text boxes. Pairs once per TV, which also signs the TV in when this phone is signed in, then finds it again
+/// by its id.
+class PhoneRemoteScreen extends StatefulWidget {
+  const PhoneRemoteScreen({super.key});
+
+  @override
+  State<PhoneRemoteScreen> createState() => _PhoneRemoteScreenState();
+}
+
+class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
+  final found = <String, FoundTv>{}; // by address
+  final manual = TextEditingController(), typed = TextEditingController();
+  final client = http.Client();
+  String? tv; // the paired TV's id being controlled
+  bool scanning = false, pairing = false;
+  int _sent = 0;
+
+  Map<String, dynamic> get paired => Settings.tvRemotes;
+
+  @override
+  void initState() {
+    super.initState();
+    tv = paired.keys.firstOrNull;
+    _scan();
+  }
+
+  @override
+  void dispose() {
+    manual.dispose();
+    typed.dispose();
+    client.close();
+    super.dispose();
+  }
+
+  /// Looks for TVs, and keeps each paired one's address current (it changes when the app restarts).
+  Future<void> _scan() async {
+    setState(() {
+      scanning = true;
+      found.clear();
+    });
+    await for (final found in findTvs()) {
+      if (!mounted) return;
+      final id = found.id;
+      if (id != null && paired[id] != null) {
+        Settings.tvRemotes = {
+          ...paired,
+          id: {...paired[id], 'address': found.address},
+        };
+      }
+      setState(() => this.found[found.address] = found);
+    }
+    if (mounted) setState(() => scanning = false);
+  }
+
+  Future<void> _pair(String address) async {
+    setState(() => pairing = true);
+    try {
+      final base = 'http://${address.trim()}';
+      final token = AniList.token;
+      final agreed = await _handshake(
+        context,
+        base,
+        confirm: token == null ? 'Yes, pair' : 'Yes, pair and sign in',
+      );
+      if (agreed == null) return;
+      final res = await client
+          .post(
+            Uri.parse('$base/remote'),
+            body: jsonEncode({
+              'data': base64.encode(
+                seal(agreed.key, jsonEncode({'token': ?token})),
+              ),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) throw HttpException('${res.statusCode}');
+      final id = (jsonDecode(res.body) as Map)['id'] as String;
+      Settings.tvRemotes = {
+        ...paired,
+        id: {
+          'key': base64.encode(agreed.key),
+          'name': found[address.trim()]?.name ?? 'TV',
+          'address': address.trim(),
+        },
+      };
+      if (mounted) setState(() => tv = id);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => pairing = false);
+    }
+  }
+
+  /// Sends one press ({k: up|down|…, hold?} or {text}); each carries a newer time so it can't be replayed.
+  Future<void> _send(Map<String, Object> press) async {
+    final saved = paired[tv];
+    if (saved == null) return;
+    HapticFeedback.selectionClick();
+    final key = base64.decode(saved['key']);
+    _sent = max(DateTime.now().millisecondsSinceEpoch, _sent + 1);
+    try {
+      final res = await client
+          .post(
+            Uri.parse('http://${saved['address']}/key'),
+            body: jsonEncode({
+              'id': remoteKeyId(key),
+              'data': base64.encode(
+                seal(key, jsonEncode({...press, 't': _sent})),
+              ),
+            }),
+          )
+          .timeout(const Duration(seconds: 3));
+      if (!mounted) return;
+      switch (res.statusCode) {
+        case HttpStatus.forbidden: // unpaired on the TV
+          _forget();
+          showError(context, 'The TV forgot this phone. Pair again');
+        case HttpStatus.conflict:
+          showError(context, 'Pick a text box on the TV first');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      showError(
+        context,
+        "Can't reach ${saved['name']}. Is AniView open on it?",
+      );
+      if (!scanning) _scan();
+    }
+  }
+
+  void _forget() => setState(() {
+    Settings.tvRemotes = {...paired}..remove(tv);
+    tv = paired.keys.firstOrNull;
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final saved = paired[tv];
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(saved == null ? 'TV remote' : saved['name'] as String),
+        bottom: scanning || pairing
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(2),
+                child: LinearProgressIndicator(minHeight: 2),
+              )
+            : null,
+        actions: [
+          if (saved != null)
+            PopupMenuButton<VoidCallback>(
+              onSelected: (action) => action(),
+              itemBuilder: (_) => [
+                for (final MapEntry(key: id, value: other) in paired.entries)
+                  if (id != tv)
+                    PopupMenuItem(
+                      value: () => setState(() => tv = id),
+                      child: Text('Switch to ${other['name']}'),
+                    ),
+                PopupMenuItem(
+                  value: () => setState(() => tv = null),
+                  child: const Text('Pair another TV'),
+                ),
+                PopupMenuItem(
+                  value: _forget,
+                  child: const Text('Forget this TV'),
+                ),
+              ],
+            ),
+        ],
+      ),
+      body: saved == null ? _pairing() : _remote(),
+    );
+  }
+
+  Widget _pairing() => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      Text(
+        'On the TV, open AniView and choose Sign in, or Settings → Phone remote. Keep both on the same Wi-Fi.'
+        '${AniList.token == null ? '' : ' Pairing also signs the TV in as you, if it isn\'t already.'}',
+        style: const TextStyle(color: Colors.white70, height: 1.5),
+      ),
+      const SizedBox(height: 16),
+      for (final tv in found.values)
+        ListTile(
+          leading: const Icon(Icons.tv_rounded),
+          title: Text(tv.name),
+          subtitle: Text(tv.address),
+          onTap: pairing ? null : () => _pair(tv.address),
+        ),
+      if (found.isEmpty && !scanning)
+        const ListTile(
+          leading: Icon(Icons.search_off_rounded),
+          title: Text('No TV found'),
+          subtitle: Text('Enter the address shown on the TV instead'),
+        ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: scanning ? null : _scan,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Search again'),
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: manual,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.go,
+        onSubmitted: pairing ? null : _pair,
+        decoration: InputDecoration(
+          labelText: 'TV address',
+          hintText: '192.168.1.20:40123',
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.arrow_forward_rounded),
+            onPressed: pairing ? null : () => _pair(manual.text),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  Widget _remote() {
+    final primary = Theme.of(context).colorScheme.primary;
+    Widget arrow(String key, IconData icon, Alignment at) => Align(
+      alignment: at,
+      child: IconButton(
+        iconSize: 40,
+        padding: const EdgeInsets.all(16),
+        onPressed: () => _send({'k': key}),
+        icon: Icon(icon),
+      ),
+    );
+    Widget button(String key, IconData icon, String label) =>
+        IconButton.filledTonal(
+          tooltip: label,
+          iconSize: 28,
+          padding: const EdgeInsets.all(16),
+          onPressed: () => _send({'k': key}),
+          icon: Icon(icon),
+        );
+    // With the keyboard up there's no room for the D-pad, and typing is all that's going on.
+    final typing = MediaQuery.viewInsetsOf(context).bottom > 0;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            const Spacer(),
+            if (!typing) ...[
+              SizedBox.square(
+                dimension: 280,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: .06),
+                  ),
+                  child: Stack(
+                    children: [
+                      arrow(
+                        'up',
+                        Icons.keyboard_arrow_up_rounded,
+                        Alignment.topCenter,
+                      ),
+                      arrow(
+                        'down',
+                        Icons.keyboard_arrow_down_rounded,
+                        Alignment.bottomCenter,
+                      ),
+                      arrow(
+                        'left',
+                        Icons.keyboard_arrow_left_rounded,
+                        Alignment.centerLeft,
+                      ),
+                      arrow(
+                        'right',
+                        Icons.keyboard_arrow_right_rounded,
+                        Alignment.centerRight,
+                      ),
+                      Center(
+                        child: SizedBox.square(
+                          dimension: 104,
+                          // Holding OK long-presses on the TV too, for episode and history actions.
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              shape: const CircleBorder(),
+                              backgroundColor: primary,
+                            ),
+                            onPressed: () => _send({'k': 'ok'}),
+                            onLongPress: () {
+                              HapticFeedback.mediumImpact();
+                              _send({'k': 'ok', 'hold': true});
+                            },
+                            child: const Text(
+                              'OK',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  button('back', Icons.arrow_back_rounded, 'Back'),
+                  button('rewind', Icons.fast_rewind_rounded, 'Rewind'),
+                  button('playpause', Icons.play_arrow_rounded, 'Play / pause'),
+                  button('forward', Icons.fast_forward_rounded, 'Fast forward'),
+                ],
+              ),
+              const Spacer(),
+            ],
+            TextField(
+              controller: typed,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (text) => _send({'text': text}),
+              decoration: InputDecoration(
+                hintText: 'Type into the TV (search box)',
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: .07),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide.none,
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.send_rounded),
+                  onPressed: () => _send({'text': typed.text}),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

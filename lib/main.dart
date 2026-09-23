@@ -3,6 +3,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'anilist.dart';
 import 'downloads.dart';
+import 'pairing.dart';
 import 'screens.dart';
 import 'settings.dart';
 import 'sources.dart';
@@ -11,13 +12,17 @@ import 'tv.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  Sites.all().ignore(); // build the top sites on app load; screens await it later
+  Sites.all()
+      .ignore(); // build the top sites on app load; screens await it later
   await Future.wait([
     AniList.load(),
     Settings.load(),
     Downloads.instance.load(),
     detectTv(),
   ]);
+  if (isTv)
+    TvLink.start()
+        .ignore(); // phones find it to sign it in or act as its remote
   runApp(const App());
 }
 

@@ -38,4 +38,82 @@ void main() {
     await tester.pumpAndSettle();
     expect((taps, longPresses), (1, 1));
   });
+
+  testWidgets('right leaves a text field for the button beside it', (
+    tester,
+  ) async {
+    final mic = FocusNode();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FocusRing(child: child!),
+        home: Scaffold(
+          appBar: AppBar(
+            // Caret at the start, where Right would otherwise just move it.
+            title: TextField(
+              autofocus: true,
+              controller: TextEditingController(text: 'naruto')
+                ..selection = const TextSelection.collapsed(offset: 0),
+            ),
+            actions: [
+              IconButton(
+                focusNode: mic,
+                onPressed: () {},
+                icon: const Icon(Icons.mic),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    expect(mic.hasPrimaryFocus, isTrue);
+  });
+
+  testWidgets('phone remote keys go through the app like the TV remote\'s', (
+    tester,
+  ) async {
+    var taps = 0, longPresses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => FocusRing(child: child!),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: InkWell(
+                autofocus: true,
+                onTap: () => taps++,
+                onLongPress: () => longPresses++,
+                child: const SizedBox(width: 100, height: 100),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.runAsync(() => pressKey('ok'));
+    await tester.pump();
+    expect((taps, longPresses), (1, 0));
+
+    // The hold and the long press it triggers run on real timers.
+    await tester.runAsync(() async {
+      await pressKey('ok', hold: true);
+      await Future.delayed(
+        kLongPressTimeout + const Duration(milliseconds: 200),
+      );
+    });
+    await tester.pumpAndSettle();
+    expect((taps, longPresses), (1, 1));
+
+    Navigator.of(tester.element(find.byType(Scaffold)))
+        .push(MaterialPageRoute(builder: (_) => const Text('pushed')));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => pressKey('back'));
+    await tester.pumpAndSettle();
+    expect(find.text('pushed'), findsNothing);
+  });
 }

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -14,6 +16,78 @@ const _tv = MethodChannel('aniview/tv');
 
 /// Speech to text through Android's recognizer, for search; null when dismissed. Throws when there's none.
 Future<String?> recognizeSpeech() => _tv.invokeMethod<String>('voice');
+
+/// The phone remote's keys, as the TV remote's.
+const remoteKeys = {
+  'up': (PhysicalKeyboardKey.arrowUp, LogicalKeyboardKey.arrowUp),
+  'down': (PhysicalKeyboardKey.arrowDown, LogicalKeyboardKey.arrowDown),
+  'left': (PhysicalKeyboardKey.arrowLeft, LogicalKeyboardKey.arrowLeft),
+  'right': (PhysicalKeyboardKey.arrowRight, LogicalKeyboardKey.arrowRight),
+  'ok': (PhysicalKeyboardKey.select, LogicalKeyboardKey.select),
+  'playpause': (
+    PhysicalKeyboardKey.mediaPlayPause,
+    LogicalKeyboardKey.mediaPlayPause,
+  ),
+  'rewind': (PhysicalKeyboardKey.mediaRewind, LogicalKeyboardKey.mediaRewind),
+  'forward': (
+    PhysicalKeyboardKey.mediaFastForward,
+    LogicalKeyboardKey.mediaFastForward,
+  ),
+};
+
+/// Presses a key from the phone remote ([remoteKeys], or 'back') in the app, through the same handling as the
+/// TV remote's keys; [hold] keeps it down long enough to count as a long press. Stays inside Flutter: nothing
+/// is injected into Android.
+Future<void> pressKey(String name, {bool hold = false}) async {
+  if (name == 'back') {
+    // The message the engine sends for Android's own back button.
+    ServicesBinding.instance.channelBuffers.push(
+      SystemChannels.navigation.name,
+      SystemChannels.navigation.codec.encodeMethodCall(
+        const MethodCall('popRoute'),
+      ),
+      (_) {},
+    );
+    return;
+  }
+  final (physical, logical) = remoteKeys[name]!;
+  // The entry point the engine delivers real key presses to, and still the one that reaches the focus tree;
+  // a synthesized event is dispatched right away.
+  void send(ui.KeyEventType type) =>
+      // ignore: deprecated_member_use
+      ServicesBinding.instance.keyEventManager.handleKeyData(
+        ui.KeyData(
+          timeStamp: Duration(
+            milliseconds: DateTime.now().millisecondsSinceEpoch,
+          ),
+          type: type,
+          physical: physical.usbHidUsage,
+          logical: logical.keyId,
+          character: null,
+          synthesized: true,
+        ),
+      );
+  send(ui.KeyEventType.down);
+  if (hold) {
+    await Future.delayed(kLongPressTimeout);
+    send(ui.KeyEventType.repeat);
+  }
+  send(ui.KeyEventType.up);
+}
+
+/// Types [text] into the focused text field, as if from its keyboard; false when no field has focus.
+bool typeText(String text) {
+  final field = FocusManager.instance.primaryFocus?.context
+      ?.findAncestorStateOfType<EditableTextState>();
+  field?.userUpdateTextEditingValue(
+    TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    ),
+    SelectionChangedCause.keyboard,
+  );
+  return field != null;
+}
 
 /// Resumes a show (by AniList id) picked from the TV launcher's Continue watching row, whether it launched the
 /// app or came while it runs, and opens search for the remote's search key.
@@ -66,8 +140,9 @@ final focusedMedia = ValueNotifier<Map?>(null);
 
 /// App-wide TV remote handling. Draws a ring around whatever has D-pad focus, following it each frame since
 /// scrolling moves it without a focus change. Holding OK (or the menu key) long-presses the focused widget, so
-/// long-press actions work with a remote; a short press activates it on release. Up/down always leave a text
-/// field, which would otherwise trap the D-pad.
+/// long-press actions work with a remote; a short press activates it on release. The D-pad always leaves a text
+/// field, which would otherwise trap it (the on-screen keyboard does the editing), and moving focus glides
+/// the list it's in to centre it rather than jumping. Widgets inside [NoFocusRing] draw their own focus.
 class FocusRing extends StatefulWidget {
   const FocusRing({super.key, required this.child});
 
@@ -165,9 +240,28 @@ class _FocusRingState extends State<FocusRing>
     );
   }
 
+  static void _glideTo(
+    FocusNode node, {
+    ScrollPositionAlignmentPolicy? alignmentPolicy,
+    double? alignment,
+    Duration? duration,
+    Curve? curve,
+  }) {
+    node.requestFocus();
+    Scrollable.ensureVisible(
+      node.context!,
+      alignment: .5,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   Rect? _focusedRect() {
     final node = FocusManager.instance.primaryFocus;
     if (node == null || node is FocusScopeNode || node.context == null) {
+      return null;
+    }
+    if (node.context!.findAncestorWidgetOfExactType<NoFocusRing>() != null) {
       return null;
     }
     final render = node.context!.findRenderObject();
@@ -200,12 +294,25 @@ class _FocusRingState extends State<FocusRing>
             TraversalDirection.down,
             ignoreTextFields: false,
           ),
+          SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
+            TraversalDirection.left,
+            ignoreTextFields: false,
+          ),
+          SingleActivator(
+            LogicalKeyboardKey.arrowRight,
+          ): DirectionalFocusIntent(
+            TraversalDirection.right,
+            ignoreTextFields: false,
+          ),
         },
-        child: Focus(
-          canRequestFocus: false,
-          skipTraversal: true,
-          onKeyEvent: _onKey,
-          child: widget.child,
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(requestFocusCallback: _glideTo),
+          child: Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: _onKey,
+            child: widget.child,
+          ),
         ),
       ),
       AnimatedPositioned.fromRect(
@@ -216,12 +323,19 @@ class _FocusRingState extends State<FocusRing>
           child: AnimatedOpacity(
             opacity: rect == null ? 0 : 1,
             duration: const Duration(milliseconds: 120),
-            child: DecoratedBox(
+            child: AnimatedContainer(
+              duration: glide,
+              curve: Curves.easeOutCubic,
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.white, width: 3),
-                borderRadius: BorderRadius.circular(16),
+                // Small squares are icon buttons, which are round.
+                borderRadius: BorderRadius.circular(
+                  shown.shortestSide < 64 && shown.longestSide < 72
+                      ? shown.shortestSide / 2 + 4
+                      : 18,
+                ),
                 boxShadow: const [
-                  BoxShadow(color: Color(0x66FFFFFF), blurRadius: 12),
+                  BoxShadow(color: Color(0x55FFFFFF), blurRadius: 16),
                 ],
               ),
             ),
@@ -230,4 +344,14 @@ class _FocusRingState extends State<FocusRing>
       ),
     ],
   );
+}
+
+/// Focus inside [child] draws its own highlight, so the [FocusRing] stays off it.
+class NoFocusRing extends StatelessWidget {
+  const NoFocusRing({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
 }

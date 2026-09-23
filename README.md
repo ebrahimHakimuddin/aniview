@@ -84,6 +84,9 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
   overwriting newer AniList progress.
 - The details page links a show's prequels and sequels.
 - The player includes an episode drawer and marks intro/outro ranges on the seek bar.
+- A phone can act as a TV remote (Settings → TV remote on the phone, Settings → Phone remote on the TV): D-pad,
+  OK (hold for long-press), Back, playback keys, and typing into the TV's search box.
+- **Hide NSFW shows** (Settings → Home screen, on by default on TV) keeps ecchi titles out of browse and search.
 - Episode titles, synopses and thumbnails: [ani.zip](https://api.ani.zip)
 - Intro/outro/recap skip times: [AniSkip](https://api.aniskip.com), falling back to the site's own times
 - Some hosts disguise segments as PNGs; a localhost proxy (`lib/hls_proxy.dart`) strips the prefix for FFmpeg

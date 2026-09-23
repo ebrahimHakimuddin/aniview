@@ -60,23 +60,28 @@ class AniList {
   }
 
   /// Shows AniList's authorize page in-app and captures the token from the `aniview://auth#access_token=…` redirect.
-  /// A TV first offers signing in from a phone, since typing a password with a remote is painful.
+  /// A TV first offers pairing a phone, which signs it in too, since typing a password with a remote is painful.
   static Future<void> login(BuildContext context) async {
-    var value = !isTv
-        ? TvPairScreen.signInHere
-        : await Navigator.of(context).push<String>(
-            MaterialPageRoute(builder: (_) => const TvPairScreen()),
-          );
-    if (value == TvPairScreen.signInHere && context.mounted) {
-      value = await Navigator.of(context).push<String>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => const _LoginPage(),
-        ),
-      );
+    if (isTv &&
+        await Navigator.of(context).push<String>(
+              MaterialPageRoute(builder: (_) => const TvPairScreen()),
+            ) !=
+            TvPairScreen.signInHere) {
+      return; // signed in by the phone, or closed
     }
-    if (value == null || value.isEmpty) return; // closed without authorizing
+    if (!context.mounted) return;
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const _LoginPage(),
+      ),
+    );
+    if (value != null && value.isNotEmpty) await useToken(value);
+  }
+
+  static Future<void> useToken(String value) async {
     token = value;
+    _viewer = null;
     await (await SharedPreferences.getInstance()).setString(
       'anilist_token',
       value,
