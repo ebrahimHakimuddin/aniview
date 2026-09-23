@@ -11,7 +11,15 @@ import 'tv.dart';
 class WatchHistory {
   static const _key = 'watch_history';
 
+  /// The latest write; reads wait for it so a page never sees history from before the player's last save.
+  static Future<void> _writing = Future.value();
+
   static Future<List<Map<String, dynamic>>> all() async {
+    await _writing;
+    return _read();
+  }
+
+  static Future<List<Map<String, dynamic>>> _read() async {
     final raw = (await SharedPreferences.getInstance()).getString(_key);
     return raw == null
         ? []
@@ -37,6 +45,28 @@ class WatchHistory {
     required Duration position,
     required Duration duration,
     required bool dub,
+  }) => _writing = _writing
+      .then(
+        (_) => _played(
+          media,
+          source: source,
+          episodes: episodes,
+          index: index,
+          position: position,
+          duration: duration,
+          dub: dub,
+        ),
+      )
+      .catchError((Object _) {}); // one failed write mustn't block the rest
+
+  static Future<void> _played(
+    Map media, {
+    required String source,
+    required List<Episode> episodes,
+    required int index,
+    required Duration position,
+    required Duration duration,
+    required bool dub,
   }) async {
     if (position < const Duration(seconds: 5)) return;
     if (!finished(position, duration)) {
@@ -49,7 +79,7 @@ class WatchHistory {
         dub: dub,
       );
     }
-    if (index + 1 >= episodes.length) return remove(media);
+    if (index + 1 >= episodes.length) return _remove(media);
     await _save(
       media,
       source: source,
@@ -77,13 +107,18 @@ class WatchHistory {
         'dub': dub,
         'at': DateTime.now().millisecondsSinceEpoch,
       },
-      ...(await all()).where((r) => r['media']['id'] != media['id']),
+      ...(await _read()).where((r) => r['media']['id'] != media['id']),
     ];
     await _write(entries.take(20).toList());
   }
 
-  static Future<void> remove(Map media) async => _write(
-    (await all()).where((r) => r['media']['id'] != media['id']).toList(),
+  static Future<void> remove(Map media) async {
+    await _writing;
+    await _remove(media);
+  }
+
+  static Future<void> _remove(Map media) async => _write(
+    (await _read()).where((r) => r['media']['id'] != media['id']).toList(),
   );
 
   static Future<void> clear() => _write(const []);

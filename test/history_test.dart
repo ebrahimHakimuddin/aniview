@@ -54,6 +54,11 @@ void main() {
     },
   );
 
+  test('a read right after a save sees it, as when the player pops', () async {
+    _play(_episodes(3), 1, _min * 5).ignore(); // the player doesn't wait
+    expect((await WatchHistory.of(_show))!['episode'], 2);
+  });
+
   test('plans pages around the next unwatched episode', () {
     final episodes = _episodes(120);
     final plan = EpisodePlan(
