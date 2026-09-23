@@ -1,3 +1,4 @@
+import 'package:aniview/history.dart';
 import 'package:aniview/metadata.dart';
 import 'package:aniview/playback.dart';
 import 'package:aniview/settings.dart';
@@ -40,6 +41,37 @@ void main() {
     expect(session.fallback()?.label, 'HD-2');
     session.playing(session.fallback()!);
     expect(session.fallback(), isNull);
+  });
+
+  test('quick seek presses the same way add up from where the last landed', () {
+    final session = _session();
+    final t0 = DateTime(2026);
+    final at = Duration(minutes: 5);
+    DateTime after(int ms) => t0.add(Duration(milliseconds: ms));
+
+    expect(session.step(at, _length, 10, now: t0), (
+      to: at + _sec * 10,
+      total: 10,
+    ));
+    // mpv still reports the old position; the second press builds on the first.
+    expect(session.step(at, _length, 10, now: after(500)), (
+      to: at + _sec * 20,
+      total: 20,
+    ));
+    expect(session.step(at, _length, 10, now: after(1000)), (
+      to: at + _sec * 30,
+      total: 30,
+    ));
+    // Changing direction starts over from the real position.
+    expect(session.step(at + _sec * 30, _length, -10, now: after(1500)), (
+      to: at + _sec * 20,
+      total: -10,
+    ));
+    // So does a pause between presses.
+    expect(session.step(at, _length, 10, now: after(5000)), (
+      to: at + _sec * 10,
+      total: 10,
+    ));
   });
 
   test('counts an episode watched once, and again after moving on', () {
@@ -96,5 +128,142 @@ void main() {
     expect(session.hold(_length, -10), Duration.zero); // clamped
     expect(session.release(), Duration.zero);
     expect(session.hold(_length, 10), isNull); // nothing held any more
+  });
+
+  group('opening an episode', () {
+    const site = VideoStream('HD-1', 'https://site/1.m3u8', {});
+    const local = VideoStream('Downloaded', '/files/1.mp4', {});
+    List<Episode> episodes() => [
+      for (var i = 1; i <= 2; i++) Episode(i, ref: '$i'),
+    ];
+
+    test('a download plays instead of the site, from the saved spot', () async {
+      await WatchHistory.played(
+        const {
+          'id': 7,
+          'title': {'userPreferred': 'Show'},
+        },
+        source: 'Site',
+        episodes: episodes(),
+        index: 0,
+        position: _sec * 90,
+        duration: _length,
+        dub: false,
+      );
+      var fetched = 0;
+      final session = PlaybackSession(
+        episodes(),
+        0,
+        media: const {'id': 7},
+        fetch: (_) async {
+          fetched++;
+          return [site];
+        },
+        downloaded: (e) => e.number == 1 ? local : null,
+      );
+      expect(await session.open(0), (at: _sec * 90));
+      expect(session.streams.single, local);
+      expect((session.fromDownload, fetched), (true, 0));
+
+      expect(await session.open(1), (at: null)); // not the one left part-way
+      expect(session.streams.single, site);
+      expect(session.fromDownload, isFalse);
+    });
+
+    test(
+      "fails clearly offline without a download, or with no servers",
+      () async {
+        final offline = PlaybackSession(
+          episodes(),
+          0,
+          site: 'Anikoto',
+          downloaded: (_) => null,
+        );
+        await expectLater(
+          offline.open(0),
+          throwsA(
+            predicate(
+              (e) => '$e'.contains(
+                "isn't downloaded and Anikoto can't be reached",
+              ),
+            ),
+          ),
+        );
+        final empty = PlaybackSession(
+          episodes(),
+          0,
+          dub: true,
+          site: 'Anikoto',
+          fetch: (_) async => [],
+          downloaded: (_) => null,
+        );
+        await expectLater(
+          empty.open(0),
+          throwsA(predicate((e) => '$e'.contains('No dub servers'))),
+        );
+      },
+    );
+
+    test('a newer episode started meanwhile wins', () async {
+      final session = PlaybackSession(
+        episodes(),
+        0,
+        fetch: (e) async => [
+          VideoStream('ep ${e.number}', 'https://s', const {}),
+        ],
+        downloaded: (_) => null,
+      );
+      final first = session.open(0);
+      final second = session.open(1);
+      expect(await first, isNull);
+      expect(await second, isNotNull);
+      expect(session.streams.single.label, 'ep 2');
+    });
+  });
+
+  test(
+    'picks subtitles by language, then English, then any; Off turns them off',
+    () {
+      final session = _session();
+      const stream = VideoStream(
+        'HD',
+        'u',
+        {},
+        subtitles: [Subtitle('Spanish', 's'), Subtitle('English', 'e')],
+      );
+      expect(
+        session.subtitleFor(stream).track?.label,
+        'English',
+      ); // the default
+      Settings.subtitleLanguage = 'Spanish';
+      expect(session.subtitleFor(stream).track?.label, 'Spanish');
+      Settings.subtitleLanguage = 'German';
+      expect(session.subtitleFor(stream).track?.label, 'English');
+      expect(
+        session.subtitleFor(const VideoStream('HD', 'u', {})).track,
+        isNull,
+      );
+      Settings.subtitleLanguage = 'Off';
+      expect(session.subtitleFor(stream).off, isTrue);
+    },
+  );
+
+  test('an error only moves servers before the video loads', () {
+    final session = _session();
+    expect(session.stalled(Duration.zero), isTrue);
+    expect(session.stalled(_length), isFalse);
+  });
+
+  test("reads where another app stopped, or its end when it finished", () {
+    expect(
+      PlaybackSession.externalStop({'position': 5000, 'duration': 60000}),
+      (position: _sec * 5, duration: _sec * 60),
+    );
+    expect(
+      PlaybackSession.externalStop({'completed': true, 'duration': 60000})
+          .position,
+      _sec * 60,
+    );
+    expect(PlaybackSession.externalStop(null).position, Duration.zero);
   });
 }

@@ -1,3 +1,4 @@
+import 'downloads.dart';
 import 'history.dart';
 import 'metadata.dart';
 import 'settings.dart';
@@ -18,15 +19,47 @@ class SkipTo extends OkAction {
 
 class PlayPause extends OkAction {}
 
-/// The player's decisions about an episode as it plays, apart from painting it: which server to fall back to, when
-/// the episode counts as watched, when to save the spot, which skip applies, when to offer or start the next
-/// episode, and where a held left/right on a TV remote lands. Fed positions and events; the player screen acts on
-/// its answers.
+/// The player's decisions about an episode, apart from painting it: where it plays from and where it starts
+/// ([open]), which server to fall back to, which subtitles to show, when it counts as watched, when to save the
+/// spot, which skip applies, when to offer or start the next episode, and where a held left/right on a TV remote
+/// lands. Fed positions and events; the player screen acts on its answers.
 class PlaybackSession {
-  PlaybackSession(this.episodes, this.index);
+  PlaybackSession(
+    this.episodes,
+    this.index, {
+    this.media = const {},
+    this.dub = false,
+    this.site = 'Downloads',
+    this.fetch,
+    VideoStream? Function(Episode)? downloaded,
+  }) : downloaded =
+           downloaded ??
+           ((e) {
+             final d = Downloads.instance.toPlay(
+               media,
+               e.number,
+               dub: dub,
+               online: fetch != null,
+             );
+             return d == null ? null : Downloads.instance.streamFor(d);
+           });
 
   final List<Episode> episodes;
   int index;
+  final Map media;
+  final bool dub;
+
+  /// The site's name, for messages.
+  final String site;
+
+  /// An episode's servers on the site; null when it can't be reached, and only downloads play.
+  final Future<List<VideoStream>> Function(Episode)? fetch;
+
+  /// An episode's download, when one plays instead of the site.
+  final VideoStream? Function(Episode) downloaded;
+
+  /// Whether the episode playing comes from a download.
+  bool fromDownload = false;
 
   /// The servers found for this episode, and the one playing.
   List<VideoStream> streams = [];
@@ -54,6 +87,68 @@ class PlaybackSession {
     upNextDismissed = false;
     _autoSkipped.clear();
     _watched = false;
+    fromDownload = false;
+  }
+
+  /// Starts episode [i]: its download or else the site's servers become [streams] (the player opens the first), and
+  /// the answer is where to start: [at] when given, else the saved spot when resuming. Null when another episode
+  /// was started meanwhile, and nothing changed. Throws when it can't be played.
+  Future<({Duration? at})?> open(int i, {Duration? at}) async {
+    start(i);
+    final target = episode;
+    final from = at ?? await WatchHistory.resumePoint(media, target.number);
+    final download = downloaded(target);
+    final List<VideoStream> found;
+    if (download != null) {
+      found = [download];
+    } else if (fetch case final fetch?) {
+      found = await fetch(target);
+    } else {
+      throw Exception(
+        "Episode ${epNumber(target.number)} isn't downloaded and $site can't be reached",
+      );
+    }
+    if (index != i) return null;
+    if (found.isEmpty) {
+      throw Exception(
+        'No ${dub ? 'dub' : 'sub'} servers for this episode on $site',
+      );
+    }
+    streams = found;
+    fromDownload = download != null;
+    return (at: from);
+  }
+
+  /// Whether a player error means [current] failed to load (nothing to play yet: [duration] still zero), rather
+  /// than a hiccup once it's playing. Then the next server ([fallback]) gets a try.
+  bool stalled(Duration duration) =>
+      current != null && duration == Duration.zero;
+
+  /// The subtitles to show for [stream], by the language in Settings: that language, else English, else the
+  /// first. [off] when Settings turns them off; a null [track] leaves the stream's own (embedded or burned in).
+  ({bool off, Subtitle? track}) subtitleFor(VideoStream stream) {
+    final language = Settings.subtitleLanguage;
+    if (language == 'Off') return (off: true, track: null);
+    Subtitle? byLanguage(String l) =>
+        stream.subtitles.where((s) => s.label.startsWith(l)).firstOrNull;
+    return (
+      off: false,
+      track:
+          byLanguage(language) ??
+          byLanguage('English') ??
+          stream.subtitles.firstOrNull,
+    );
+  }
+
+  /// Where another video app left the episode, from what it reported back: the end when it played through.
+  static ({Duration position, Duration duration}) externalStop(Map? result) {
+    final duration = Duration(milliseconds: result?['duration'] as int? ?? 0);
+    return (
+      position: result?['completed'] == true
+          ? duration
+          : Duration(milliseconds: result?['position'] as int? ?? 0),
+      duration: duration,
+    );
   }
 
   /// Plays [stream]; its own skip times apply until AniSkip's arrive.
@@ -119,6 +214,34 @@ class PlaybackSession {
     if (upNext(position, duration) != null) return PlayNext();
     if (skipButton(position) case final skip?) return SkipTo(skip.end);
     return PlayPause();
+  }
+
+  int _streak = 0;
+  Duration? _streakTo;
+  DateTime _streakAt = DateTime(0);
+
+  /// A seek button (or double tap) for [seconds]: where to land, and the running total to show. Presses the same
+  /// way within 1.2 s add up (+10s, +20s, +30s), each from where the last one landed, since mpv reports the new
+  /// position late.
+  ({Duration to, int total}) step(
+    Duration position,
+    Duration duration,
+    int seconds, {
+    DateTime? now,
+  }) {
+    now ??= DateTime.now();
+    final adding =
+        _streakTo != null &&
+        _streak.sign == seconds.sign &&
+        now.difference(_streakAt) < const Duration(milliseconds: 1200);
+    _streak = adding ? _streak + seconds : seconds;
+    _streakAt = now;
+    final to = _streakTo = press(
+      adding ? _streakTo! : position,
+      duration,
+      seconds,
+    );
+    return (to: to, total: _streak);
   }
 
   /// Left/right pressed: where to seek right away, [seconds] from [position].
