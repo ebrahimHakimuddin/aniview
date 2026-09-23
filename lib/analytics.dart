@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:ui';
 
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'settings.dart';
+import 'platform.dart';
 
 /// Screen views and feature use, sent to Rybbit. The Rybbit site is a "mobile" site, which accepts native traffic
 /// with just its public site id, so no API key ships in the app. Events carry ids, numbers and fixed choices only,
@@ -15,7 +15,6 @@ class Analytics {
     'RYBBIT_HOST',
     defaultValue: 'https://app.rybbit.io',
   );
-  static const _app = MethodChannel('aniview/app');
 
   static bool get available => siteId.isNotEmpty;
 
@@ -70,8 +69,8 @@ class Analytics {
 
   static Future<String> _agent() async {
     try {
-      final version = await _app.invokeMethod<String>('version');
-      final device = await _app.invokeMethod<String>('device');
+      final version = await AndroidApp.version();
+      final device = await AndroidApp.device();
       return 'AniView/$version (Linux; $device)';
     } catch (_) {
       return 'AniView';

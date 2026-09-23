@@ -12,6 +12,7 @@ import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
 import 'states.dart';
+import 'platform.dart';
 
 enum DownloadStatus { queued, downloading, done, failed }
 
@@ -119,7 +120,7 @@ class Downloads extends ChangeNotifier {
   bool _running = false, _cancel = false;
   Future<void> _saving = Future.value();
   static const _notifications = MethodChannel('aniview/downloads');
-  static const _app = MethodChannel('aniview/app');
+
   var _notifiedPercent = -1;
   var _notifiedAt = DateTime(0);
 
@@ -403,7 +404,7 @@ class Downloads extends ChangeNotifier {
         '${titleOf(d.media)} - Episode ${epNumber(d.number)}${d.dub ? ' (Dub)' : ''}'
             .replaceAll(RegExp(r'[\\/:*?"<>|]'), '');
     try {
-      await _app.invokeMethod('gallery', {'dir': dir.path, 'name': name});
+      await AndroidApp.saveToGallery(dir.path, name);
       return 'Downloaded · saved to gallery';
     } on PlatformException catch (e) {
       return 'Downloaded · not saved to gallery: ${e.message}';

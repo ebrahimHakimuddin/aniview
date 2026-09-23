@@ -10,6 +10,7 @@ import 'package:pointycastle/export.dart' hide State;
 
 import 'anilist.dart';
 import 'states.dart';
+import 'platform.dart';
 
 /// Signing a TV in from a phone that's already signed in, over the local network.
 ///
@@ -127,9 +128,7 @@ class _TvPairScreenState extends State<TvPairScreen> {
           .expand((i) => i.addresses)
           .where((a) => !a.isLoopback)
           .firstOrNull;
-      final device = await const MethodChannel('aniview/app')
-          .invokeMethod<String>('device')
-          .catchError((Object _) => null);
+      final device = await AndroidApp.device().catchError((Object _) => null);
       if (mounted) {
         setState(() => address = '${ip?.address ?? '?'}:${server.port}');
       }

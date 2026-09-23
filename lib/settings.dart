@@ -17,6 +17,7 @@ import 'sources.dart';
 import 'pairing.dart';
 import 'states.dart';
 import 'tv.dart';
+import 'platform.dart';
 
 enum SkipMode { button, auto, off }
 
@@ -165,7 +166,6 @@ class Settings {
 }
 
 /// App version and opening links in the browser, answered by MainActivity.
-const _app = MethodChannel('aniview/app');
 
 const _latestRelease =
     'https://api.github.com/repos/ebrahimHakimuddin/aniview/releases/latest';
@@ -194,14 +194,14 @@ Map? updateApk(List assets, String? abi) => assets
 /// [quiet] (the check on launch) stays silent when up to date or offline.
 Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
   try {
-    final current = await _app.invokeMethod<String>('version') ?? '';
+    final current = await AndroidApp.version() ?? '';
     final res = await http
         .get(Uri.parse(_latestRelease))
         .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw HttpException('${res.statusCode}');
     final release = jsonDecode(res.body) as Map;
     final latest = release['tag_name'] as String;
-    final abi = await _app.invokeMethod<String>('abi');
+    final abi = await AndroidApp.abi();
     final apk = updateApk(release['assets'] as List? ?? const [], abi);
     final version = latest.replaceFirst('v', '');
     if (!context.mounted) return;
@@ -223,12 +223,12 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
             label: 'Update',
             onPressed: () async {
               if (apk == null) {
-                return _app.invokeMethod('open', release['html_url']).ignore();
+                return AndroidApp.open(release['html_url']).ignore();
               }
-              await _app.invokeMethod('download', {
-                'url': apk['browser_download_url'],
-                'title': 'AniView $version',
-              });
+              await AndroidApp.downloadApk(
+                apk['browser_download_url'],
+                title: 'AniView $version',
+              );
               if (context.mounted) {
                 showSuccess(
                   context,
@@ -707,7 +707,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ]),
           _Group('About', [
             FutureBuilder(
-              future: _app.invokeMethod<String>('version'),
+              future: AndroidApp.version(),
               builder: (context, snap) => ListTile(
                 leading: const Icon(Icons.info_outline_rounded),
                 title: const Text('AniView'),
@@ -746,7 +746,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: Text(title),
                 subtitle: Text(url.replaceFirst('https://', '')),
                 trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                onTap: () => _app.invokeMethod('open', url).ignore(),
+                onTap: () => AndroidApp.open(url).ignore(),
               ),
           ]),
           const Padding(

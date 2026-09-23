@@ -3,16 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'platform.dart';
+
 /// Running on Android TV: D-pad navigation, a focus ring, and the TV home layout.
 bool isTv = false;
 
-Future<void> detectTv() async {
-  try {
-    isTv =
-        await const MethodChannel('aniview/app').invokeMethod<bool>('tv') ??
-        false;
-  } catch (_) {} // not on Android
-}
+Future<void> detectTv() async => isTv = await AndroidApp.isTv();
 
 const _tv = MethodChannel('aniview/tv');
 

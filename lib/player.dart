@@ -19,6 +19,7 @@ import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
 import 'tv.dart';
+import 'platform.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -68,8 +69,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   BoxFit fit = BoxFit.contain;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
-  static const _systemVolume = MethodChannel('aniview/volume');
-  static const _app = MethodChannel('aniview/app');
+
   Duration? seekTarget;
   Duration? _startAt; // where the current server was asked to start
   Timer? _hideTimer, _hintTimer;
@@ -343,17 +343,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 : Uri.parse(url).path.split('.').last,
           );
     try {
-      final result = await _app.invokeMapMethod<String, Object?>('external', {
-        'url': stream.isHls ? await address(stream.url) : stream.url,
-        'headers': stream.isHls ? null : stream.headers, // MX Player only
-        'title':
-            '${titleOf(widget.media)} · Episode ${epNumber(episode.number)}',
-        'position': (at ?? Duration.zero).inMilliseconds,
-        'subtitles': [
+      final result = await AndroidApp.playExternal(
+        url: stream.isHls ? await address(stream.url) : stream.url,
+        headers: stream.isHls ? null : stream.headers, // MX Player only
+        title: '${titleOf(widget.media)} · Episode ${epNumber(episode.number)}',
+        position: at ?? Duration.zero,
+        subtitles: [
           for (final s in stream.subtitles)
             {'label': s.label, 'url': await address(s.url)},
         ],
-      });
+      );
       final duration = Duration(milliseconds: result?['duration'] as int? ?? 0);
       final position = result?['completed'] == true
           ? duration
@@ -543,7 +542,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     } else {
       volume = (volume + delta).clamp(0.0, 1.0);
-      _systemVolume.invokeMethod('set', volume).ignore();
+      AndroidApp.setVolume(volume).ignore();
       _hint(
         '${(volume * 100).round()}%',
         icon: volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
@@ -685,10 +684,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     },
               onVerticalDragStart: !swipes
                   ? null
-                  : (_) => _systemVolume
-                        .invokeMethod<double>(
-                          'get',
-                        ) // may have changed with the volume keys
+                  // may have changed with the volume keys
+                  : (_) => AndroidApp.volume()
                         .then((v) => volume = v ?? volume)
                         .ignore(),
               onVerticalDragUpdate: !swipes
