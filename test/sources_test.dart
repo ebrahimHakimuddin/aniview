@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:aniview/downloads.dart';
@@ -9,6 +10,19 @@ import 'package:flutter_test/flutter_test.dart';
 import '../tool/top_sites.dart';
 
 void main() {
+  test('loads the top sites once, and afresh after a failed load', () async {
+    var loads = 0;
+    Sites.load = () async {
+      if (++loads == 1) throw const SocketException('offline');
+      return [Miruro('Miruro', 'https://www.miruro.to')];
+    };
+    await expectLater(Sites.all(), throwsA(isA<SocketException>()));
+    expect((await Sites.named('Miruro'))?.name, 'Miruro');
+    expect(await Sites.named('Gone'), isNull);
+    expect(identical(Sites.all(), Sites.all()), isTrue);
+    expect(loads, 2);
+  });
+
   test('reads the top anime sites from everythingmoe markup', () {
     const html =
         '<div id="sec-anime" class="section"><div class="section-notes">x</div>'

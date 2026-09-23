@@ -486,7 +486,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             FutureBuilder(
-              future: sites,
+              future: Sites.all(),
               builder: (context, snap) => _Choice(
                 title: 'Preferred source',
                 value: Settings.preferredSource.isEmpty

@@ -360,8 +360,7 @@ class Downloads extends ChangeNotifier {
       ..error = null;
     _notify(save: true);
     try {
-      final all = await sites.catchError((Object _) => sites = topSources());
-      final source = all.where((s) => s.name == d.source).firstOrNull;
+      final source = await Sites.named(d.source);
       if (source == null) {
         throw Exception('${d.source} is no longer one of the top sites');
       }

@@ -2,20 +2,45 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http2/http2.dart';
+import 'package:http2/http2.dart' hide Settings;
 import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
 import 'cloudflare.dart';
 import 'metadata.dart';
+import 'settings.dart';
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
-/// The supported anime streaming sites from everythingmoe, in rank order.
-Future<List<Source>> sites = topSources();
+/// The supported anime streaming sites from everythingmoe's ranking at build time, in rank order: loaded once, and loaded
+/// afresh on the next ask after a failed load.
+class Sites {
+  static Future<List<Source>>? _current;
+
+  /// Where the list comes from; replaced in tests.
+  @visibleForTesting
+  static Future<List<Source>> Function() load = topSources;
+
+  /// The same future until a load fails, so a FutureBuilder can hold on to it.
+  static Future<List<Source>> all() =>
+      _current ??= load().catchError((Object e) {
+        _current = null;
+        throw e;
+      });
+
+  /// The site saved under [name] (history, downloads), if it's still among the top sites.
+  static Future<Source?> named(String name) async =>
+      (await all()).where((s) => s.name == name).firstOrNull;
+
+  /// The one chosen in Settings, else the highest ranked.
+  static Source? preferred(List<Source> sites) =>
+      sites.where((s) => s.name == Settings.preferredSource).firstOrNull ??
+      sites.firstOrNull;
+}
 
 const _topSitesDefine = String.fromEnvironment('TOP_SITES');
 final _topSites = _topSitesDefine.isEmpty

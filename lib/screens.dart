@@ -2001,15 +2001,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _loadSites() async {
     try {
       await _ids;
-      final found = await sites;
+      final found = await Sites.all();
       if (!mounted) return;
       setState(() => sources = found);
-      final preferred =
-          found.where((s) => s.name == Settings.preferredSource).firstOrNull ??
-          found.firstOrNull;
-      if (preferred != null) _select(preferred);
+      if (Sites.preferred(found) case final preferred?) _select(preferred);
     } catch (e) {
-      sites = topSources()..ignore(); // fresh attempt for the retry button
       if (mounted) setState(() => sitesError = e);
     }
   }
@@ -4091,7 +4087,7 @@ Future<void> resumeWatching(
   Source? source;
   var episodes = loaded ?? const <Episode>[];
   try {
-    source = (await sites).where((s) => s.name == record['source']).firstOrNull;
+    source = await Sites.named(record['source']);
     final site = source;
     if (loaded == null && site != null && context.mounted) {
       episodes = await withCloudflare<List<Episode>>(

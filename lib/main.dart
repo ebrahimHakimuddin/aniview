@@ -11,7 +11,7 @@ import 'tv.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  sites.ignore(); // build the top sites on app load; screens await it later
+  Sites.all().ignore(); // build the top sites on app load; screens await it later
   await Future.wait([
     AniList.load(),
     Settings.load(),
