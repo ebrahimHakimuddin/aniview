@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:aniview/anilist.dart';
+import 'package:aniview/settings.dart';
 import 'package:aniview/tracker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -38,6 +39,25 @@ void main() {
 
       expect(await Tracker.syncPending(), 0); // still offline: everything stays
       expect(queued().length, 6);
+    },
+  );
+
+  test(
+    'syncs a watched episode only forward, signed in, with sync on',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await Settings.load();
+      final show = _show(7)..['mediaListEntry'] = {'progress': 4};
+
+      AniList.token = null;
+      expect(await Tracker.watched(show, 5), SyncResult.skipped);
+
+      AniList.token = 'signed in';
+      expect(await Tracker.watched(show, 3), SyncResult.skipped); // a rewatch
+      Settings.syncAniList = false;
+      expect(await Tracker.watched(show, 5), SyncResult.skipped);
+      Settings.syncAniList = true;
+      expect(await Tracker.watched(show, 5), SyncResult.queued); // offline
     },
   );
 }

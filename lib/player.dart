@@ -469,21 +469,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _syncProgress() async {
     final number = episode.number.toInt();
-    if (!Tracker.signedIn || !Settings.syncAniList) return;
-    // Rewatching an earlier episode mustn't pull the list back.
-    if (number <= (widget.media['mediaListEntry']?['progress'] as int? ?? 0)) {
-      return;
-    }
-    if (await Tracker.save(widget.media, number, forwardOnly: true)) {
-      _hint(
-        'Progress updated · Episode $number',
-        icon: Icons.check_circle_rounded,
-      );
-    } else {
-      _hint(
-        'Saved · syncs next time you open the app',
-        icon: Icons.cloud_off_rounded,
-      );
+    switch (await Tracker.watched(widget.media, number)) {
+      case SyncResult.skipped:
+        break;
+      case SyncResult.saved:
+        _hint(
+          'Progress updated · Episode $number',
+          icon: Icons.check_circle_rounded,
+        );
+      case SyncResult.queued:
+        _hint(
+          'Saved · syncs next time you open the app',
+          icon: Icons.cloud_off_rounded,
+        );
     }
   }
 

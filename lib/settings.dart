@@ -9,13 +9,13 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
-import 'anilist.dart';
 import 'downloads.dart';
 import 'history.dart';
 import 'notifications.dart';
 import 'sources.dart';
 import 'pairing.dart';
 import 'states.dart';
+import 'tracker.dart';
 import 'tv.dart';
 import 'platform.dart';
 
@@ -338,20 +338,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       false;
 
   Future<void> _signIn() async {
-    if (AniList.clientId.isEmpty) {
-      showError(
-        context,
-        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
-      );
-      return;
-    }
     try {
-      await AniList.login(context);
-      final me = await AniList.viewer();
-      if (me != null) Analytics.event('sign_in');
-      if (mounted && me != null) {
-        showSuccess(context, 'Signed in as ${me['name']}');
-      }
+      final name = await Tracker.signIn(context);
+      if (mounted && name != null) showSuccess(context, 'Signed in as $name');
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -359,7 +348,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _signOut() async {
-    await AniList.logout();
+    await Tracker.signOut();
     if (!mounted) return;
     setState(() {});
     showSuccess(context, 'Signed out of AniList');
@@ -367,7 +356,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = AniList.token != null;
+    final signedIn = Tracker.signedIn;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -375,7 +364,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           _Group('AniList', [
             FutureBuilder(
-              future: AniList.viewer(),
+              future: Tracker.viewer(),
               builder: (context, snap) {
                 final avatar = snap.data?['avatar']?['large'] as String?;
                 return ListTile(

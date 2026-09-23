@@ -1,15 +1,37 @@
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'analytics.dart';
 import 'anilist.dart';
 import 'mal.dart';
 import 'metadata.dart';
+import 'settings.dart';
+
+/// What the player's automatic sync did with a watched episode.
+enum SyncResult { skipped, saved, queued }
 
 /// Browsing and AniList tracking. Reads prefer AniList and fall back to MyAnimeList's public data
 /// when it errors; saves go to AniList only and are kept on-device for the next app open when it fails.
 class Tracker {
   static bool get signedIn => AniList.token != null;
+
+  /// Signs in to AniList; returns the account name, or null when the sheet was closed without signing in.
+  static Future<String?> signIn(BuildContext context) async {
+    if (AniList.clientId.isEmpty) {
+      throw Exception(
+        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
+      );
+    }
+    await AniList.login(context);
+    if (!signedIn) return null;
+    final me = await AniList.viewer();
+    Analytics.event('sign_in');
+    return me?['name'] as String? ?? 'AniList user';
+  }
+
+  static Future<void> signOut() => AniList.logout();
 
   static Future<T> _data<T>(
     Future<T> Function() anilist,
@@ -135,6 +157,18 @@ class Tracker {
     } catch (_) {
       return false;
     }
+  }
+
+  /// The player's sync once [episode] counts as watched: only signed in with sync on, and never pulling the list
+  /// back when rewatching an earlier episode.
+  static Future<SyncResult> watched(Map media, int episode) async {
+    if (!signedIn || !Settings.syncAniList) return SyncResult.skipped;
+    if (episode <= (media['mediaListEntry']?['progress'] as int? ?? 0)) {
+      return SyncResult.skipped;
+    }
+    return await save(media, episode, forwardOnly: true)
+        ? SyncResult.saved
+        : SyncResult.queued;
   }
 
   static Future<void> removeFromList(Map media) async {

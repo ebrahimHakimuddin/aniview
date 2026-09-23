@@ -189,21 +189,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _signIn() async {
-    if (AniList.clientId.isEmpty) {
-      showError(
-        context,
-        'This build has no AniList client id (--dart-define=ANILIST_CLIENT_ID)',
-      );
-      return;
-    }
     try {
-      await AniList.login(context);
-      if (!Tracker.signedIn) return; // closed without signing in
-      final me = await AniList.viewer();
-      Analytics.event('sign_in');
-      if (mounted) {
-        showSuccess(context, 'Signed in as ${me?['name'] ?? 'AniList user'}');
-      }
+      final name = await Tracker.signIn(context);
+      if (name == null) return; // closed without signing in
+      if (mounted) showSuccess(context, 'Signed in as $name');
     } catch (e) {
       if (mounted) showError(context, e);
     }
