@@ -14,6 +14,38 @@ String titleOf(Map media) =>
     media['title']['english'] ??
     '';
 
+/// A show as AniList describes it (MyAnimeList's answers are mapped to the same shape), read through the facts
+/// screens need instead of the JSON. A view over the map, not a copy: [Tracker] still updates the map itself.
+extension type const Show(Map raw) {
+  Object? get id => raw['id'];
+  String get title => titleOf(raw);
+  String? get cover => raw['coverImage']?['extraLarge'];
+
+  /// The cover's dominant colour, "#rrggbb".
+  String? get color => raw['coverImage']?['color'];
+
+  /// The wide banner, else the cover, for backdrops.
+  String? get backdrop => raw['bannerImage'] ?? cover;
+  bool get hasBanner => raw['bannerImage'] != null;
+  int? get score => raw['averageScore'];
+  String? get description => raw['description'];
+  List get genres => raw['genres'] as List? ?? const [];
+
+  /// The full episode count, when known; what list tracking completes at.
+  int? get episodes => raw['episodes'];
+
+  /// Episodes out so far: the full count, else those before the one airing next.
+  int? get aired {
+    final next = raw['nextAiringEpisode']?['episode'] as int?;
+    return episodes ?? (next == null ? null : next - 1);
+  }
+
+  /// Whether it's on the user's AniList list, and their entry's status and episodes watched there.
+  bool get inList => raw['mediaListEntry'] != null;
+  String? get listStatus => raw['mediaListEntry']?['status'];
+  int get progress => raw['mediaListEntry']?['progress'] as int? ?? 0;
+}
+
 /// Search filters as AniList enum values (season "FALL", format "TV", …); null means any.
 class SearchFilters {
   const SearchFilters({

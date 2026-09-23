@@ -2,9 +2,29 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'anilist.dart';
 import 'settings.dart';
 import 'sources.dart';
 import 'tv.dart';
+
+/// Where the user stopped in one show: a [WatchHistory] entry, read through its facts instead of its JSON.
+extension type const WatchRecord(Map<String, dynamic> raw) {
+  Map get media => raw['media'];
+  Show get show => Show(media);
+  num get episode => raw['episode'];
+
+  /// Where in [episode] they stopped; zero when it was left finished (moved on to the next one's start).
+  Duration get position => Duration(milliseconds: raw['position'] as int? ?? 0);
+  Duration? get duration =>
+      raw['duration'] == null ? null : Duration(milliseconds: raw['duration']);
+
+  /// The site (its name) and audio it was watched with.
+  String get source => raw['source'];
+  bool get dub => raw['dub'] == true;
+
+  /// When it was saved, in milliseconds since the epoch; missing on entries from before it was kept.
+  int? get savedAt => raw['at'];
+}
 
 /// Watch progress: where the user stopped in each show (newest first, on-device, mirrored to the TV launcher's
 /// Continue watching row), what counts as a finished episode, and what that means for a show's episode list.
@@ -14,9 +34,9 @@ class WatchHistory {
   /// The latest write; reads wait for it so a page never sees history from before the player's last save.
   static Future<void> _writing = Future.value();
 
-  static Future<List<Map<String, dynamic>>> all() async {
+  static Future<List<WatchRecord>> all() async {
     await _writing;
-    return _read();
+    return [for (final r in await _read()) WatchRecord(r)];
   }
 
   static Future<List<Map<String, dynamic>>> _read() async {
@@ -26,8 +46,19 @@ class WatchHistory {
         : (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<Map<String, dynamic>?> of(Map media) async =>
-      (await all()).where((r) => r['media']['id'] == media['id']).firstOrNull;
+  static Future<WatchRecord?> of(Map media) => byId(media['id']);
+
+  static Future<WatchRecord?> byId(Object? id) async =>
+      (await all()).where((r) => r.show.id == id).firstOrNull;
+
+  /// Where to pick [episode] of [media] up again: the saved spot when it's the episode last left part-way, else
+  /// null (from the start). Off when Settings says not to resume.
+  static Future<Duration?> resumePoint(Map media, num episode) async {
+    if (!Settings.resume) return null;
+    final record = await of(media);
+    if (record == null || record.episode != episode) return null;
+    return record.position > Duration.zero ? record.position : null;
+  }
 
   /// Past the "counts as watched" point set in Settings.
   static bool finished(Duration position, Duration duration) =>
@@ -128,7 +159,7 @@ class WatchHistory {
       _key,
       jsonEncode(entries),
     );
-    syncWatchNext(entries);
+    syncWatchNext([for (final e in entries) WatchRecord(e)]);
   }
 }
 
@@ -169,7 +200,7 @@ class EpisodePlan {
   final int progress;
 
   /// This show's [WatchHistory] entry, if any.
-  final Map<String, dynamic>? record;
+  final WatchRecord? record;
 
   late final List<List<Episode>> pages;
 
@@ -181,18 +212,59 @@ class EpisodePlan {
 
   List<Episode> get shown => pages.isEmpty ? const [] : pages[page];
 
-  bool watched(Episode e) => e.number <= progress;
+  bool watched(Episode e) => isWatched(e, progress);
+
+  /// Whether [e] counts as watched with [progress] episodes tracked.
+  static bool isWatched(Episode e, int progress) => e.number <= progress;
+
+  /// The tracked progress that marks [e] watched, and the one that marks it (and those after it) unwatched.
+  static int progressWatching(Episode e) => e.number.toInt();
+  static int progressUnwatching(Episode e) => e.number.ceil() - 1;
 
   /// How far into [e] its saved resume point is, 0–1; null without one.
   double? resumedPart(Episode e) {
-    final position = record?['position'] as int?;
-    final duration = record?['duration'] as int?;
-    if (record?['episode'] != e.number ||
-        position == null ||
+    final r = record;
+    final duration = r?.duration;
+    if (r == null ||
+        r.episode != e.number ||
+        r.position == Duration.zero ||
         duration == null ||
-        duration <= 0) {
+        duration <= Duration.zero) {
       return null;
     }
-    return (position / duration).clamp(0.0, 1.0);
+    return (r.position.inMilliseconds / duration.inMilliseconds).clamp(
+      0.0,
+      1.0,
+    );
   }
+
+  /// What a show's main button does: go back to the saved spot when there is one, else play the next
+  /// unwatched episode of [episodes] (null while they load); null when there's nothing left to play.
+  static NextUp? nextUp(
+    WatchRecord? record,
+    List<Episode>? episodes,
+    int progress,
+  ) {
+    if (record != null) return ResumeSaved(record);
+    if (episodes == null) return null;
+    final next = EpisodePlan(episodes, progress: progress).upNext;
+    return next == null ? null : StartEpisode(next, first: progress == 0);
+  }
+}
+
+/// A show's main action; see [EpisodePlan.nextUp].
+sealed class NextUp {}
+
+/// Back to where [record] left off, from the saved spot when [midway] (and resuming is on), else its start.
+final class ResumeSaved extends NextUp {
+  ResumeSaved(this.record);
+  final WatchRecord record;
+  bool get midway => Settings.resume && record.position > Duration.zero;
+}
+
+/// Play [episode], the first unwatched one; [first] when nothing's been watched yet.
+final class StartEpisode extends NextUp {
+  StartEpisode(this.episode, {required this.first});
+  final Episode episode;
+  final bool first;
 }

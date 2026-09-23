@@ -163,6 +163,15 @@ class Downloads extends ChangeNotifier {
       )
       .firstOrNull;
 
+  /// The download that plays episode [number]: one in the chosen audio while the site can be reached (else the
+  /// site streams it), or one in either audio when it can't (something plays rather than nothing).
+  Download? toPlay(
+    Map media,
+    num number, {
+    required bool dub,
+    required bool online,
+  }) => find(media, number, dub: online ? dub : null);
+
   /// The download entry (in any state) for this episode and audio.
   Download? entry(Map media, num number, bool dub) => items
       .where(
