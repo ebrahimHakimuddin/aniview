@@ -34,7 +34,6 @@ class PlayerScreen extends StatefulWidget {
     required this.index,
     required this.dub,
     this.sourceName,
-    this.start,
   });
 
   final Map media;
@@ -44,7 +43,6 @@ class PlayerScreen extends StatefulWidget {
   final List<Episode> episodes;
   final int index;
   final bool dub;
-  final Duration? start; // resume point for the first episode
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -52,7 +50,15 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   final player = Player();
-  late final controller = VideoController(player);
+  late final controller = VideoController(
+    player,
+    configuration: Settings.directVideo
+        ? const VideoControllerConfiguration(
+            vo: 'mediacodec_embed',
+            hwdec: 'mediacodec',
+          )
+        : const VideoControllerConfiguration(),
+  );
   final _scaffold = GlobalKey<ScaffoldState>();
   late final session = PlaybackSession(widget.episodes, widget.index);
   int? _skipsRequested;
@@ -73,6 +79,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final List<StreamSubscription> _subs;
   final _playFocus = FocusNode();
   final _keys = FocusNode(debugLabel: 'player keys');
+  int _shownSecond = -1;
+  // Home on a TV or switching apps may be the last chance: the app can be closed from there.
+  late final _lifecycle = AppLifecycleListener(onHide: _saveHistory);
 
   int get index => session.index;
   List<VideoStream> get streams => session.streams;
@@ -91,6 +100,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       DeviceOrientation.landscapeRight,
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _lifecycle;
     ScreenBrightness().application.then((v) => brightness = v).ignore();
     Analytics.screen('/player', title: 'Player');
     _subs = [
@@ -123,7 +133,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }),
     ];
-    _load(index, at: widget.start);
+    _load(index);
     _scheduleHide();
   }
 
@@ -161,18 +171,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _playFocus.requestFocus();
     } else if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowRight) {
-      final step = key == LogicalKeyboardKey.arrowLeft ? -seek : seek;
-      final held = event is KeyRepeatEvent
-          ? session.hold(player.state.duration, step)
-          : null;
-      if (held != null) {
-        _hint(
-          formatDuration(held),
-          icon: step > 0 ? _forwardIcon : _replayIcon,
-        );
-      } else {
-        _seekBy(step);
-      }
+      _scrub(event);
     } else if (event is KeyDownEvent &&
         (key == LogicalKeyboardKey.select ||
             key == LogicalKeyboardKey.enter ||
@@ -206,10 +205,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return true;
   }
 
+  /// Left/right: a step per press, or a scrub while held that lands on release (see [_onKey]).
+  void _scrub(KeyEvent event) {
+    final seek = Settings.seekSeconds;
+    final step = event.logicalKey == LogicalKeyboardKey.arrowLeft
+        ? -seek
+        : seek;
+    final held = event is KeyRepeatEvent
+        ? session.hold(player.state.duration, step)
+        : null;
+    if (held != null) {
+      _hint(formatDuration(held), icon: step > 0 ? _forwardIcon : _replayIcon);
+    } else {
+      _seekBy(step);
+    }
+  }
+
   @override
   void dispose() {
     _playFocus.dispose();
     _keys.dispose();
+    _lifecycle.dispose();
     _saveHistory();
     for (final sub in _subs) {
       sub.cancel();
@@ -239,6 +255,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted) return;
     try {
       final target = widget.episodes[i];
+      // Picked from anywhere (details, downloads, the episode list), an episode resumes where it was left.
+      if (at == null && Settings.resume) {
+        final record = await WatchHistory.of(widget.media);
+        if (!mounted || index != i) return;
+        if (record?['episode'] == target.number) {
+          at = Duration(milliseconds: record!['position'] as int? ?? 0);
+        }
+      }
       final source = widget.source;
       // A download wins even when online; match the audio unless the site can't be reached anyway.
       final offline = Downloads.instance.find(
@@ -396,7 +420,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _hint('Skipped ${_skipName(skip.type)}');
     }
     if (session.dueForSave(position)) _saveHistory();
-    _refresh();
+    if (position.inSeconds != _shownSecond) {
+      _shownSecond = position.inSeconds;
+      _refresh();
+    }
   }
 
   void _checkWatched(Duration position, Duration duration) {
@@ -566,8 +593,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // On TV, Back first hides the controls, like Netflix.
     return PopScope(
       canPop: !(isTv && controls && !locked),
+      // Saved on the way out, not in dispose: the page underneath reloads history as soon as this pops.
       onPopInvokedWithResult: (didPop, _) =>
-          didPop ? null : setState(() => controls = false),
+          didPop ? _saveHistory() : setState(() => controls = false),
       child: Scaffold(
         key: _scaffold,
         backgroundColor: Colors.black,
@@ -739,6 +767,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   duration: const Duration(milliseconds: 200),
                   child: locked
                       ? _lockedOverlay()
+                      : isTv
+                      ? _tvOverlay(position, loading)
                       : _overlay(position, loading),
                 ),
               ),
@@ -845,14 +875,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ),
   );
 
-  Widget _overlay(Duration position, bool loading) {
-    final skip = Settings.skipMode == SkipMode.off
-        ? null
-        : session.activeSkip(position);
-    final duration = player.state.duration;
-    final shown = seekTarget ?? position;
-    final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);
-    final title = episode.title;
+  void _openEpisodes() {
+    if (!isTv) return _scaffold.currentState?.openEndDrawer();
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: const Color(0xF2101016),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: SizedBox(
+          width: 560,
+          height: MediaQuery.sizeOf(context).height * .8,
+          child: _EpisodeDrawer(
+            panel: true,
+            episodes: widget.episodes,
+            current: index,
+            media: widget.media,
+            onSelect: (i) {
+              Navigator.pop(context);
+              if (i != index) _load(i);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Episodes, server, subtitles, other app, speed and aspect ratio.
+  List<Widget> _menus() {
     final external = current?.subtitles ?? const <Subtitle>[];
     final embedded = player.state.tracks.subtitle
         .where(
@@ -862,6 +912,219 @@ class _PlayerScreenState extends State<PlayerScreen> {
               !external.any((s) => s.label == t.title),
         )
         .toList();
+    return [
+      if (widget.episodes.length > 1)
+        IconButton(
+          tooltip: 'Episodes',
+          icon: const Icon(Icons.video_library_rounded),
+          onPressed: _openEpisodes,
+        ),
+      if (streams.isNotEmpty && streams.contains(current))
+        DropdownButtonHideUnderline(
+          child: DropdownButton<VideoStream>(
+            value: current,
+            icon: const Icon(Icons.arrow_drop_down_rounded),
+            dropdownColor: const Color(0xF2101016),
+            borderRadius: BorderRadius.circular(12),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+            items: [
+              for (final s in streams)
+                DropdownMenuItem(value: s, child: Text(s.label)),
+            ],
+            onChanged: (s) => s == null || s == current
+                ? null
+                : _play(s, at: player.state.position),
+          ),
+        ),
+      if (external.isNotEmpty || embedded.isNotEmpty)
+        PopupMenuButton<Object>(
+          tooltip: 'Subtitles',
+          icon: Icon(
+            subtitle == 'Off'
+                ? Icons.subtitles_off_outlined
+                : Icons.subtitles_rounded,
+          ),
+          onSelected: (value) => switch (value) {
+            Subtitle s => _setExternal(current!, s),
+            SubtitleTrack t => _setSubtitle(
+              t,
+              t.title ?? t.language ?? 'Track ${t.id}',
+            ),
+            _ => _setSubtitle(SubtitleTrack.no(), 'Off'),
+          },
+          itemBuilder: (_) => [
+            _checked('Off', subtitle == 'Off', 'off'),
+            for (final s in external) _checked(s.label, subtitle == s.label, s),
+            for (final t in embedded)
+              _checked(
+                t.title ?? t.language ?? 'Track ${t.id}',
+                subtitle == (t.title ?? t.language),
+                t,
+              ),
+          ],
+        ),
+      IconButton(
+        tooltip: 'Open in another app',
+        icon: const Icon(Icons.open_in_new_rounded),
+        onPressed: current == null
+            ? null
+            : () async {
+                player.pause();
+                final at = await _playExternal(
+                  current!,
+                  at: player.state.position,
+                );
+                if (at != null && at > Duration.zero) player.seek(at);
+              },
+      ),
+      PopupMenuButton<double>(
+        tooltip: 'Speed',
+        icon: const Icon(Icons.speed_rounded),
+        onSelected: (r) {
+          setState(() => rate = r);
+          player.setRate(r);
+        },
+        itemBuilder: (_) => [
+          for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0])
+            _checked('$r×', r == rate, r),
+        ],
+      ),
+      IconButton(
+        tooltip: 'Aspect ratio',
+        icon: Icon(switch (fit) {
+          BoxFit.cover => Icons.crop_free_rounded,
+          BoxFit.fill => Icons.open_in_full_rounded,
+          _ => Icons.fit_screen_rounded,
+        }),
+        onPressed: () {
+          final (next, label) = switch (fit) {
+            BoxFit.contain => (BoxFit.cover, 'Fill'),
+            BoxFit.cover => (BoxFit.fill, 'Stretch'),
+            _ => (BoxFit.contain, 'Fit'),
+          };
+          setState(() => fit = next);
+          _hint(label, icon: Icons.aspect_ratio_rounded);
+        },
+      ),
+    ];
+  }
+
+  /// TV: the title up top, and the seek bar with a row of buttons along the bottom, like a TV streaming app.
+  /// The seek bar takes focus too; left/right on it scrub. No lock or gesture controls, which are for touch.
+  Widget _tvOverlay(Duration position, bool loading) {
+    final skip = Settings.skipMode == SkipMode.off
+        ? null
+        : session.activeSkip(position);
+    final duration = player.state.duration;
+    final shown = seekTarget ?? position;
+    final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);
+    final title = episode.title;
+    const tabular = TextStyle(
+      fontSize: 15,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(48, 32, 48, 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            titleOf(widget.media),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, color: Colors.white70),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Episode ${epNumber(episode.number)}${title == null ? '' : ' · $title'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+          ),
+          Text(
+            '$_sourceName${current == null ? '' : ' · ${current!.label}'}',
+            style: const TextStyle(fontSize: 13, color: Colors.white54),
+          ),
+          const Spacer(),
+          Focus(
+            onKeyEvent: (_, event) {
+              final key = event.logicalKey;
+              if (event is KeyUpEvent ||
+                  (key != LogicalKeyboardKey.arrowLeft &&
+                      key != LogicalKeyboardKey.arrowRight)) {
+                return KeyEventResult
+                    .ignored; // releases land the scrub in _onKey
+              }
+              _scheduleHide();
+              _scrub(event);
+              return KeyEventResult.handled;
+            },
+            child: Row(
+              children: [
+                Text(formatDuration(shown), style: tabular),
+                Expanded(
+                  child: ExcludeFocus(child: _seekBar(shown, duration, max)),
+                ),
+                Text(formatDuration(duration), style: tabular),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              loading
+                  ? const SizedBox(width: 48, height: 48)
+                  : _RoundButton(
+                      player.state.playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      () {
+                        player.playOrPause();
+                        _scheduleHide();
+                      },
+                      focusNode: _playFocus,
+                    ),
+              const SizedBox(width: 12),
+              if (index > 0) ...[
+                _RoundButton(
+                  Icons.skip_previous_rounded,
+                  () => _load(index - 1),
+                ),
+                const SizedBox(width: 12),
+              ],
+              if (hasNext) ...[
+                _RoundButton(Icons.skip_next_rounded, () => _load(index + 1)),
+                const SizedBox(width: 12),
+              ],
+              TextButton.icon(
+                onPressed: skip == null
+                    ? () => _seekBy(Settings.skipSeconds)
+                    : () => player.seek(skip.end),
+                icon: const Icon(Icons.double_arrow_rounded),
+                label: Text(
+                  skip == null
+                      ? '+${Settings.skipSeconds}s'
+                      : 'Skip ${_skipName(skip.type)}',
+                ),
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+              ),
+              const Spacer(),
+              ..._menus(),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _overlay(Duration position, bool loading) {
+    final skip = Settings.skipMode == SkipMode.off
+        ? null
+        : session.activeSkip(position);
+    final duration = player.state.duration;
+    final shown = seekTarget ?? position;
+    final max = duration.inMilliseconds.toDouble().clamp(1.0, double.infinity);
+    final title = episode.title;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -900,100 +1163,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ],
                   ),
                 ),
-                if (widget.episodes.length > 1)
-                  IconButton(
-                    tooltip: 'Episodes',
-                    icon: const Icon(Icons.video_library_rounded),
-                    onPressed: () => _scaffold.currentState?.openEndDrawer(),
-                  ),
-                if (streams.isNotEmpty && streams.contains(current))
-                  DropdownButtonHideUnderline(
-                    child: DropdownButton<VideoStream>(
-                      value: current,
-                      icon: const Icon(Icons.arrow_drop_down_rounded),
-                      dropdownColor: const Color(0xF2101016),
-                      borderRadius: BorderRadius.circular(12),
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                      items: [
-                        for (final s in streams)
-                          DropdownMenuItem(value: s, child: Text(s.label)),
-                      ],
-                      onChanged: (s) => s == null || s == current
-                          ? null
-                          : _play(s, at: player.state.position),
-                    ),
-                  ),
-                if (external.isNotEmpty || embedded.isNotEmpty)
-                  PopupMenuButton<Object>(
-                    tooltip: 'Subtitles',
-                    icon: Icon(
-                      subtitle == 'Off'
-                          ? Icons.subtitles_off_outlined
-                          : Icons.subtitles_rounded,
-                    ),
-                    onSelected: (value) => switch (value) {
-                      Subtitle s => _setExternal(current!, s),
-                      SubtitleTrack t => _setSubtitle(
-                        t,
-                        t.title ?? t.language ?? 'Track ${t.id}',
-                      ),
-                      _ => _setSubtitle(SubtitleTrack.no(), 'Off'),
-                    },
-                    itemBuilder: (_) => [
-                      _checked('Off', subtitle == 'Off', 'off'),
-                      for (final s in external)
-                        _checked(s.label, subtitle == s.label, s),
-                      for (final t in embedded)
-                        _checked(
-                          t.title ?? t.language ?? 'Track ${t.id}',
-                          subtitle == (t.title ?? t.language),
-                          t,
-                        ),
-                    ],
-                  ),
-                IconButton(
-                  tooltip: 'Open in another app',
-                  icon: const Icon(Icons.open_in_new_rounded),
-                  onPressed: current == null
-                      ? null
-                      : () async {
-                          player.pause();
-                          final at = await _playExternal(
-                            current!,
-                            at: player.state.position,
-                          );
-                          if (at != null && at > Duration.zero) player.seek(at);
-                        },
-                ),
-                PopupMenuButton<double>(
-                  tooltip: 'Speed',
-                  icon: const Icon(Icons.speed_rounded),
-                  onSelected: (r) {
-                    setState(() => rate = r);
-                    player.setRate(r);
-                  },
-                  itemBuilder: (_) => [
-                    for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0])
-                      _checked('$r×', r == rate, r),
-                  ],
-                ),
-                IconButton(
-                  tooltip: 'Aspect ratio',
-                  icon: Icon(switch (fit) {
-                    BoxFit.cover => Icons.crop_free_rounded,
-                    BoxFit.fill => Icons.open_in_full_rounded,
-                    _ => Icons.fit_screen_rounded,
-                  }),
-                  onPressed: () {
-                    final (next, label) = switch (fit) {
-                      BoxFit.contain => (BoxFit.cover, 'Fill'),
-                      BoxFit.cover => (BoxFit.fill, 'Stretch'),
-                      _ => (BoxFit.contain, 'Fit'),
-                    };
-                    setState(() => fit = next);
-                    _hint(label, icon: Icons.aspect_ratio_rounded);
-                  },
-                ),
+                ..._menus(),
               ],
             ),
             const Spacer(),
@@ -1204,6 +1374,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 /// Episodes in the order chosen on the details page (shared setting), with a jump-to-number field for long shows.
 class _EpisodeDrawer extends StatefulWidget {
   const _EpisodeDrawer({
+    this.panel = false,
     required this.episodes,
     required this.current,
     required this.media,
@@ -1214,6 +1385,9 @@ class _EpisodeDrawer extends StatefulWidget {
   final int current;
   final Map media;
   final ValueChanged<int> onSelect;
+
+  /// Inside the TV's episodes panel rather than a drawer.
+  final bool panel;
 
   @override
   State<_EpisodeDrawer> createState() => _EpisodeDrawerState();
@@ -1255,167 +1429,168 @@ class _EpisodeDrawerState extends State<_EpisodeDrawer> {
     final episodes = widget.episodes;
     final primary = Theme.of(context).colorScheme.primary;
     final progress = widget.media['mediaListEntry']?['progress'] as int? ?? 0;
-    return Drawer(
-      width: 400,
-      backgroundColor: const Color(0xF2101016),
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Episodes · ${episodes.length}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
+    final list = SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Episodes · ${episodes.length}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (episodes.length > _jumpAt)
+                  SizedBox(
+                    width: 96,
+                    child: TextField(
+                      keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.go,
+                      onSubmitted: _jump,
+                      decoration: const InputDecoration(
+                        hintText: 'Go to EP',
+                        isDense: true,
                       ),
                     ),
                   ),
-                  if (episodes.length > _jumpAt)
-                    SizedBox(
-                      width: 96,
-                      child: TextField(
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.go,
-                        onSubmitted: _jump,
-                        decoration: const InputDecoration(
-                          hintText: 'Go to EP',
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: newestFirst ? 'Newest first' : 'Oldest first',
-                    icon: const Icon(Icons.swap_vert_rounded),
-                    onPressed: () {
-                      setState(
-                        () => Settings.newestFirst = newestFirst = !newestFirst,
-                      );
-                      scroll.jumpTo(_offsetOf(widget.current));
-                    },
-                  ),
-                ],
-              ),
+                IconButton(
+                  tooltip: newestFirst ? 'Newest first' : 'Oldest first',
+                  icon: const Icon(Icons.swap_vert_rounded),
+                  onPressed: () {
+                    setState(
+                      () => Settings.newestFirst = newestFirst = !newestFirst,
+                    );
+                    scroll.jumpTo(_offsetOf(widget.current));
+                  },
+                ),
+              ],
             ),
-            Expanded(
-              child: ListView.builder(
-                controller: scroll,
-                padding: const EdgeInsets.only(bottom: 16),
-                itemCount: episodes.length,
-                itemExtent: _extent,
-                itemBuilder: (context, row) {
-                  final i = _row(row);
-                  final e = episodes[i];
-                  final playing = i == widget.current;
-                  return InkWell(
-                    autofocus: isTv && playing,
-                    onTap: () => widget.onSelect(i),
-                    child: Container(
-                      color: playing ? primary.withValues(alpha: .14) : null,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SizedBox(
-                              width: 120,
-                              height: 68,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  ColoredBox(
-                                    color: Colors.white.withValues(alpha: .06),
-                                    child: Center(
-                                      child: Text(
-                                        epNumber(e.number),
-                                        style: const TextStyle(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.white24,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  if (e.thumbnail != null)
-                                    Image.network(
-                                      e.thumbnail!,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) =>
-                                          const SizedBox(),
-                                    ),
-                                  if (playing)
-                                    const ColoredBox(
-                                      color: Color(0x88000000),
-                                      child: Center(
-                                        child: Icon(Icons.graphic_eq_rounded),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          Expanded(
+            child: ListView.builder(
+              controller: scroll,
+              padding: const EdgeInsets.only(bottom: 16),
+              itemCount: episodes.length,
+              itemExtent: _extent,
+              itemBuilder: (context, row) {
+                final i = _row(row);
+                final e = episodes[i];
+                final playing = i == widget.current;
+                return InkWell(
+                  autofocus: isTv && playing,
+                  onTap: () => widget.onSelect(i),
+                  child: Container(
+                    color: playing ? primary.withValues(alpha: .14) : null,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SizedBox(
+                            width: 120,
+                            height: 68,
+                            child: Stack(
+                              fit: StackFit.expand,
                               children: [
-                                Text(
-                                  'Episode ${epNumber(e.number)}',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: playing ? primary : null,
+                                ColoredBox(
+                                  color: Colors.white.withValues(alpha: .06),
+                                  child: Center(
+                                    child: Text(
+                                      epNumber(e.number),
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white24,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                if (e.title != null)
-                                  Text(
-                                    e.title!,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.white60,
+                                if (e.thumbnail != null)
+                                  Image.network(
+                                    e.thumbnail!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => const SizedBox(),
+                                  ),
+                                if (playing)
+                                  const ColoredBox(
+                                    color: Color(0x88000000),
+                                    child: Center(
+                                      child: Icon(Icons.graphic_eq_rounded),
                                     ),
                                   ),
                               ],
                             ),
                           ),
-                          if (Downloads.instance.find(widget.media, e.number) !=
-                              null)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 8),
-                              child: Icon(
-                                Icons.download_done_rounded,
-                                size: 18,
-                                color: Colors.white54,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Episode ${epNumber(e.number)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: playing ? primary : null,
+                                ),
                               ),
+                              if (e.title != null)
+                                Text(
+                                  e.title!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white60,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        if (Downloads.instance.find(widget.media, e.number) !=
+                            null)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: Icon(
+                              Icons.download_done_rounded,
+                              size: 18,
+                              color: Colors.white54,
                             ),
-                          if (e.number <= progress)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 8),
-                              child: Icon(
-                                Icons.check_circle_rounded,
-                                size: 18,
-                                color: Colors.white38,
-                              ),
+                          ),
+                        if (e.number <= progress)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: Icon(
+                              Icons.check_circle_rounded,
+                              size: 18,
+                              color: Colors.white38,
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+    if (widget.panel) return list;
+    return Drawer(
+      width: 400,
+      backgroundColor: const Color(0xF2101016),
+      child: list,
     );
   }
 }

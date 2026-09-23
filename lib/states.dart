@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'sources.dart';
+import 'tv.dart';
 
 const _danger = Color(0xFFFF8A8E);
 const _success = Color(0xFF4ADE80);
@@ -22,6 +23,40 @@ String friendlyError(Object error) => switch (error) {
     'The site sent something unexpected. It may have changed its layout',
   _ => '$error'.replaceFirst('Exception: ', ''),
 };
+
+/// A bottom sheet on phones; on TV, a panel in the middle of the screen, since a drawer from the bottom edge is
+/// a touch idiom.
+Future<T?> showSheet<T>(
+  BuildContext context,
+  WidgetBuilder builder, {
+  bool scrollControlled = false,
+}) => isTv
+    ? showDialog<T>(
+        context: context,
+        builder: (context) => Dialog(
+          backgroundColor: sheetColor,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 24, bottom: 8),
+              child: builder(context),
+            ),
+          ),
+        ),
+      )
+    : showModalBottomSheet<T>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: scrollControlled,
+        backgroundColor: sheetColor,
+        builder: builder,
+      );
+
+const sheetColor = Color(0xFF14141C);
 
 void showSuccess(BuildContext context, String message) =>
     _snack(context, message, Icons.check_circle_rounded, _success);

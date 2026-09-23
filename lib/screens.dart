@@ -17,7 +17,7 @@ import 'states.dart';
 import 'tv.dart';
 
 const background = Color(0xFF0A0A0F);
-const _sheet = Color(0xFF14141C);
+const _sheet = sheetColor;
 
 Future<void> openDetails(
   BuildContext context,
@@ -93,7 +93,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _railHome.dispose();
+    for (final node in _rail) {
+      node.dispose();
+    }
     _tvList.dispose();
     super.dispose();
   }
@@ -205,15 +207,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ).then((_) => mounted ? _reloadLists() : null);
 
   /// Netflix-style TV home: a side rail, a billboard for the focused show, and rows of posters under it.
-  final _railHome = FocusNode();
+  /// The D-pad stays in the rows; Left from their edge (or Back) opens the rail, which spreads out with
+  /// labels, and Right goes back to where you were.
+  final _rail = List.generate(4, (i) => FocusNode(debugLabel: 'rail $i'));
   final _tvList = ScrollController();
+  bool _railOpen = true; // starts on Home, like the launcher's apps
+  FocusNode? _lastInRows;
 
-  /// Back from anywhere on the TV home goes up to the rail first; from the rail it leaves the app.
+  void _openRail() {
+    _lastInRows = FocusManager.instance.primaryFocus;
+    setState(() => _railOpen = true);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _rail[0].requestFocus(),
+    );
+  }
+
+  void _closeRail() {
+    final back = _lastInRows;
+    if (back != null && back.context?.mounted == true) {
+      back.requestFocus();
+    } else {
+      _rail[0].focusInDirection(TraversalDirection.right);
+    }
+    setState(() => _railOpen = false);
+  }
+
+  KeyEventResult _rowsKey(FocusNode _, KeyEvent event) {
+    if (event is KeyUpEvent ||
+        event.logicalKey != LogicalKeyboardKey.arrowLeft) {
+      return KeyEventResult.ignored;
+    }
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary != null && !primary.focusInDirection(TraversalDirection.left)) {
+      _openRail();
+    }
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _railKey(FocusNode _, KeyEvent event) {
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    final i = _rail.indexWhere((n) => n.hasPrimaryFocus);
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowUp when i > 0:
+        _rail[i - 1].requestFocus();
+      case LogicalKeyboardKey.arrowDown when i < _rail.length - 1:
+        _rail[i + 1].requestFocus();
+      case LogicalKeyboardKey.arrowRight:
+        _closeRail();
+      case LogicalKeyboardKey.arrowUp ||
+          LogicalKeyboardKey.arrowDown ||
+          LogicalKeyboardKey.arrowLeft:
+        break; // the rail's ends
+      default:
+        return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
+  }
+
+  /// Back from the rows opens the rail; from the rail it leaves the app.
   Widget _tvHome() => PopScope(
     canPop: false,
     onPopInvokedWithResult: (didPop, _) {
       if (didPop) return;
-      if (_railHome.hasFocus) {
+      if (_railOpen) {
         SystemNavigator.pop();
         return;
       }
@@ -224,57 +280,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           curve: Curves.easeOutCubic,
         );
       }
-      _railHome.requestFocus();
+      _openRail();
+      _lastInRows = null; // back to the first row
     },
     child: Scaffold(
       backgroundColor: background,
-      body: Row(
+      body: Stack(
         children: [
-          _TvRail(
-            homeFocus: _railHome,
-            onSearch: () => _push(const SearchScreen()),
-            onDownloads: () => _push(const DownloadsScreen()),
-            onSettings: _openSettings,
+          Padding(
+            padding: const EdgeInsets.only(left: _TvRail.width),
+            child: Focus(
+              canRequestFocus: false,
+              skipTraversal: true,
+              onKeyEvent: _rowsKey,
+              child: FutureBuilder(
+                future: trending,
+                builder: (context, snap) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      height: MediaQuery.sizeOf(context).height * .42,
+                      child: ValueListenableBuilder(
+                        valueListenable: focusedMedia,
+                        builder: (context, focused, _) {
+                          final media = focused ?? snap.data?.firstOrNull;
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            child: media == null
+                                ? const SizedBox.expand()
+                                : _Billboard(media, key: ValueKey(media['id'])),
+                          );
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        controller: _tvList,
+                        padding: const EdgeInsets.only(bottom: 48),
+                        children: [
+                          if (snap.hasError && _downloaded.isNotEmpty)
+                            _Shelf(
+                              'Downloaded',
+                              _downloaded,
+                              onBack: _reloadLists,
+                            ),
+                          for (final (section, shown) in Settings.homeSections)
+                            if (shown && section != HomeSection.featured)
+                              _section(section, snap),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          Expanded(
-            child: FutureBuilder(
-              future: trending,
-              builder: (context, snap) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    height: MediaQuery.sizeOf(context).height * .42,
-                    child: ValueListenableBuilder(
-                      valueListenable: focusedMedia,
-                      builder: (context, focused, _) {
-                        final media = focused ?? snap.data?.firstOrNull;
-                        return AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 300),
-                          child: media == null
-                              ? const SizedBox.expand()
-                              : _Billboard(media, key: ValueKey(media['id'])),
-                        );
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView(
-                      controller: _tvList,
-                      padding: const EdgeInsets.only(bottom: 48),
-                      children: [
-                        if (snap.hasError && _downloaded.isNotEmpty)
-                          _Shelf(
-                            'Downloaded',
-                            _downloaded,
-                            onBack: _reloadLists,
-                          ),
-                        for (final (section, shown) in Settings.homeSections)
-                          if (shown && section != HomeSection.featured)
-                            _section(section, snap),
-                      ],
-                    ),
-                  ),
-                ],
+          // The rail only takes focus while it's open, so Up and Down never wander into it.
+          ExcludeFocus(
+            excluding: !_railOpen,
+            child: Focus(
+              canRequestFocus: false,
+              skipTraversal: true,
+              onKeyEvent: _railKey,
+              child: _TvRail(
+                open: _railOpen,
+                focusNodes: _rail,
+                onSearch: () => _push(const SearchScreen()),
+                onDownloads: () => _push(const DownloadsScreen()),
+                onSettings: _openSettings,
+                onHome: _closeRail,
               ),
             ),
           ),
@@ -498,11 +572,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _removeFromHistory(Map<String, dynamic> record) async {
     HapticFeedback.mediumImpact();
-    final remove = await showModalBottomSheet<bool>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: _sheet,
-      builder: (context) => SafeArea(
+    final remove = await showSheet<bool>(
+      context,
+      (context) => SafeArea(
         child: ListTile(
           leading: const Icon(Icons.history_toggle_off_rounded),
           title: const Text('Remove from recently watched'),
@@ -851,50 +923,149 @@ class _HeroPage extends StatelessWidget {
   }
 }
 
+/// The TV home's side rail: icons along the edge, spreading out over the rows with their names while it has
+/// focus. The focused item is a white pill (instead of the focus ring); Home stays tinted as the current page.
 class _TvRail extends StatelessWidget {
   const _TvRail({
-    required this.homeFocus,
+    required this.open,
+    required this.focusNodes,
+    required this.onHome,
     required this.onSearch,
     required this.onDownloads,
     required this.onSettings,
   });
 
-  final FocusNode homeFocus;
-  final VoidCallback onSearch, onDownloads, onSettings;
+  static const width = 76.0;
+
+  final bool open;
+  final List<FocusNode> focusNodes;
+  final VoidCallback onHome, onSearch, onDownloads, onSettings;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 76,
-    color: Colors.black.withValues(alpha: .35),
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        for (final (icon, label, onTap) in [
-          (Icons.home_rounded, 'Home', null),
-          (Icons.search_rounded, 'Search', onSearch),
-          (Icons.download_for_offline_outlined, 'Downloads', onDownloads),
-          (Icons.settings_outlined, 'Settings', onSettings),
-        ])
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: IconButton(
-              tooltip: label,
-              iconSize: 28,
-              autofocus: onTap == null,
-              focusNode: onTap == null ? homeFocus : null,
-              isSelected: onTap == null,
-              color: Colors.white60,
-              selectedIcon: Icon(
-                icon,
-                color: Theme.of(context).colorScheme.primary,
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    const ease = Duration(milliseconds: 220);
+    return NoFocusRing(
+      child: Stack(
+        children: [
+          // Dims the rows behind the open rail.
+          IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: open ? 1 : 0,
+              duration: ease,
+              child: const SizedBox(
+                width: 520,
+                height: double.infinity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xF20A0A0F),
+                        Color(0xB30A0A0F),
+                        Colors.transparent,
+                      ],
+                      stops: [0, .4, 1],
+                    ),
+                  ),
+                ),
               ),
-              icon: Icon(icon),
-              onPressed: onTap ?? () {},
             ),
           ),
-      ],
-    ),
-  );
+          AnimatedContainer(
+            duration: ease,
+            curve: Curves.easeOutCubic,
+            width: open ? 232 : width,
+            clipBehavior: Clip.hardEdge,
+            decoration: BoxDecoration(
+              color: open
+                  ? Colors.transparent
+                  : Colors.black.withValues(alpha: .35),
+            ),
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: 232,
+              maxWidth: 232,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final (i, (icon, label, onTap)) in [
+                    (Icons.home_rounded, 'Home', onHome),
+                    (Icons.search_rounded, 'Search', onSearch),
+                    (
+                      Icons.download_for_offline_outlined,
+                      'Downloads',
+                      onDownloads,
+                    ),
+                    (Icons.settings_outlined, 'Settings', onSettings),
+                  ].indexed)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 6, 14, 6),
+                      child: ListenableBuilder(
+                        listenable: focusNodes[i],
+                        builder: (context, _) {
+                          final focused = focusNodes[i].hasFocus;
+                          final color = focused
+                              ? Colors.black
+                              : i == 0
+                              ? primary
+                              : Colors.white70;
+                          return InkWell(
+                            focusNode: focusNodes[i],
+                            autofocus: i == 0,
+                            onTap: onTap,
+                            borderRadius: BorderRadius.circular(24),
+                            focusColor: Colors.transparent,
+                            child: AnimatedContainer(
+                              duration: ease,
+                              curve: Curves.easeOutCubic,
+                              height: 48,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: focused
+                                    ? Colors.white
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(icon, size: 24, color: color),
+                                  const SizedBox(width: 18),
+                                  Flexible(
+                                    child: AnimatedOpacity(
+                                      opacity: open ? 1 : 0,
+                                      duration: ease,
+                                      child: Text(
+                                        label,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: focused
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                          color: color,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// The focused show on the TV home: its artwork on the right, fading into its details on the left.
@@ -1100,7 +1271,8 @@ class _Shelf extends StatelessWidget {
                 ),
               ),
             ),
-            if (onSeeAll != null)
+            // On TV it's the last tile of the row, where the D-pad can reach it.
+            if (onSeeAll != null && !isTv)
               TextButton(onPressed: onSeeAll, child: const Text('See all')),
           ],
         ),
@@ -1112,20 +1284,55 @@ class _Shelf extends StatelessWidget {
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-          itemCount: items.length,
+          itemCount: items.length + (isTv && onSeeAll != null ? 1 : 0),
           separatorBuilder: (_, _) => const SizedBox(width: 14),
           itemBuilder: (context, i) => SizedBox(
             width: isTv ? 104 : 136,
-            child: PosterCard(
-              items[i],
-              onBack: onBack,
-              subtitle: subtitles?[i],
-              onLongPress: onLongPress == null ? null : () => onLongPress!(i),
-            ),
+            child: i == items.length
+                ? _SeeAllTile(onSeeAll!)
+                : PosterCard(
+                    items[i],
+                    onBack: onBack,
+                    subtitle: subtitles?[i],
+                    onLongPress: onLongPress == null
+                        ? null
+                        : () => onLongPress!(i),
+                  ),
           ),
         ),
       ),
     ],
+  );
+}
+
+/// A shelf's "See all", as a poster-sized tile at the end of the row.
+class _SeeAllTile extends StatelessWidget {
+  const _SeeAllTile(this.onTap);
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.topCenter,
+    child: AspectRatio(
+      aspectRatio: 2 / 3,
+      child: Material(
+        color: Colors.white.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.arrow_forward_rounded, size: 30),
+              SizedBox(height: 8),
+              Text('See all', style: TextStyle(fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+      ),
+    ),
   );
 }
 
@@ -1216,6 +1423,8 @@ class PosterCard extends StatelessWidget {
         (progress == null
             ? null
             : 'EP $progress${total == null ? '' : ' / $total'}');
+    void open() =>
+        openDetails(context, media, onBack: onBack, heroTag: context);
     return Semantics(
       button: true,
       label: [titleOf(media), ?line].join(', '),
@@ -1269,49 +1478,53 @@ class PosterCard extends StatelessWidget {
                               backgroundColor: Colors.black54,
                             ),
                           ),
+                        // On top, so the ripple shows over the artwork.
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: open,
+                            onLongPress: onLongPress,
+                            onHighlightChanged: onHighlightChanged,
+                            onFocusChange: (focused) {
+                              if (focused) _focusPoster(context, media);
+                            },
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  titleOf(media),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    height: 1.25,
-                  ),
-                ),
-                if (line != null)
-                  Text(
-                    line,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: Colors.white70),
-                  ),
-              ],
-            ),
-            // On top, so the ripple shows over the artwork.
-            Positioned.fill(
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: () => openDetails(
-                    context,
-                    media,
-                    onBack: onBack,
-                    heroTag: context,
-                  ),
+                GestureDetector(
+                  onTap: open,
                   onLongPress: onLongPress,
-                  onHighlightChanged: onHighlightChanged,
-                  onFocusChange: (focused) {
-                    if (focused) _focusPoster(context, media);
-                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titleOf(media),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                      if (line != null)
+                        Text(
+                          line,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white70,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -1480,12 +1693,10 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _openFilters() async {
-    final picked = await showModalBottomSheet<SearchFilters>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      backgroundColor: _sheet,
-      builder: (_) => _FilterSheet(filters),
+    final picked = await showSheet<SearchFilters>(
+      context,
+      scrollControlled: true,
+      (_) => _FilterSheet(filters),
     );
     if (picked == null || !mounted) return;
     _setFilters(picked);
@@ -1555,7 +1766,8 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
       title: TextField(
         controller: controller,
-        autofocus: widget.filters == null && !widget.voice,
+        // On TV the mic comes first: focusing the field opens the on-screen keyboard over everything.
+        autofocus: widget.filters == null && !widget.voice && !isTv,
         textInputAction: TextInputAction.search,
         onChanged: _search,
         onSubmitted: (text) => _search(text, now: true),
@@ -1566,6 +1778,7 @@ class _SearchScreenState extends State<SearchScreen> {
         if (isTv)
           IconButton(
             tooltip: 'Search by voice',
+            autofocus: widget.filters == null && !widget.voice,
             onPressed: _listen,
             icon: const Icon(Icons.mic_rounded),
           ),
@@ -1919,11 +2132,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       setState(() => Settings.episodeTipSeen = true);
     }
     final download = Downloads.instance.entry(media, episode.number, dub);
-    final action = await showModalBottomSheet<VoidCallback>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: _sheet,
-      builder: (context) => SafeArea(
+    final action = await showSheet<VoidCallback>(
+      context,
+      (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2069,14 +2280,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _editEntry() async {
     final entry = media['mediaListEntry'] as Map?;
     final result =
-        await showModalBottomSheet<
-          ({String status, int progress, bool remove})
-        >(
-          context: context,
-          showDragHandle: true,
-          isScrollControlled: true,
-          backgroundColor: _sheet,
-          builder: (_) => _EntrySheet(
+        await showSheet<({String status, int progress, bool remove})>(
+          context,
+          scrollControlled: true,
+          (_) => _EntrySheet(
             status: entry?['status'],
             progress: entry?['progress'] as int? ?? 0,
             total: media['episodes'] as int?,
@@ -2113,12 +2320,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _fixMatch() async {
     final current = source;
     if (current == null) return;
-    final picked = await showModalBottomSheet<SearchResult>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: _sheet,
-      builder: (_) => _MatchSheet(source: current, query: titleOf(media)),
+    final picked = await showSheet<SearchResult>(
+      context,
+      scrollControlled: true,
+      (_) => _MatchSheet(source: current, query: titleOf(media)),
     );
     if (picked == null || !mounted) return;
     await setMatch(current, media, picked.id);
@@ -2145,6 +2350,115 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final description = (media['description'] as String? ?? '')
         .replaceAll(RegExp(r'<[^>]*>'), '')
         .trim();
+    final genres = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final genre in media['genres'])
+          ActionChip(
+            label: Text('$genre'),
+            tooltip: 'Browse $genre',
+            visualDensity: VisualDensity.compact,
+            side: BorderSide.none,
+            backgroundColor: Colors.white.withValues(alpha: .06),
+            onPressed: () =>
+                openSearch(context, SearchFilters(genres: {'$genre'})),
+          ),
+      ],
+    );
+    // An InkWell so the D-pad can reach it on TV to read the rest.
+    final about = InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(() => expanded = !expanded),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        alignment: Alignment.topCenter,
+        child: Text(
+          description,
+          maxLines: expanded ? null : (isTv ? 3 : 4),
+          overflow: expanded ? null : TextOverflow.fade,
+          style: const TextStyle(color: Colors.white70, height: 1.5),
+        ),
+      ),
+    );
+    final dubToggle = SegmentedButton<bool>(
+      segments: const [
+        ButtonSegment(value: false, label: Text('SUB')),
+        ButtonSegment(value: true, label: Text('DUB')),
+      ],
+      selected: {dub},
+      showSelectedIcon: false,
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      onSelectionChanged: (s) => setState(() => dub = s.first),
+    );
+    final seasonMenu = FutureBuilder(
+      future: episodes,
+      builder: (context, snap) {
+        final list = snap.data, site = source;
+        if (list == null || list.isEmpty || site == null) {
+          return const SizedBox.shrink();
+        }
+        return PopupMenuButton<VoidCallback>(
+          tooltip: 'Season actions',
+          icon: const Icon(Icons.more_vert_rounded),
+          color: _sheet,
+          onSelected: (action) => action(),
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: () => _downloadSeason(site, list, progress),
+              child: const ListTile(
+                leading: Icon(Icons.download_rounded),
+                title: Text('Download episodes…'),
+              ),
+            ),
+            if (Tracker.signedIn)
+              PopupMenuItem(
+                value: () => _markWatched(
+                  list.fold(0, (n, e) => e.number > n ? e.number.toInt() : n),
+                ),
+                child: const ListTile(
+                  leading: Icon(Icons.done_all_rounded),
+                  title: Text('Mark season watched'),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+
+    if (isTv) {
+      return _tvLayout(
+        progress: progress,
+        meta: meta,
+        airing: airing,
+        about: description.isEmpty ? null : about,
+        genres: genres,
+        actions: [
+          _continueButton(progress),
+          dubToggle,
+          _sourcePicker(),
+          if (Tracker.signedIn)
+            FilledButton.tonalIcon(
+              onPressed: _editEntry,
+              icon: Icon(
+                entry == null
+                    ? Icons.bookmark_add_outlined
+                    : Icons.bookmark_rounded,
+              ),
+              label: Text(
+                '${_ProgressCard.labels[entry?['status']] ?? 'Add to list'} · $progress/${total ?? '?'}',
+              ),
+            ),
+          seasonMenu,
+          if (source != null)
+            IconButton(
+              tooltip: 'Wrong show? Pick the right one',
+              onPressed: _fixMatch,
+              icon: const Icon(Icons.swap_horiz_rounded),
+            ),
+        ],
+      );
+    }
 
     final info = <Widget>[
       Row(
@@ -2221,41 +2535,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       ],
       if ((media['genres'] as List).isNotEmpty) ...[
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final genre in media['genres'])
-              ActionChip(
-                label: Text('$genre'),
-                tooltip: 'Browse $genre',
-                visualDensity: VisualDensity.compact,
-                side: BorderSide.none,
-                backgroundColor: Colors.white.withValues(alpha: .06),
-                onPressed: () =>
-                    openSearch(context, SearchFilters(genres: {'$genre'})),
-              ),
-          ],
-        ),
+        genres,
       ],
-      if (description.isNotEmpty) ...[
-        const SizedBox(height: 16),
-        // An InkWell so the D-pad can reach it on TV to read the rest.
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => expanded = !expanded),
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            alignment: Alignment.topCenter,
-            child: Text(
-              description,
-              maxLines: expanded ? null : (isTv ? 6 : 4),
-              overflow: expanded ? null : TextOverflow.fade,
-              style: const TextStyle(color: Colors.white70, height: 1.5),
-            ),
-          ),
-        ),
-      ],
+      if (description.isNotEmpty) ...[const SizedBox(height: 16), about],
       FutureBuilder(
         future: relations,
         builder: (context, snap) => Column(
@@ -2278,57 +2560,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const Spacer(),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(value: false, label: Text('SUB')),
-              ButtonSegment(value: true, label: Text('DUB')),
-            ],
-            selected: {dub},
-            showSelectedIcon: false,
-            style: const ButtonStyle(visualDensity: VisualDensity.compact),
-            onSelectionChanged: (s) => setState(() => dub = s.first),
-          ),
-          FutureBuilder(
-            future: episodes,
-            builder: (context, snap) {
-              final list = snap.data, site = source;
-              if (list == null || list.isEmpty || site == null) {
-                return const SizedBox.shrink();
-              }
-              return PopupMenuButton<VoidCallback>(
-                tooltip: 'Season actions',
-                icon: const Icon(Icons.more_vert_rounded),
-                color: _sheet,
-                onSelected: (action) => action(),
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                    value: () => _downloadSeason(site, list, progress),
-                    child: const ListTile(
-                      leading: Icon(Icons.download_rounded),
-                      title: Text('Download episodes…'),
-                    ),
-                  ),
-                  if (Tracker.signedIn)
-                    PopupMenuItem(
-                      value: () => _markWatched(
-                        list.fold(
-                          0,
-                          (n, e) => e.number > n ? e.number.toInt() : n,
-                        ),
-                      ),
-                      child: const ListTile(
-                        leading: Icon(Icons.done_all_rounded),
-                        title: Text('Mark season watched'),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
+          dubToggle,
+          seasonMenu,
         ],
       ),
       const SizedBox(height: 12),
-      _sourcePicker(),
+      Align(alignment: Alignment.centerLeft, child: _sourcePicker()),
       if (source != null)
         Align(
           alignment: Alignment.centerLeft,
@@ -2339,7 +2576,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
         ),
     ];
-    if (isTv) return _tvLayout(progress, info, episodesHeader);
     return Scaffold(
       backgroundColor: background,
       floatingActionButton: _continueButton(progress),
@@ -2386,66 +2622,178 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// TV: the show's art behind two panes, its details (with the play button up top) on the left and the
-  /// episodes on the right, each scrolling on its own as the D-pad moves.
-  Widget _tvLayout(
-    int progress,
-    List<Widget> info,
-    List<Widget> episodesHeader,
-  ) => Scaffold(
-    backgroundColor: background,
-    body: Stack(
-      fit: StackFit.expand,
-      children: [
-        Opacity(
-          opacity: .35,
-          child: _Img(
-            media['bannerImage'] ?? media['coverImage']['extraLarge'],
-            color: media['coverImage']['color'],
-          ),
-        ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [background, Color(0xCC0A0A0F), Color(0x660A0A0F)],
-            ),
-          ),
-        ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: MediaQuery.sizeOf(context).width * .42,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(32, 32, 16, 32),
+  /// TV: the show's art fills the screen behind its title, details and a row of actions (play first), with
+  /// the episodes in a row of stills under them, then genres and related shows. The page glides down to
+  /// whichever part has focus.
+  Widget _tvLayout({
+    required int progress,
+    required String meta,
+    required String? airing,
+    required Widget? about,
+    required Widget genres,
+    required List<Widget> actions,
+  }) {
+    final height = MediaQuery.sizeOf(context).height;
+    return Scaffold(
+      backgroundColor: background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Align(
+            alignment: Alignment.topRight,
+            child: FractionallySizedBox(
+              widthFactor: .7,
+              heightFactor: .8,
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  ...info.take(1), // poster and title
-                  const SizedBox(height: 20),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: _continueButton(progress),
+                  _Img(
+                    media['bannerImage'] ?? media['coverImage']['extraLarge'],
+                    color: media['coverImage']['color'],
                   ),
-                  ...info.skip(1),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          background,
+                          Color(0x990A0A0F),
+                          Colors.transparent,
+                        ],
+                        stops: [0, .45, 1],
+                      ),
+                    ),
+                  ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, background],
+                        stops: [.5, 1],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            Expanded(
-              child: CustomScrollView(
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 32, 0),
-                    sliver: SliverList.list(children: episodesHeader),
+          ),
+          CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: height * .6),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(48, 40, 48, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        FractionallySizedBox(
+                          widthFactor: .55,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                titleOf(media),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.1,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  if (media['averageScore'] != null) ...[
+                                    _Score(
+                                      media['averageScore'],
+                                      compact: true,
+                                    ),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  Flexible(
+                                    child: Text(
+                                      meta,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  ),
+                                  if (airing != null) ...[
+                                    const SizedBox(width: 10),
+                                    _AiringBadge('Next: $airing'),
+                                  ],
+                                ],
+                              ),
+                              if (about != null) ...[
+                                const SizedBox(height: 12),
+                                about,
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: actions,
+                        ),
+                      ],
+                    ),
                   ),
-                  _episodeList(progress),
-                  const SliverToBoxAdapter(child: SizedBox(height: 32)),
-                ],
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(48, 28, 48, 8),
+                  child: Text(
+                    'Episodes',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              _episodeList(progress),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(48, 28, 48, 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if ((media['genres'] as List).isNotEmpty) genres,
+                      FutureBuilder(
+                        future: relations,
+                        builder: (context, snap) => Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            for (final (type, related)
+                                in snap.data ?? const <(String, Map)>[])
+                              Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: SizedBox(
+                                  width: 380,
+                                  child: _RelationTile(type, related),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   /// Resume the saved spot for this show, else continue after the tracked progress on the selected source.
   Widget _continueButton(int progress) => FutureBuilder(
@@ -2516,10 +2864,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
     }
     if (sources == null) {
-      return const Align(
-        alignment: Alignment.centerLeft,
-        child: Skeleton(width: 160, height: 44, radius: 22),
-      );
+      return const Skeleton(width: 160, height: 44, radius: 22);
     }
     if (sources!.isEmpty) {
       return const EmptyState(
@@ -2529,32 +2874,26 @@ class _DetailsScreenState extends State<DetailsScreen> {
         message: "None of everythingmoe's top sites are supported yet.",
       );
     }
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.only(left: 16, right: 8),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .06),
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<Source>(
-            value: source,
-            icon: const Icon(Icons.arrow_drop_down_rounded),
-            dropdownColor: _sheet,
-            borderRadius: BorderRadius.circular(12),
-            style: const TextStyle(fontWeight: FontWeight.w600),
-            items: [
-              for (final (i, s) in sources!.indexed)
-                DropdownMenuItem(
-                  value: s,
-                  child: Text('#${i + 1}  ${s.label}'),
-                ),
-            ],
-            onChanged: (s) {
-              if (s != null && s != source) _select(s);
-            },
-          ),
+    return Container(
+      padding: const EdgeInsets.only(left: 16, right: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .06),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<Source>(
+          value: source,
+          icon: const Icon(Icons.arrow_drop_down_rounded),
+          dropdownColor: _sheet,
+          borderRadius: BorderRadius.circular(12),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+          items: [
+            for (final (i, s) in sources!.indexed)
+              DropdownMenuItem(value: s, child: Text('#${i + 1}  ${s.label}')),
+          ],
+          onChanged: (s) {
+            if (s != null && s != source) _select(s);
+          },
         ),
       ),
     );
@@ -2596,12 +2935,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final pages = plan.pages;
     final current = plan.page;
     final shown = plan.shown;
+    Widget tile(BuildContext _, int i) =>
+        _episode(i, plan, list, playable, site);
     return SliverMainAxisGroup(
       slivers: [
         if (!Settings.episodeTipSeen && list.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 8, 4),
+              padding: EdgeInsets.fromLTRB(isTv ? 48 : 20, 0, 8, 4),
               child: Row(
                 children: [
                   const Icon(
@@ -2634,7 +2975,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         if (list.length > 1)
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 0, 4),
+              padding: EdgeInsets.fromLTRB(isTv ? 40 : 12, 0, 0, 4),
               child: Row(
                 children: [
                   TextButton.icon(
@@ -2671,76 +3012,86 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ),
             ),
           ),
-        SliverList.builder(
-          itemCount: shown.length,
-          itemBuilder: (context, i) {
-            final episode = shown[i];
-            final watched = plan.watched(episode);
-            final saved = site != null || playable.contains(episode);
-            return _EpisodeTile(
-              episode,
-              watched: watched,
-              upNext: episode == plan.upNext,
-              watchedPart: plan.resumedPart(episode),
-              onLongPress: () => _episodeActions(
-                episode,
-                watched: watched,
-                site: site,
-                season: list,
-              ),
-              trailing: site == null
-                  ? saved
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Icon(
-                              Icons.download_done_rounded,
-                              color: Colors.white54,
-                            ),
-                          )
-                        : null
-                  : _DownloadButton(
-                      media: media,
-                      source: site,
-                      episode: episode,
-                      season: list,
-                      dub: dub,
-                    ),
-              onTap: () async {
-                if (!saved) {
-                  showError(
-                    context,
-                    "Episode ${epNumber(episode.number)} isn't downloaded",
-                  );
-                  return;
-                }
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PlayerScreen(
-                      media: media,
-                      source: site,
-                      sourceName:
-                          site?.name ??
-                          Downloads.instance
-                              .forMedia(media)
-                              .firstOrNull
-                              ?.source,
-                      episodes: playable,
-                      index: playable.indexOf(episode),
-                      dub: dub,
-                    ),
-                  ),
-                );
-                if (mounted) {
-                  setState(
-                    () => record = WatchHistory.of(media),
-                  ); // progress and resume point changed
-                }
-              },
-            );
-          },
-        ),
+        if (isTv)
+          SliverToBoxAdapter(
+            child: _EpisodeRow(
+              key: ValueKey((current, newestFirst, dub)),
+              count: shown.length,
+              start: plan.upNext == null ? 0 : shown.indexOf(plan.upNext!),
+              itemBuilder: tile,
+            ),
+          )
+        else
+          SliverList.builder(itemCount: shown.length, itemBuilder: tile),
       ],
+    );
+  }
+
+  Widget _episode(
+    int i,
+    EpisodePlan plan,
+    List<Episode> list,
+    List<Episode> playable,
+    Source? site,
+  ) {
+    final episode = plan.shown[i];
+    final watched = plan.watched(episode);
+    final saved = site != null || playable.contains(episode);
+    return _EpisodeTile(
+      episode,
+      watched: watched,
+      upNext: episode == plan.upNext,
+      watchedPart: plan.resumedPart(episode),
+      onLongPress: () =>
+          _episodeActions(episode, watched: watched, site: site, season: list),
+      trailing: isTv
+          ? null
+          : site == null
+          ? saved
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Icon(
+                      Icons.download_done_rounded,
+                      color: Colors.white54,
+                    ),
+                  )
+                : null
+          : _DownloadButton(
+              media: media,
+              source: site,
+              episode: episode,
+              season: list,
+              dub: dub,
+            ),
+      onTap: () async {
+        if (!saved) {
+          showError(
+            context,
+            "Episode ${epNumber(episode.number)} isn't downloaded",
+          );
+          return;
+        }
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PlayerScreen(
+              media: media,
+              source: site,
+              sourceName:
+                  site?.name ??
+                  Downloads.instance.forMedia(media).firstOrNull?.source,
+              episodes: playable,
+              index: playable.indexOf(episode),
+              dub: dub,
+            ),
+          ),
+        );
+        if (mounted) {
+          setState(
+            () => record = WatchHistory.of(media),
+          ); // progress and resume point changed
+        }
+      },
     );
   }
 
@@ -2788,6 +3139,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
       future: episodes,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
+          if (isTv) {
+            return SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(48, 8, 0, 77),
+                child: Row(
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 16),
+                        child: Skeleton(width: 240, height: 135, radius: 10),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }
           return SliverList.builder(
             itemCount: 6,
             itemBuilder: (_, _) => const EpisodeSkeleton(),
@@ -3309,11 +3676,11 @@ class _EpisodeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final thumbnail = episode.thumbnail;
     final title = episode.title;
     final overview = episode.overview;
     final accent = Theme.of(context).colorScheme.primary;
     final part = watchedPart;
+    if (isTv) return _card(context, accent);
     return PressScale(
       builder: (onHighlightChanged) => InkWell(
         onTap: onTap,
@@ -3324,81 +3691,7 @@ class _EpisodeTile extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutCubic,
-                width: 128,
-                height: 72,
-                foregroundDecoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  border: upNext ? Border.all(color: accent, width: 2) : null,
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ColoredBox(
-                        color: Colors.white.withValues(alpha: .05),
-                        child: Center(
-                          child: Text(
-                            epNumber(episode.number),
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white24,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (thumbnail != null)
-                        AnimatedOpacity(
-                          opacity: watched ? .4 : 1,
-                          duration: const Duration(milliseconds: 250),
-                          child: _Img(
-                            thumbnail,
-                            transparent: true,
-                            decodeWidth: 128,
-                          ),
-                        ),
-                      if (!watched && thumbnail != null)
-                        Center(
-                          child: Icon(
-                            Icons.play_circle_fill_rounded,
-                            size: 30,
-                            color: Colors.white.withValues(alpha: .9),
-                          ),
-                        ),
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 280),
-                          switchInCurve: Curves.easeOutBack,
-                          switchOutCurve: Curves.easeIn,
-                          transitionBuilder: (child, animation) =>
-                              ScaleTransition(scale: animation, child: child),
-                          child: watched
-                              ? const _WatchedBadge()
-                              : const SizedBox.shrink(),
-                        ),
-                      ),
-                      if (part != null && !watched)
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: LinearProgressIndicator(
-                            value: part,
-                            minHeight: 3,
-                            color: accent,
-                            backgroundColor: Colors.black54,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
+              SizedBox(width: 128, height: 72, child: _still(accent)),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -3460,6 +3753,196 @@ class _EpisodeTile extends StatelessWidget {
       ),
     );
   }
+
+  /// The episode's still (or its number), dimmed once watched, with the resume point along the bottom.
+  Widget _still(Color accent, {double decodeWidth = 128}) {
+    final thumbnail = episode.thumbnail;
+    final part = watchedPart;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: upNext ? Border.all(color: accent, width: 2) : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(
+              color: Colors.white.withValues(alpha: .05),
+              child: Center(
+                child: Text(
+                  epNumber(episode.number),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white24,
+                  ),
+                ),
+              ),
+            ),
+            if (thumbnail != null)
+              AnimatedOpacity(
+                opacity: watched ? .4 : 1,
+                duration: const Duration(milliseconds: 250),
+                child: _Img(
+                  thumbnail,
+                  transparent: true,
+                  decodeWidth: decodeWidth,
+                ),
+              ),
+            if (!watched && thumbnail != null)
+              Center(
+                child: Icon(
+                  Icons.play_circle_fill_rounded,
+                  size: 30,
+                  color: Colors.white.withValues(alpha: .9),
+                ),
+              ),
+            Positioned(
+              top: 6,
+              right: 6,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                switchInCurve: Curves.easeOutBack,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) =>
+                    ScaleTransition(scale: animation, child: child),
+                child: watched
+                    ? const _WatchedBadge()
+                    : const SizedBox.shrink(),
+              ),
+            ),
+            if (part != null && !watched)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  value: part,
+                  minHeight: 3,
+                  color: accent,
+                  backgroundColor: Colors.black54,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// TV: a still with its number and title under it, in a row of episodes.
+  Widget _card(BuildContext context, Color accent) => SizedBox(
+    width: _EpisodeRow.extent - 16,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _still(accent, decodeWidth: _EpisodeRow.extent),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: onTap,
+                  onLongPress: onLongPress,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                'Episode ${epNumber(episode.number)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: watched ? Colors.white54 : Colors.white,
+                ),
+              ),
+            ),
+            if (upNext) ...[
+              const SizedBox(width: 8),
+              Text(
+                watchedPart != null ? 'RESUME' : 'UP NEXT',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  letterSpacing: .8,
+                  fontWeight: FontWeight.w800,
+                  color: accent,
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (episode.title case final title?)
+          Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.3,
+              color: watched ? Colors.white38 : Colors.white70,
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+/// TV: a season's episodes as a row of stills, scrolled to [start] (the one up next) when it opens.
+class _EpisodeRow extends StatefulWidget {
+  const _EpisodeRow({
+    super.key,
+    required this.count,
+    required this.start,
+    required this.itemBuilder,
+  });
+
+  static const extent = 256.0;
+
+  final int count, start;
+  final IndexedWidgetBuilder itemBuilder;
+
+  @override
+  State<_EpisodeRow> createState() => _EpisodeRowState();
+}
+
+class _EpisodeRowState extends State<_EpisodeRow> {
+  late final controller = ScrollController(
+    initialScrollOffset:
+        (widget.start - 1).clamp(0, widget.count) * _EpisodeRow.extent,
+  );
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 220,
+    child: ListView.builder(
+      controller: controller,
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(48, 8, 32, 0),
+      itemExtent: _EpisodeRow.extent,
+      itemCount: widget.count,
+      itemBuilder: (context, i) => Align(
+        alignment: Alignment.topLeft,
+        child: widget.itemBuilder(context, i),
+      ),
+    ),
+  );
 }
 
 class _WatchedBadge extends StatelessWidget {
@@ -4109,9 +4592,6 @@ Future<void> resumeWatching(
         episodes: episodes,
         index: index,
         dub: record['dub'] == true,
-        start: Settings.resume
-            ? Duration(milliseconds: record['position'] as int? ?? 0)
-            : null,
       ),
     ),
   );
