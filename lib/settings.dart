@@ -40,6 +40,10 @@ enum HomeSection {
 
   const HomeSection(this.label, this.description);
   final String label, description;
+
+  /// On until the user changes the sections; the rest start off.
+  bool get byDefault =>
+      const {featured, airing, season, trending}.contains(this);
 }
 
 /// User preferences; read synchronously after [load] runs at startup.
@@ -84,6 +88,11 @@ class Settings {
   static bool get externalPlayer => _prefs.getBool('external_player') ?? false;
   static set externalPlayer(bool v) => _prefs.setBool('external_player', v);
 
+  /// Decoded frames go straight to the screen instead of through the GPU: much smoother on TV chips, but a few
+  /// devices' decoders show a black picture with it.
+  static bool get directVideo => _prefs.getBool('direct_video') ?? isTv;
+  static set directVideo(bool v) => _prefs.setBool('direct_video', v);
+
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
   static set speed(double v) => _prefs.setDouble('speed', v);
 
@@ -101,6 +110,10 @@ class Settings {
 
   static int get watchedPercent => _prefs.getInt('watched_percent') ?? 85;
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
+
+  /// Ecchi shows out of browse and search (adult ones never show); on by default on a shared TV.
+  static bool get hideNsfw => _prefs.getBool('hide_nsfw') ?? isTv;
+  static set hideNsfw(bool v) => _prefs.setBool('hide_nsfw', v);
 
   static bool get newestFirst => _prefs.getBool('newest_first') ?? true;
   static set newestFirst(bool v) => _prefs.setBool('newest_first', v);
@@ -134,6 +147,18 @@ class Settings {
         return id;
       })();
 
+  /// Keys of the phones paired as this TV's remote (base64).
+  static List<String> get remoteKeys =>
+      _prefs.getStringList('remote_keys') ?? const [];
+  static set remoteKeys(List<String> v) =>
+      _prefs.setStringList('remote_keys', v);
+
+  /// TVs this phone is a remote for: TV id → {key, name, address}.
+  static Map<String, dynamic> get tvRemotes =>
+      jsonDecode(_prefs.getString('tv_remotes') ?? '{}');
+  static set tvRemotes(Map<String, dynamic> v) =>
+      _prefs.setString('tv_remotes', jsonEncode(v));
+
   /// Newest first.
   static List<String> get recentSearches =>
       _prefs.getStringList('recent_searches') ?? const [];
@@ -152,7 +177,7 @@ class Settings {
       ...saved,
       // Sections added in an update show up, at the end.
       for (final section in HomeSection.values)
-        if (!saved.any((s) => s.$1 == section)) (section, true),
+        if (!saved.any((s) => s.$1 == section)) (section, section.byDefault),
     ];
   }
 
@@ -279,12 +304,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     void Function(T) apply,
   ) async {
     final primary = Theme.of(context).colorScheme.primary;
-    final picked = await showModalBottomSheet<T>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF14141C),
-      builder: (context) => SafeArea(
+    final picked = await showSheet<T>(
+      context,
+      scrollControlled: true,
+      (context) => SafeArea(
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -396,22 +419,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               },
             ),
-            if (signedIn && !isTv)
-              ListTile(
-                leading: const Icon(Icons.tv_rounded),
-                title: const Text('Sign in a TV'),
-                subtitle: const Text(
-                  'Sign AniView on your TV in with this account, over Wi-Fi',
-                ),
-                trailing: const Icon(
-                  Icons.chevron_right_rounded,
-                  color: Colors.white38,
-                ),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const PhonePairScreen()),
-                ),
-              ),
             SwitchListTile(
               title: const Text('Update progress automatically'),
               subtitle: const Text('Marks the episode watched on AniList'),
@@ -444,6 +451,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 context,
                 MaterialPageRoute(builder: (_) => const _HomeSectionsScreen()),
               ),
+            ),
+            SwitchListTile(
+              title: const Text('Hide NSFW shows'),
+              subtitle: const Text(
+                'Keeps ecchi titles out of browse and search',
+              ),
+              value: Settings.hideNsfw,
+              onChanged: (v) => setState(() => Settings.hideNsfw = v),
+            ),
+          ]),
+          _Group('Remote', [
+            ListTile(
+              leading: const Icon(Icons.settings_remote_rounded),
+              title: Text(isTv ? 'Phone remote' : 'TV remote'),
+              subtitle: Text(
+                isTv ? 'Control AniView on this TV from your phone' : 'Control AniView on your TV, and sign it in, from this phone',
+              ),
+              trailing: const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white38,
+              ),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        isTv ? const TvPairScreen() : const PhoneRemoteScreen(),
+                  ),
+                );
+                // Pairing may have signed the TV in.
+                if (mounted) setState(() {});
+              },
             ),
           ]),
           _Group('Notifications', [
@@ -531,18 +570,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (v) => setState(() => Settings.externalPlayer = v),
             ),
             SwitchListTile(
-              title: const Text('Swipe gestures'),
+              title: const Text('Direct video output'),
               subtitle: const Text(
-                'Swipe to seek, brightness on the left, volume on the right',
+                'Smoother playback on TVs and slower phones. Turn off if the picture stays black',
               ),
-              value: Settings.swipeGestures,
-              onChanged: (v) => setState(() => Settings.swipeGestures = v),
+              value: Settings.directVideo,
+              onChanged: (v) => setState(() => Settings.directVideo = v),
             ),
+            if (!isTv)
+              SwitchListTile(
+                title: const Text('Swipe gestures'),
+                subtitle: const Text(
+                  'Swipe to seek, brightness on the left, volume on the right',
+                ),
+                value: Settings.swipeGestures,
+                onChanged: (v) => setState(() => Settings.swipeGestures = v),
+              ),
             _Choice(
-              title: 'Double-tap to seek',
+              title: isTv ? 'Left / right seeks' : 'Double-tap to seek',
               value: '${Settings.seekSeconds}s',
               onTap: () => _choose(
-                'Double-tap to seek',
+                isTv ? 'Left / right seeks' : 'Double-tap to seek',
                 {
                   for (final s in const [5, 10, 15, 30]) s: '$s seconds',
                 },
@@ -839,7 +887,7 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
           onPressed: () {
             sections
               ..clear()
-              ..addAll([for (final s in HomeSection.values) (s, true)]);
+              ..addAll([for (final s in HomeSection.values) (s, s.byDefault)]);
             _save();
           },
           child: const Text('Reset'),

@@ -74,19 +74,32 @@ class Tracker {
 
   static Future<Map<String, dynamic>?> viewer() => AniList.viewer();
 
-  static Future<List> trending() => _data(AniList.trending, MAL.trending);
+  static Future<List> trending() =>
+      _data(AniList.trending, MAL.trending).then(_safe);
 
-  static Future<List> season() => _data(AniList.season, MAL.season);
+  static Future<List> season() => _data(AniList.season, MAL.season).then(_safe);
 
   /// One page of results and whether there's another.
   static Future<(List, bool)> search(
     String text,
     SearchFilters filters, {
     int page = 1,
-  }) => _data(
-    () => AniList.search(text, filters, page),
-    () => MAL.search(text, filters, page),
-  );
+  }) async {
+    final (found, more) = await _data(
+      () => AniList.search(text, filters, page),
+      () => MAL.search(text, filters, page),
+    );
+    // Asking for the genre by name shows it anyway.
+    return (filters.genres.contains('Ecchi') ? found : _safe(found), more);
+  }
+
+  /// Drops ecchi shows while [Settings.hideNsfw] is on.
+  static List _safe(List shows) => !Settings.hideNsfw
+      ? shows
+      : [
+          for (final m in shows)
+            if (!(m['genres'] as List? ?? const []).contains('Ecchi')) m,
+        ];
 
   static Future<List<(String, Map)>> relations(Map media) {
     Future<List<(String, Map)>> mal() async =>

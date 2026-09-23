@@ -15,6 +15,8 @@ void main() {
     ]);
     expect(sections.length, HomeSection.values.length);
     expect(sections.last, (HomeSection.season, true));
+    // Appended sections start off unless they're one of the defaults.
+    expect(sections, contains((HomeSection.planning, false)));
 
     Settings.homeSections = sections.reversed.toList();
     expect(Settings.homeSections.first, (HomeSection.season, true));
