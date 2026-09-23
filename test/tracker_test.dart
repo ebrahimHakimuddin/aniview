@@ -60,4 +60,70 @@ void main() {
       expect(await Tracker.watched(show, 5), SyncResult.queued); // offline
     },
   );
+
+  group('browsing', () {
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({'hide_nsfw': true});
+      await Settings.load();
+    });
+    tearDown(() {
+      Tracker.primary = const AniListCatalog();
+      Tracker.fallback = const MalCatalog();
+    });
+
+    test(
+      'falls back when the primary fails, and reports the primary when both do',
+      () async {
+        Tracker.primary = _Catalog(error: 'AniList is down');
+        Tracker.fallback = _Catalog(shows: [_genre('Action'), _genre('Ecchi')]);
+        expect(await Tracker.trending(), [
+          _genre('Action'),
+        ]); // from the fallback, ecchi hidden
+
+        Tracker.fallback = _Catalog(error: 'MAL is down too');
+        await expectLater(
+          Tracker.trending(),
+          throwsA(predicate((e) => '$e'.contains('AniList is down'))),
+        );
+
+        Tracker.primary = _Catalog(usable: false);
+        Tracker.fallback = _Catalog(shows: [_genre('Drama')]);
+        expect(await Tracker.season(), [
+          _genre('Drama'),
+        ]); // straight to the fallback
+      },
+    );
+
+    test('searching for ecchi by genre shows it anyway', () async {
+      Tracker.primary = _Catalog(shows: [_genre('Ecchi')]);
+      const ecchi = SearchFilters(genres: {'Ecchi'});
+      expect((await Tracker.search('', ecchi)).$1, hasLength(1));
+      expect((await Tracker.search('x', const SearchFilters())).$1, isEmpty);
+    });
+  });
+}
+
+Map _genre(String genre) => {
+  'genres': [genre],
+};
+
+class _Catalog implements Catalog {
+  _Catalog({this.shows = const [], this.error, this.usable = true});
+  final List shows;
+  final String? error;
+  @override
+  final bool usable;
+
+  Future<T> _answer<T>(T value) async =>
+      error == null ? value : throw Exception(error);
+
+  @override
+  Future<List> trending() => _answer(shows);
+  @override
+  Future<List> season() => _answer(shows);
+  @override
+  Future<(List, bool)> search(String text, SearchFilters filters, int page) =>
+      _answer((shows, false));
+  @override
+  Future<List<(String, Map)>> relations(Map media) => _answer(const []);
 }

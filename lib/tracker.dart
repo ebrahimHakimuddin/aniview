@@ -9,6 +9,53 @@ import 'mal.dart';
 import 'metadata.dart';
 import 'settings.dart';
 
+/// Where browsing comes from. Both catalogues answer in AniList's shape (see [Show]); MyAnimeList's adapter maps
+/// its own answers to it.
+abstract interface class Catalog {
+  /// Whether this build can use it (it has a client id).
+  bool get usable;
+  Future<List> trending();
+  Future<List> season();
+
+  /// One [page] of results and whether there's another. [text] may be empty to browse by [filters] alone.
+  Future<(List, bool)> search(String text, SearchFilters filters, int page);
+
+  /// Prequels and sequels as (PREQUEL|SEQUEL, show), prequels first.
+  Future<List<(String, Map)>> relations(Map media);
+}
+
+class AniListCatalog implements Catalog {
+  const AniListCatalog();
+  @override
+  bool get usable => AniList.usable;
+  @override
+  Future<List> trending() => AniList.trending();
+  @override
+  Future<List> season() => AniList.season();
+  @override
+  Future<(List, bool)> search(String text, SearchFilters filters, int page) =>
+      AniList.search(text, filters, page);
+  @override
+  Future<List<(String, Map)>> relations(Map media) =>
+      AniList.relations(media['id']);
+}
+
+class MalCatalog implements Catalog {
+  const MalCatalog();
+  @override
+  bool get usable => MAL.usable;
+  @override
+  Future<List> trending() => MAL.trending();
+  @override
+  Future<List> season() => MAL.season();
+  @override
+  Future<(List, bool)> search(String text, SearchFilters filters, int page) =>
+      MAL.search(text, filters, page);
+  @override
+  Future<List<(String, Map)>> relations(Map media) async =>
+      media['idMal'] == null ? const [] : MAL.relations(media['idMal']);
+}
+
 /// What the player's automatic sync did with a watched episode.
 enum SyncResult { skipped, saved, queued }
 
@@ -33,19 +80,21 @@ class Tracker {
 
   static Future<void> signOut() => AniList.logout();
 
-  static Future<T> _data<T>(
-    Future<T> Function() anilist,
-    Future<T> Function() mal,
-  ) async {
-    if (!AniList.usable) return mal();
+  /// Browsing asks [primary] (AniList) and falls back to [fallback] (MyAnimeList); replaced in tests.
+  @visibleForTesting
+  static Catalog primary = const AniListCatalog(),
+      fallback = const MalCatalog();
+
+  static Future<T> _browse<T>(Future<T> Function(Catalog) ask) async {
+    if (!primary.usable) return ask(fallback);
     try {
-      return await anilist();
+      return await ask(primary);
     } catch (error) {
-      if (!MAL.usable) rethrow;
+      if (!fallback.usable) rethrow;
       try {
-        return await mal();
+        return await ask(fallback);
       } catch (_) {
-        throw error; // AniList is the primary; report why it failed
+        throw error; // the primary's failure is the one to report
       }
     }
   }
@@ -74,10 +123,9 @@ class Tracker {
 
   static Future<Map<String, dynamic>?> viewer() => AniList.viewer();
 
-  static Future<List> trending() =>
-      _data(AniList.trending, MAL.trending).then(_safe);
+  static Future<List> trending() => _browse((c) => c.trending()).then(_safe);
 
-  static Future<List> season() => _data(AniList.season, MAL.season).then(_safe);
+  static Future<List> season() => _browse((c) => c.season()).then(_safe);
 
   /// One page of results and whether there's another.
   static Future<(List, bool)> search(
@@ -85,10 +133,7 @@ class Tracker {
     SearchFilters filters, {
     int page = 1,
   }) async {
-    final (found, more) = await _data(
-      () => AniList.search(text, filters, page),
-      () => MAL.search(text, filters, page),
-    );
+    final (found, more) = await _browse((c) => c.search(text, filters, page));
     // Asking for the genre by name shows it anyway.
     return (filters.genres.contains('Ecchi') ? found : _safe(found), more);
   }
@@ -101,12 +146,10 @@ class Tracker {
             if (!(m['genres'] as List? ?? const []).contains('Ecchi')) m,
         ];
 
-  static Future<List<(String, Map)>> relations(Map media) {
-    Future<List<(String, Map)>> mal() async =>
-        media['idMal'] == null ? const [] : MAL.relations(media['idMal']);
-    if (media['id'] is! int) return mal();
-    return _data(() => AniList.relations(media['id']), mal);
-  }
+  /// A show only MyAnimeList knows (no AniList id yet) asks it directly.
+  static Future<List<(String, Map)>> relations(Map media) => media['id'] is! int
+      ? fallback.relations(media)
+      : _browse((c) => c.relations(media));
 
   /// Watching (incl. rewatching) and planning entries.
   static Future<Map<String, List>> lists() => AniList.lists();
