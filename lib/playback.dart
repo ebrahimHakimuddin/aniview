@@ -265,6 +265,28 @@ class PlaybackSession {
     return to;
   }
 
+  /// Where resuming episode [number] of a [WatchRecord] from [source] opens: that site's episode list when it has
+  /// the episode, else the downloads. Throws, saying why, when neither has it; [listed] is whether [source] is still
+  /// one of the top sites.
+  static (List<Episode>, int) resumeIn(
+    num number, {
+    required List<Episode> site,
+    required List<Episode> downloaded,
+    required String source,
+    required bool listed,
+  }) {
+    final episodes = site.any((e) => e.number == number) ? site : downloaded;
+    final index = episodes.indexWhere((e) => e.number == number);
+    if (index == -1) {
+      throw Exception(
+        listed
+            ? 'Episode ${epNumber(number)} is not on $source yet'
+            : '$source is no longer one of the top sites',
+      );
+    }
+    return (episodes, index);
+  }
+
   /// [t] kept within the episode.
   static Duration clamp(Duration t, Duration duration) {
     if (t < Duration.zero) return Duration.zero;

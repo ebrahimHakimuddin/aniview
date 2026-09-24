@@ -266,4 +266,30 @@ void main() {
     );
     expect(PlaybackSession.externalStop(null).position, Duration.zero);
   });
+
+  test('resumes on the site when it has the episode, else from downloads', () {
+    Episode ep(num n) => Episode(n, ref: '$n');
+    final site = [ep(1), ep(2)], downloaded = [ep(3)];
+    (List<Episode>, int) resume(num n, {bool listed = true}) =>
+        PlaybackSession.resumeIn(
+          n,
+          site: site,
+          downloaded: downloaded,
+          source: 'Anikoto',
+          listed: listed,
+        );
+
+    expect(resume(2), (site, 1));
+    expect(resume(3), (downloaded, 0)); // not on the site (yet)
+    expect(
+      () => resume(4),
+      throwsA(predicate((e) => '$e'.contains('Episode 4 is not on Anikoto'))),
+    );
+    expect(
+      () => resume(4, listed: false),
+      throwsA(
+        predicate((e) => '$e'.contains('no longer one of the top sites')),
+      ),
+    );
+  });
 }

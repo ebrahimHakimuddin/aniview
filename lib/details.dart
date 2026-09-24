@@ -6,6 +6,7 @@ import 'anilist.dart';
 import 'cloudflare.dart';
 import 'downloads.dart';
 import 'history.dart';
+import 'playback.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
@@ -92,22 +93,20 @@ Future<void> resumeWatching(
       rethrow; // offline and not downloaded
     }
   }
-  if (!episodes.any((e) => e.number == number)) episodes = downloaded;
-  final index = episodes.indexWhere((e) => e.number == number);
-  if (index == -1) {
-    throw Exception(
-      source == null
-          ? '${record.source} is no longer one of the top sites'
-          : 'Episode ${epNumber(number)} is not on ${source.name} yet',
-    );
-  }
+  final (list, index) = PlaybackSession.resumeIn(
+    number,
+    site: episodes,
+    downloaded: downloaded,
+    source: record.source,
+    listed: source != null,
+  );
   if (!context.mounted) return;
   await _openPlayer(
     context,
     media: media,
     source: source,
     sourceName: record.source,
-    episodes: episodes,
+    episodes: list,
     index: index,
     dub: record.dub,
   );
