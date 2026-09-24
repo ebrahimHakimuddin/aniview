@@ -96,6 +96,29 @@ void main() {
     );
   });
 
+  test('the proxy serves only the addresses it gave out', () async {
+    final dir = await Directory.systemTemp.createTemp();
+    addTearDown(() => dir.delete(recursive: true));
+    await File('${dir.path}/index.m3u8').writeAsString('#EXTM3U');
+    final given = Uri.parse(await HlsProxy.localFile(dir.path, 'index.m3u8'));
+    final guessed = given.replace(
+      pathSegments: given.pathSegments.skip(1), // the same file, no token
+    );
+    Future<int> status(Uri uri) async {
+      final client = HttpClient();
+      try {
+        final response = await (await client.getUrl(uri)).close();
+        await response.drain<void>();
+        return response.statusCode;
+      } finally {
+        client.close();
+      }
+    }
+
+    expect(await status(given), 200);
+    expect(await status(guessed), 403);
+  });
+
   test('rewrites HLS playlists through the proxy', () {
     String proxy(String url, String ext) => 'P($url).$ext';
     final base = Uri.parse('https://cdn.test/a/master.m3u8');

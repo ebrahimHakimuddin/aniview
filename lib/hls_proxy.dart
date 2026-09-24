@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'sources.dart';
@@ -11,6 +12,11 @@ class HlsProxy {
   // ponytail: header sets are never evicted; one small map per opened stream is fine for a session
   static final _headers = <Map<String, String>>[];
   static final _dirs = <String>[];
+
+  /// Leads every path, so other apps on the device can't use the relay or read downloads without an address it gave out.
+  static final _token = base64Url
+      .encode([for (var i = 0; i < 16; i++) Random.secure().nextInt(256)])
+      .replaceAll('=', '');
   static final Future<HttpServer> _server = HttpServer.bind(
     InternetAddress.loopbackIPv4,
     0,
@@ -37,17 +43,22 @@ class HlsProxy {
       _dirs.add(dir);
       id = _dirs.length - 1;
     }
-    return 'http://127.0.0.1:$port/local/$id/$file';
+    return 'http://127.0.0.1:$port/$_token/local/$id/$file';
   }
 
   // The upstream URL lives in the path (no query) so FFmpeg's segment-extension check sees `.ts`/`.m3u8`.
   static String _local(int port, int id, String upstream, String ext) =>
-      'http://127.0.0.1:$port/$id/${base64Url.encode(utf8.encode(upstream)).replaceAll('=', '')}.$ext';
+      'http://127.0.0.1:$port/$_token/$id/${base64Url.encode(utf8.encode(upstream)).replaceAll('=', '')}.$ext';
 
   static Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     try {
-      if (request.uri.pathSegments case ['local', final id, final file]) {
+      final [token, ...path] = request.uri.pathSegments;
+      if (token != _token) {
+        response.statusCode = HttpStatus.forbidden;
+        return await response.close();
+      }
+      if (path case ['local', final id, final file]) {
         // Playlist entries are relative, so segments and keys resolve to this same folder.
         if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) {
           throw const FormatException();
@@ -63,7 +74,7 @@ class HlsProxy {
         await response.addStream(local.openRead());
         return await response.close();
       }
-      final [id, file] = request.uri.pathSegments;
+      final [id, file] = path;
       final encoded = file.substring(0, file.lastIndexOf('.'));
       final upstream = Uri.parse(
         utf8.decode(base64Url.decode(base64Url.normalize(encoded))),
