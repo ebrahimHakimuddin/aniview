@@ -95,7 +95,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _hideTimer, _hintTimer;
   late final List<StreamSubscription> _subs;
   final _playFocus = FocusNode();
-  final _keys = FocusNode(debugLabel: 'player keys');
+  // Out of traversal: it spans the screen, so the D-pad would otherwise land on it between buttons.
+  final _keys = FocusNode(debugLabel: 'player keys', skipTraversal: true);
   final _controlsNode = FocusNode(skipTraversal: true, canRequestFocus: false);
 
   /// The seek bar alone, shown for a moment while seeking with the controls hidden.
