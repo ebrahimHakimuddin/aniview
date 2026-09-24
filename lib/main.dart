@@ -10,7 +10,7 @@ import 'sources.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
-  sites.ignore(); // start fetching everythingmoe's top sites on app load; screens await it later
+  sites.ignore(); // build the top sites on app load; screens await it later
   await Future.wait([
     AniList.load(),
     Settings.load(),

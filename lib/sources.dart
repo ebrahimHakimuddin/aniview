@@ -14,8 +14,15 @@ import 'metadata.dart';
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
-/// The supported anime streaming sites from everythingmoe, in rank order, fetched once on app start.
+/// The supported anime streaming sites from everythingmoe, in rank order.
 Future<List<Source>> sites = topSources();
+
+const _topSitesDefine = String.fromEnvironment('TOP_SITES');
+final _topSites = _topSitesDefine.isEmpty
+    ? throw StateError(
+        r'Built without --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"',
+      )
+    : _topSitesDefine.split(';');
 
 class CloudflareChallenge implements Exception {
   CloudflareChallenge(this.url);
@@ -181,28 +188,9 @@ Future<Uint8List> fetchBytes(
   Map<String, String>? headers,
 }) async => (await _get(url, headers)).bodyBytes;
 
-/// (name, origin) of the entries in everythingmoe's "Anime Streaming" section, in rank order.
-List<(String, String)> parseTopSites(String html) {
-  final start = html.indexOf('id="sec-anime"');
-  if (start == -1) {
-    throw const FormatException(
-      'everythingmoe layout changed: no anime section',
-    );
-  }
-  final end = html.indexOf('id="sec-', start + 1);
-  final section = html.substring(start, end == -1 ? html.length : end);
-  return RegExp(
-        r'class="section-item">(?:<span[^>]*>)?\d+\.(?:</span>)?\s*<a href="[^"]*" data-link="([^"]+)"[^>]*>(?:<img[^>]*>)?\s*([^<]+)</a>',
-      )
-      .allMatches(section)
-      .map((m) => (m[2]!.trim(), Uri.parse(m[1]!).origin))
-      .toList();
-}
-
+/// everythingmoe's ranking, fetched when the app is built by tool/top_sites.dart.
 Future<List<Source>> topSources() async => [
-  for (final (name, origin) in parseTopSites(
-    await fetch('https://everythingmoe.com/'),
-  ))
+  for (final [name, origin] in _topSites.map((s) => s.split('|')))
     // ponytail: unknown sites are skipped; add an adapter here when the ranking brings in a new one
     ?switch (Uri.parse(origin).host) {
       final h when h.contains('anikoto') => Anikoto(name, origin),

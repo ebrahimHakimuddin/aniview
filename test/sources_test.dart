@@ -6,6 +6,8 @@ import 'package:aniview/hls_proxy.dart';
 import 'package:aniview/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../tool/top_sites.dart';
+
 void main() {
   test('reads the top anime sites from everythingmoe markup', () {
     const html =

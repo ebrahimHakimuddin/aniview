@@ -16,7 +16,9 @@ content. Any takedown or copyright concerns should be addressed to the site that
 2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig (app type "android"); only its client id
    is used, for public data.
 3. Optionally, add a **mobile** site in [Rybbit](https://rybbit.com) for usage analytics and note its site id.
-4. `fvm flutter run --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>`
+4. `fvm flutter run --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>`
+
+`TOP_SITES` is everythingmoe's ranking, read when the app is built; a rebuild picks up a new ranking.
 
 Any of these can be left out: without AniList's client id there's no tracking, without MyAnimeList's no fallback,
 without a Rybbit site id no analytics. A self-hosted Rybbit is set with `--dart-define=RYBBIT_HOST=https://…`.
@@ -31,7 +33,8 @@ install over builds signed with the same key.
 2. Build and publish:
 
    ```sh
-   fvm flutter build apk --release --split-per-abi --dart-define=ANILIST_CLIENT_ID=<client id> \
+   fvm flutter build apk --release --split-per-abi --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" \
+     --dart-define=ANILIST_CLIENT_ID=<client id> \
      --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>
    git tag v1.5.2 && git push origin main v1.5.2
    gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
