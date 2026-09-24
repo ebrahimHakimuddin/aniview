@@ -6,6 +6,8 @@ import 'package:aniview/downloads.dart';
 import 'package:aniview/hls_proxy.dart';
 import 'package:aniview/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import '../tool/top_sites.dart';
 
@@ -177,5 +179,103 @@ void main() {
       [back.number, back.title, back.thumbnail, back.overview, back.ref],
       [5.5, 'T', null, 'O', episode.ref],
     );
+  });
+
+  group('site adapters read their pages', () {
+    /// Answers each request with the snapshot whose key its URL contains.
+    void serve(Map<String, String> pages) =>
+        httpClient = MockClient((request) async {
+          final url = '${request.url}';
+          for (final MapEntry(:key, :value) in pages.entries) {
+            if (url.contains(key)) return http.Response(value, 200);
+          }
+          return http.Response('', 404);
+        });
+
+    test('Anikoto: search results, and a match only on the right MAL id', () async {
+      String item(String href, String title, String mal) =>
+          '<div class="item "><img src="https://img.test/$mal.jpg">'
+          '<a class="name d-title" href="$href" data-jp="x">$title</a>'
+          '<div class="right">TV</div></div>';
+      String list(String mal) => jsonEncode({
+        'result':
+            '<ul><a href="#" data-num="1" data-ids="ids-$mal-1" data-mal="$mal">1</a>'
+            '<a href="#" data-num="2" data-ids="ids-$mal-2" data-mal="$mal">2</a></ul>',
+      });
+      serve({
+        '/filter?keyword=':
+            item('https://ak.test/watch/other', 'Other &amp; Co', '1') +
+            item('https://ak.test/watch/right', 'Right', '5114'),
+        '/watch/other': '<div id="watch-main" class="w" data-id="10">',
+        '/watch/right': '<div id="watch-main" class="w" data-id="20">',
+        '/episode/list/10': list('1'),
+        '/episode/list/20': list('5114'),
+      });
+      final site = Anikoto('Anikoto', 'https://ak.test');
+
+      final results = await site.search('x');
+      expect(
+        [for (final r in results) (r.id, r.title, r.info)],
+        [
+          ('https://ak.test/watch/other', 'Other & Co', 'TV'),
+          ('https://ak.test/watch/right', 'Right', 'TV'),
+        ],
+      );
+      final media = {
+        'id': 1,
+        'idMal': 5114,
+        'title': {'romaji': 'Right'},
+      };
+      expect(await site.match(media), 'https://ak.test/watch/right');
+      final episodes = await site.episodesOf('https://ak.test/watch/right');
+      expect([for (final e in episodes) e.number], [1, 2]);
+      expect((episodes.first.ref as Map)['ids'], 'ids-5114-1');
+    });
+
+    test('Re:ANIME: matches by AniList id and drops empty titles', () async {
+      serve({
+        '/api/v1/search': jsonEncode({
+          'results': [
+            {
+              'anime_id': 7,
+              'anilist_id': 99,
+              'title': {'romaji': 'Wrong'},
+            },
+            {
+              'anime_id': 8,
+              'anilist_id': 21,
+              'title': {'english': 'One Piece'},
+              'format': 'TV',
+              'episodes': 1100,
+            },
+          ],
+        }),
+        '/api/v1/anime/8/episodes': jsonEncode({
+          'data': [
+            {'episode_number': 1, 'title': 'Romance Dawn', 'thumbnail': ''},
+            {'episode_number': 2, 'title': ''},
+          ],
+        }),
+      });
+      final site = ReAnime('Re:Anime', 'https://re.test');
+
+      final id = await site.match({
+        'id': 21,
+        'title': {'romaji': 'One Piece'},
+      });
+      expect(id, '8|21');
+      expect((await site.search('x')).last.info, 'TV · 1100 eps');
+      final episodes = await site.episodesOf(id!);
+      expect(
+        [for (final e in episodes) (e.number, e.title, e.thumbnail, e.ref)],
+        [(1, 'Romance Dawn', null, '21'), (2, null, null, '21')],
+      );
+    });
+
+    test('a redesigned page gives no episodes rather than failing', () async {
+      serve({'/watch/x': '<html>redesigned</html>'});
+      final site = Anikoto('Anikoto', 'https://ak.test');
+      expect(await site.episodesOf('https://ak.test/watch/x'), isEmpty);
+    });
   });
 }

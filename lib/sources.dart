@@ -180,7 +180,9 @@ Future<void> clearMatches() async {
   }
 }
 
-final _client = http.Client();
+/// Every plain HTTP request the sites make; a MockClient in tests.
+@visibleForTesting
+http.Client httpClient = http.Client();
 
 /// Hosts whose Cloudflare turns away HTTP/1.1 (all package:http speaks), e.g. animepahe's kwik player and its CDN.
 final _h2Hosts = <String>{};
@@ -189,7 +191,7 @@ Future<http.Response> _get(String url, Map<String, String>? headers) async {
   final uri = Uri.parse(url);
   final all = {'User-Agent': userAgent, ...?headers};
   if (!_h2Hosts.contains(uri.host)) {
-    final res = await _client.get(uri, headers: all);
+    final res = await httpClient.get(uri, headers: all);
     if (res.statusCode == 200) return res;
     if (res.statusCode != 403) {
       throw HttpException('HTTP ${res.statusCode}', uri: uri);
