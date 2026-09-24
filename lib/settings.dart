@@ -17,6 +17,7 @@ import 'pairing.dart';
 import 'states.dart';
 import 'tracker.dart';
 import 'tv.dart';
+import 'ui.dart';
 import 'platform.dart';
 
 enum SkipMode { button, auto, off }
@@ -90,7 +91,8 @@ class Settings {
 
   /// Decoded frames go straight to the screen instead of through the GPU: much smoother on TV chips, but a few
   /// devices' decoders show a black picture with it.
-  static bool get directVideo => _prefs.getBool('direct_video') ?? isTv;
+  // Off by default: on some TVs mpv's embedded output shows no picture at all.
+  static bool get directVideo => _prefs.getBool('direct_video') ?? false;
   static set directVideo(bool v) => _prefs.setBool('direct_video', v);
 
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
@@ -238,12 +240,8 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF1C1C26),
           showCloseIcon: true,
-          content: Text(
-            'AniView $version is available',
-            style: const TextStyle(color: Colors.white),
-          ),
+          content: Text('AniView $version is available'),
           action: SnackBarAction(
             label: 'Update',
             onPressed: () async {
@@ -303,40 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     T current,
     void Function(T) apply,
   ) async {
-    final primary = Theme.of(context).colorScheme.primary;
-    final picked = await showSheet<T>(
-      context,
-      scrollControlled: true,
-      (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              for (final MapEntry(:key, :value) in options.entries)
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-                  title: Text(value),
-                  trailing: key == current
-                      ? Icon(Icons.check_rounded, color: primary)
-                      : null,
-                  onTap: () => Navigator.pop(context, key),
-                ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
-    );
+    final picked = await pickOne(context, title, options, current);
     if (picked != null) setState(() => apply(picked));
   }
 
@@ -381,44 +346,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final signedIn = Tracker.signedIn;
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(
+        title: const Text('Settings'),
+        toolbarHeight: isTv ? 72 : null,
+        titleSpacing: side,
+      ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+          0,
+          0,
+          // TV: a readable column rather than lines across the whole screen.
+          isTv ? MediaQuery.sizeOf(context).width * .3 : 0,
+          32,
+        ),
         children: [
-          _Group('AniList', [
-            FutureBuilder(
-              future: Tracker.viewer(),
-              builder: (context, snap) {
-                final avatar = snap.data?['avatar']?['large'] as String?;
-                return ListTile(
-                  leading: avatar == null
-                      ? const Icon(Icons.account_circle_rounded, size: 40)
-                      : CircleAvatar(
-                          radius: 20,
-                          backgroundImage: NetworkImage(avatar),
-                        ),
-                  title: Text(
-                    signedIn
-                        ? (snap.data?['name'] ?? 'AniList')
-                        : 'Not signed in',
-                  ),
-                  subtitle: Text(
-                    signedIn
-                        ? 'Your progress syncs to AniList'
-                        : 'Sign in to track what you watch',
-                  ),
-                  trailing: signedIn
-                      ? TextButton(
-                          onPressed: _signOut,
-                          child: const Text('Sign out'),
-                        )
-                      : FilledButton(
-                          onPressed: _signIn,
-                          child: const Text('Sign in'),
-                        ),
-                );
-              },
-            ),
+          _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
+          _Group('Tracking', [
             SwitchListTile(
               title: const Text('Update progress automatically'),
               subtitle: const Text('Marks the episode watched on AniList'),
@@ -443,10 +386,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ListTile(
               title: const Text('Sections'),
               subtitle: const Text('Choose and reorder the rows on home'),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                color: Colors.white38,
-              ),
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const _HomeSectionsScreen()),
@@ -467,10 +406,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: Text(isTv ? 'Phone remote' : 'TV remote'),
               subtitle: Text(
                 isTv ? 'Control AniView on this TV from your phone' : 'Control AniView on your TV, and sign it in, from this phone',
-              ),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                color: Colors.white38,
               ),
               onTap: () async {
                 await Navigator.push(
@@ -786,24 +721,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => AndroidApp.open(url).ignore(),
               ),
           ]),
-          const Padding(
-            padding: EdgeInsets.only(top: 28),
-            child: Text(
-              'AniView · Sites ranked by everythingmoe · Tracking by AniList\nSkip times by AniSkip · Episode art by ani.zip',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white54,
-                height: 1.6,
-              ),
-            ),
-          ),
         ],
       ),
     );
   }
 }
 
+/// A titled group of settings, Android Settings style: the title in the accent colour, rows under it.
 class _Group extends StatelessWidget {
   const _Group(this.title, this.children);
 
@@ -811,31 +735,19 @@ class _Group extends StatelessWidget {
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 20),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-          child: Text(
-            title.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              letterSpacing: 1.2,
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: EdgeInsets.fromLTRB(side, 24, side, 4),
+        child: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall
+              ?.copyWith(color: scheme.primary),
         ),
-        Material(
-          color: const Color(0xFF14141C),
-          borderRadius: BorderRadius.circular(18),
-          clipBehavior: Clip.antiAlias,
-          child: Column(children: children),
-        ),
-      ],
-    ),
+      ),
+      ...children,
+    ],
   );
 }
 
@@ -854,14 +766,66 @@ class _Choice extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListTile(
     title: Text(title),
-    subtitle: subtitle == null ? null : Text(subtitle!),
+    subtitle: Text(subtitle == null ? value : '$value · $subtitle'),
     onTap: onTap,
-    trailing: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(value, style: const TextStyle(color: Colors.white60)),
-        const Icon(Icons.chevron_right_rounded, color: Colors.white38),
-      ],
+  );
+}
+
+/// The AniList account at the top of Settings.
+class _Account extends StatelessWidget {
+  const _Account({
+    required this.signedIn,
+    required this.onSignIn,
+    required this.onSignOut,
+  });
+
+  final bool signedIn;
+  final VoidCallback onSignIn, onSignOut;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(side, 8, side, 0),
+    child: Card.filled(
+      margin: EdgeInsets.zero,
+      color: scheme.surfaceContainerHigh,
+      child: FutureBuilder(
+        future: Tracker.viewer(),
+        builder: (context, snap) {
+          final avatar = snap.data?['avatar']?['large'] as String?;
+          return ListTile(
+            contentPadding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+            leading: CircleAvatar(
+              radius: 24,
+              backgroundColor: scheme.secondaryContainer,
+              backgroundImage: avatar == null ? null : NetworkImage(avatar),
+              child: avatar == null
+                  ? Icon(
+                      Icons.person_rounded,
+                      color: scheme.onSecondaryContainer,
+                    )
+                  : null,
+            ),
+            title: Text(
+              signedIn ? (snap.data?['name'] ?? 'AniList') : 'Not signed in',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            subtitle: Text(
+              signedIn
+                  ? 'Your progress syncs to AniList'
+                  : 'Sign in with AniList to track what you watch',
+            ),
+            trailing: signedIn
+                ? TextButton(
+                    onPressed: onSignOut,
+                    child: const Text('Sign out'),
+                  )
+                : FilledButton(
+                    onPressed: onSignIn,
+                    child: const Text('Sign in'),
+                  ),
+          );
+        },
+      ),
     ),
   );
 }
@@ -897,7 +861,7 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
     body: ReorderableListView(
       // The handle drags straight away; the rest of the row still scrolls and toggles.
       buildDefaultDragHandles: false,
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 32),
+      padding: const EdgeInsets.only(bottom: 32),
       onReorderStart: (_) => HapticFeedback.selectionClick(),
       onReorderItem: (from, to) {
         sections.insert(to, sections.removeAt(from));
@@ -911,7 +875,11 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
           return Transform.scale(
             scale: 1 + .03 * t,
             child: Material(
-              color: Color.lerp(Colors.transparent, const Color(0xFF1E1E2A), t),
+              color: Color.lerp(
+                Colors.transparent,
+                scheme.surfaceContainerHighest,
+                t,
+              ),
               elevation: 12 * t,
               shadowColor: Colors.black,
               borderRadius: BorderRadius.circular(16),
@@ -947,7 +915,7 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
                           icon: Icon(icon),
                           // Kept enabled at the ends: disabling the focused button would drop the remote's focus.
                           color: to < 0 || to >= sections.length
-                              ? Colors.white24
+                              ? scheme.onSurface.withValues(alpha: .3)
                               : null,
                           onPressed: () {
                             if (to < 0 || to >= sections.length) return;

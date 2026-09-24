@@ -6,8 +6,8 @@ import 'package:http/http.dart' as http;
 
 import 'sources.dart';
 import 'tv.dart';
+import 'ui.dart';
 
-const _danger = Color(0xFFFF8A8E);
 const _success = Color(0xFF4ADE80);
 
 /// Turns exceptions into short messages people can act on.
@@ -24,8 +24,8 @@ String friendlyError(Object error) => switch (error) {
   _ => '$error'.replaceFirst('Exception: ', ''),
 };
 
-/// A bottom sheet on phones; on TV, a panel in the middle of the screen, since a drawer from the bottom edge is
-/// a touch idiom.
+/// A modal bottom sheet on phones; on TV a panel in the middle of the screen, since a sheet from the bottom edge
+/// is a touch idiom.
 Future<T?> showSheet<T>(
   BuildContext context,
   WidgetBuilder builder, {
@@ -34,10 +34,8 @@ Future<T?> showSheet<T>(
     ? showDialog<T>(
         context: context,
         builder: (context) => Dialog(
-          backgroundColor: sheetColor,
-          surfaceTintColor: Colors.transparent,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(28),
           ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
@@ -50,42 +48,37 @@ Future<T?> showSheet<T>(
       )
     : showModalBottomSheet<T>(
         context: context,
-        showDragHandle: true,
         isScrollControlled: scrollControlled,
-        backgroundColor: sheetColor,
+        useSafeArea: true,
         builder: builder,
       );
-
-const sheetColor = Color(0xFF14141C);
 
 void showSuccess(BuildContext context, String message) =>
     _snack(context, message, Icons.check_circle_rounded, _success);
 
-void showError(BuildContext context, Object error) =>
-    _snack(context, friendlyError(error), Icons.error_rounded, _danger);
+void showError(BuildContext context, Object error) => _snack(
+  context,
+  friendlyError(error),
+  Icons.error_rounded,
+  scheme.errorContainer,
+);
 
 void _snack(BuildContext context, String message, IconData icon, Color color) =>
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF1C1C26),
           content: Row(
             children: [
-              Icon(icon, color: color),
+              Icon(icon, color: color == _success ? _success : scheme.error),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  message,
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
+              Expanded(child: Text(message)),
             ],
           ),
         ),
       );
 
-/// Shimmering placeholder block.
+/// A placeholder block that pulses gently while content loads.
 class Skeleton extends StatefulWidget {
   const Skeleton({super.key, this.width, this.height, this.radius = 12});
 
@@ -100,8 +93,8 @@ class _SkeletonState extends State<Skeleton>
     with SingleTickerProviderStateMixin {
   late final _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  )..repeat();
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
 
   @override
   void dispose() {
@@ -110,107 +103,18 @@ class _SkeletonState extends State<Skeleton>
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _controller,
-    builder: (context, _) {
-      final t = _controller.value * 1.6 - .3;
-      return Container(
-        width: widget.width,
-        height: widget.height,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(widget.radius),
-          gradient: LinearGradient(
-            colors: const [
-              Color(0xFF16161F),
-              Color(0xFF252532),
-              Color(0xFF16161F),
-            ],
-            stops: [
-              (t - .3).clamp(0.0, 1.0),
-              t.clamp(0.0, 1.0),
-              (t + .3).clamp(0.0, 1.0),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-}
-
-class PosterSkeleton extends StatelessWidget {
-  const PosterSkeleton({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      AspectRatio(aspectRatio: 2 / 3, child: Skeleton(radius: 14)),
-      SizedBox(height: 10),
-      Skeleton(height: 12, width: 110, radius: 6),
-      SizedBox(height: 6),
-      Skeleton(height: 10, width: 64, radius: 6),
-    ],
-  );
-}
-
-class ShelfSkeleton extends StatelessWidget {
-  const ShelfSkeleton({super.key, this.title});
-
-  final String? title;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
-        child: title == null
-            ? const Skeleton(width: 150, height: 18, radius: 6)
-            : Text(
-                title!,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+  Widget build(BuildContext context) => FadeTransition(
+    // Still, with animations turned off in the system settings.
+    opacity: MediaQuery.disableAnimationsOf(context)
+        ? const AlwaysStoppedAnimation(.7)
+        : Tween(begin: .45, end: 1.0).animate(_controller),
+    child: Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(widget.radius),
       ),
-      SizedBox(
-        height: 272,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          itemCount: 5,
-          separatorBuilder: (_, _) => const SizedBox(width: 14),
-          itemBuilder: (_, _) =>
-              const SizedBox(width: 136, child: PosterSkeleton()),
-        ),
-      ),
-    ],
-  );
-}
-
-class EpisodeSkeleton extends StatelessWidget {
-  const EpisodeSkeleton({super.key});
-
-  @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-    child: Row(
-      children: [
-        Skeleton(width: 128, height: 72, radius: 10),
-        SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Skeleton(height: 14, width: 110, radius: 6),
-              SizedBox(height: 8),
-              Skeleton(height: 11, radius: 6),
-            ],
-          ),
-        ),
-      ],
     ),
   );
 }
@@ -229,59 +133,44 @@ class ErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final message = friendlyError(error);
     if (compact) {
-      return Container(
-        margin: const EdgeInsets.symmetric(vertical: 12),
-        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-        decoration: BoxDecoration(
-          color: _danger.withValues(alpha: .08),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _danger.withValues(alpha: .2)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.error_outline_rounded, color: _danger, size: 20),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message,
-                style: const TextStyle(fontSize: 13, color: Colors.white70),
-              ),
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
+        child: Material(
+          color: scheme.errorContainer.withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: scheme.error),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                if (onRetry != null)
+                  TextButton(onPressed: onRetry, child: Text(_retryLabel)),
+              ],
             ),
-            if (onRetry != null)
-              TextButton(onPressed: onRetry, child: Text(_retryLabel)),
-          ],
+          ),
         ),
       );
     }
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _Badge(icon: Icons.cloud_off_rounded, color: _danger),
-            const SizedBox(height: 16),
-            const Text(
-              'Something went wrong',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+    return EmptyState(
+      icon: Icons.cloud_off_rounded,
+      title: 'Something went wrong',
+      message: message,
+      error: true,
+      action: onRetry == null
+          ? null
+          : FilledButton.tonalIcon(
+              autofocus: isTv,
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: Text(_retryLabel),
             ),
-            const SizedBox(height: 6),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white60, height: 1.4),
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 20),
-              FilledButton.tonalIcon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: Text(_retryLabel),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }
@@ -294,62 +183,48 @@ class EmptyState extends StatelessWidget {
     this.message,
     this.action,
     this.compact = false,
+    this.error = false,
   });
 
   final IconData icon;
   final String title;
   final String? message;
   final Widget? action;
-  final bool compact;
+  final bool compact, error;
 
   @override
   Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.primary;
-    final body = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _Badge(icon: icon, color: color),
-        const SizedBox(height: 16),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-        ),
-        if (message != null) ...[
-          const SizedBox(height: 6),
-          Text(
-            message!,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white60, height: 1.4),
+    final text = Theme.of(context).textTheme;
+    final body = ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 48,
+            color: error ? scheme.error : scheme.onSurfaceVariant,
           ),
+          const SizedBox(height: 16),
+          Text(title, textAlign: TextAlign.center, style: text.titleMedium),
+          if (message != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+          if (action != null) ...[const SizedBox(height: 24), action!],
         ],
-        if (action != null) ...[const SizedBox(height: 20), action!],
-      ],
+      ),
     );
-    return compact
-        ? Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-            child: body,
-          )
-        : Center(
-            child: Padding(padding: const EdgeInsets.all(32), child: body),
-          );
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: side * 2,
+        vertical: compact ? 24 : 32,
+      ),
+      child: Center(child: body),
+    );
   }
-}
-
-class _Badge extends StatelessWidget {
-  const _Badge({required this.icon, required this.color});
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: color.withValues(alpha: .1),
-    ),
-    child: Icon(icon, size: 34, color: color),
-  );
 }

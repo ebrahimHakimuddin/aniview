@@ -1,4 +1,5 @@
-import 'package:aniview/screens.dart';
+import 'package:aniview/home.dart';
+import 'package:aniview/ui.dart';
 import 'package:aniview/settings.dart';
 import 'package:aniview/tv.dart';
 import 'package:flutter/material.dart';
@@ -32,45 +33,49 @@ void main() {
     expect(airingLabel({'nextAiringEpisode': null}), isNull);
   });
 
-  testWidgets("TV home: the rail only takes focus from the rows' left edge", (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    await Settings.load();
-    isTv = true;
-    addTearDown(() => isTv = false);
-    tester.view.physicalSize = const Size(1920, 1080);
-    tester.view.devicePixelRatio = 2;
-    addTearDown(tester.view.reset);
-    await tester.pumpWidget(
-      MaterialApp(
-        builder: (context, child) => FocusRing(child: child!),
-        home: const HomeScreen(),
-      ),
-    );
-    await tester.pump(const Duration(seconds: 1));
-    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
-    Future<void> press(LogicalKeyboardKey key) async {
-      await tester.sendKeyEvent(key);
-      await tester.pump(const Duration(milliseconds: 400));
-    }
+  testWidgets(
+    "TV home: the drawer only takes focus from the page's left edge",
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await Settings.load();
+      isTv = true;
+      addTearDown(() => isTv = false);
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 2;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => TvInput(child: child!),
+          home: const HomeScreen(),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+      Future<void> press(LogicalKeyboardKey key) async {
+        await tester.sendKeyEvent(key);
+        await tester.pump(const Duration(milliseconds: 400));
+      }
 
-    expect(focused(), 'rail 0');
-    for (var i = 0; i < 5; i++) {
+      await press(LogicalKeyboardKey.arrowDown); // into the page
+      expect(focused(), isNot(startsWith('drawer')));
+      for (var i = 0; i < 3; i++) {
+        await press(LogicalKeyboardKey.arrowLeft);
+      }
+      expect(focused(), 'drawer 0'); // Home, the page shown
+
+      for (var i = 0; i < 5; i++) {
+        await press(LogicalKeyboardKey.arrowDown);
+      }
+      expect(focused(), 'drawer 3'); // stops at the end
+
+      await press(LogicalKeyboardKey.arrowRight);
+      expect(focused(), isNot(startsWith('drawer')));
+      await press(LogicalKeyboardKey.arrowUp);
       await press(LogicalKeyboardKey.arrowDown);
-    }
-    expect(focused(), 'rail 3'); // stops at the end
-
-    await press(LogicalKeyboardKey.arrowRight);
-    final row = FocusManager.instance.primaryFocus;
-    expect(focused(), isNot(startsWith('rail')));
-    await press(LogicalKeyboardKey.arrowUp);
-    expect(
-      FocusManager.instance.primaryFocus,
-      row,
-    ); // nothing above, and not the rail
-
-    await press(LogicalKeyboardKey.arrowLeft);
-    expect(focused(), 'rail 0');
-  });
+      expect(
+        focused(),
+        isNot(startsWith('drawer')),
+      ); // Up and Down stay in the page
+    },
+  );
 }
