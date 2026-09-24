@@ -105,6 +105,21 @@ class Download {
   );
 }
 
+/// The downloads in an index file; an entry that can't be read is skipped, not the whole list (the next save would
+/// otherwise write the empty list over every download).
+@visibleForTesting
+List<Download> readIndex(String json) => [
+  for (final entry in jsonDecode(json) as List) ?_tryParse(entry),
+];
+
+Download? _tryParse(Object? json) {
+  try {
+    return Download.fromJson(json as Map);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Episodes saved on the device. An HLS stream is stored as a local playlist plus its segment, key and subtitle
 /// files, so offline playback works exactly like streaming. Downloads run one at a time while the app is open.
 // ponytail: no foreground service, so Android may pause a download when the app is backgrounded for long;
@@ -132,10 +147,7 @@ class Downloads extends ChangeNotifier {
     final index = File('${_root.path}/index.json');
     if (await index.exists()) {
       try {
-        items.addAll([
-          for (final json in jsonDecode(await index.readAsString()) as List)
-            Download.fromJson(json),
-        ]);
+        items.addAll(readIndex(await index.readAsString()));
       } catch (
         _
       ) {} // unreadable index: start fresh rather than crash on launch
@@ -335,7 +347,10 @@ class Downloads extends ChangeNotifier {
     final json = jsonEncode([for (final d in items) d.toJson()]);
     _saving = _saving.then((_) async {
       try {
-        await File('${_root.path}/index.json').writeAsString(json);
+        // Written aside and swapped in, so closing the app mid-write can't cut the index short.
+        final temp = File('${_root.path}/index.json.tmp');
+        await temp.writeAsString(json, flush: true);
+        await temp.rename('${_root.path}/index.json');
       } catch (_) {}
     });
   }
