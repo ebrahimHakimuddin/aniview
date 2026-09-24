@@ -679,6 +679,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           width: 400,
           child: _EpisodeList(
             episodes: widget.episodes,
+        // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
+        SystemChrome.setPreferredOrientations([]);
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
             current: index,
             media: widget.media,
             dub: widget.dub,

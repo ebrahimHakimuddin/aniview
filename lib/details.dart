@@ -45,8 +45,11 @@ Future<void> _openPlayer(
   try {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
+      // No transition: the player turns the screen sideways, which would show this page in landscape as it slides.
+      PageRouteBuilder(
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, _, _) => PlayerScreen(
           media: media,
           source: source,
           sourceName: sourceName,
