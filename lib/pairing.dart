@@ -12,7 +12,9 @@ import 'anilist.dart';
 import 'settings.dart';
 import 'states.dart';
 import 'platform.dart';
+import 'player.dart' show formatDuration;
 import 'tv.dart';
+import 'ui.dart';
 
 /// Pairing a phone with a TV over the local network: one pairing makes the phone a remote and, when the phone
 /// is signed in and the TV isn't, signs the TV in to the same AniList account.
@@ -206,15 +208,44 @@ class TvLink {
             throw const FormatException();
           }
           _lastPress[body['id']] = at;
-          if (press['text'] case final String text) {
-            if (!typeText(text)) response.statusCode = HttpStatus.conflict;
-          } else {
-            final key = press['k'] as String;
-            if (key != 'back' && !remoteKeys.containsKey(key)) {
+          switch (press) {
+            case {'q': 'state'}:
+              break; // just the answer below
+            case {'seek': final int ms}:
+              onRemoteSeek?.call(Duration(milliseconds: ms));
+            case {'text': final String text}:
+              // Into the TV's focused text box, else a search on the TV.
+              if (!typeText(text)) {
+                if (onRemoteSearch case final search?) {
+                  search(text);
+                } else {
+                  response.statusCode = HttpStatus.conflict;
+                }
+              }
+            case {'k': 'search'}:
+              onRemoteSearch?.call(null);
+            case {'k': final String key}:
+              if (key != 'back' && !remoteKeys.containsKey(key)) {
+                throw const FormatException();
+              }
+              await pressKey(key, hold: press['hold'] == true);
+            default:
               throw const FormatException();
-            }
-            await pressKey(key, hold: press['hold'] == true);
           }
+          // What's playing, so the phone can show playback controls.
+          final np = nowPlaying.value;
+          response.write(
+            jsonEncode({
+              'playing': np != null,
+              if (np != null) ...{
+                'title': np.title,
+                'episode': np.episode,
+                'paused': np.paused,
+                'position': np.position.inMilliseconds,
+                'duration': np.duration.inMilliseconds,
+              },
+            }),
+          );
         default:
           response.statusCode = HttpStatus.forbidden;
       }
@@ -284,14 +315,14 @@ class _TvPairScreenState extends State<TvPairScreen> {
               const SizedBox(height: 16),
               const Text(
                 'Pair your phone',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
               Text(
                 'On your phone, on the same Wi-Fi, open AniView and go to\nSettings → TV remote.'
                 '${signedIn ? '' : ' It becomes a remote and signs this TV in.'}',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70, height: 1.5),
+                style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
               ),
               const SizedBox(height: 24),
               const _PairingCode(),
@@ -336,8 +367,8 @@ class _PairingCode extends StatelessWidget {
           Text(
             code,
             style: TextStyle(
-              fontSize: 44,
-              fontWeight: FontWeight.w900,
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
               letterSpacing: 6,
               color: Theme.of(context).colorScheme.primary,
             ),
@@ -348,7 +379,7 @@ class _PairingCode extends StatelessWidget {
         if (TvLink.address case final address?)
           Text(
             "Phone can't find this TV? Enter $address",
-            style: const TextStyle(fontSize: 13, color: Colors.white54),
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
       ],
     ),
@@ -423,8 +454,8 @@ Future<({String code, Uint8List key})?> _handshake(
         agreed.code,
         textAlign: TextAlign.center,
         style: const TextStyle(
-          fontSize: 36,
-          fontWeight: FontWeight.w900,
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
           letterSpacing: 4,
         ),
       ),
@@ -463,6 +494,16 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   bool scanning = false, pairing = false;
   int _sent = 0;
 
+  /// What the TV said it's playing, from its last answer; null when nothing is.
+  Map? playing;
+
+  /// Asks the TV what it's playing every couple of seconds, for the playback controls.
+  late final Timer _poll = Timer.periodic(
+    const Duration(seconds: 2),
+    (_) => _send(const {'q': 'state'}, quiet: true),
+  );
+  Timer? _typing;
+
   Map<String, dynamic> get paired => Settings.tvRemotes;
 
   @override
@@ -470,10 +511,13 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     super.initState();
     tv = paired.keys.firstOrNull;
     _scan();
+    _poll;
   }
 
   @override
   void dispose() {
+    _poll.cancel();
+    _typing?.cancel();
     manual.dispose();
     typed.dispose();
     client.close();
@@ -540,10 +584,12 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   }
 
   /// Sends one press ({k: up|down|…, hold?} or {text}); each carries a newer time so it can't be replayed.
-  Future<void> _send(Map<String, Object> press) async {
+  /// Sends one press or request to the TV and keeps what it says it's playing. [quiet] ones (status checks)
+  /// don't buzz or complain when the TV can't be reached.
+  Future<void> _send(Map<String, Object> press, {bool quiet = false}) async {
     final saved = paired[tv];
     if (saved == null) return;
-    HapticFeedback.selectionClick();
+    if (!quiet) HapticFeedback.selectionClick();
     final key = base64.decode(saved['key']);
     _sent = max(DateTime.now().millisecondsSinceEpoch, _sent + 1);
     try {
@@ -560,14 +606,17 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
           .timeout(const Duration(seconds: 3));
       if (!mounted) return;
       switch (res.statusCode) {
+        case HttpStatus.ok:
+          final state = jsonDecode(res.body) as Map;
+          setState(() => playing = state['playing'] == true ? state : null);
         case HttpStatus.forbidden: // unpaired on the TV
           _forget();
           showError(context, 'The TV forgot this phone. Pair again');
         case HttpStatus.conflict:
-          showError(context, 'Pick a text box on the TV first');
+          showError(context, 'Open AniView\'s home on the TV to search');
       }
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || quiet) return;
       showError(
         context,
         "Can't reach ${saved['name']}. Is AniView open on it?",
@@ -626,7 +675,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
       Text(
         'On the TV, open AniView and choose Sign in, or Settings → Phone remote. Keep both on the same Wi-Fi.'
         '${AniList.token == null ? '' : ' Pairing also signs the TV in as you, if it isn\'t already.'}',
-        style: const TextStyle(color: Colors.white70, height: 1.5),
+        style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
       ),
       const SizedBox(height: 16),
       for (final tv in found.values)
@@ -668,118 +717,194 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     ],
   );
 
+  /// Typed text searches on the TV as it's typed, once typing pauses.
+  void _typed(String text) {
+    _typing?.cancel();
+    _typing = Timer(
+      const Duration(milliseconds: 500),
+      () => _send({'text': text}),
+    );
+  }
+
   Widget _remote() {
-    final primary = Theme.of(context).colorScheme.primary;
+    // With the keyboard up there's no room for the D-pad, and typing is all that's going on.
+    final typing = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final now = playing;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        child: Column(
+          children: [
+            if (now != null) _nowPlaying(now),
+            if (!typing) ...[
+              const Spacer(),
+              _dpad(),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _button('back', Icons.arrow_back_rounded, 'Back'),
+                  _button('rewind', Icons.fast_rewind_rounded, 'Rewind'),
+                  _button(
+                    'playpause',
+                    now?['paused'] == false
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    'Play / pause',
+                  ),
+                  _button(
+                    'forward',
+                    Icons.fast_forward_rounded,
+                    'Fast forward',
+                  ),
+                  if (now != null)
+                    _button('next', Icons.skip_next_rounded, 'Next episode'),
+                ],
+              ),
+              const Spacer(),
+            ],
+            // Searching makes no sense mid-episode.
+            if (now == null)
+              TextField(
+                controller: typed,
+                textInputAction: TextInputAction.search,
+                // Opens Search on the TV, ready for what's typed.
+                onTap: () => _send(const {'k': 'search'}),
+                onChanged: _typed,
+                onSubmitted: (value) {
+                  _typing?.cancel();
+                  _send({'text': value});
+                },
+                decoration: InputDecoration(
+                  hintText: 'Search on the TV',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: IconButton(
+                    tooltip: 'Search',
+                    icon: const Icon(Icons.send_rounded),
+                    onPressed: () => _send({'text': typed.text}),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The episode playing on the TV, with a seek bar.
+  Widget _nowPlaying(Map now) {
+    final text = Theme.of(context).textTheme;
+    final duration = (now['duration'] as int? ?? 0).toDouble();
+    final position = (now['position'] as int? ?? 0).toDouble();
+    return Card.filled(
+      margin: EdgeInsets.zero,
+      color: scheme.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Now playing',
+              style: text.labelMedium?.copyWith(color: scheme.primary),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              now['title'] ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.titleMedium,
+            ),
+            Text(
+              now['episode'] ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            if (duration > 0)
+              Slider(
+                max: duration,
+                value: position.clamp(0, duration),
+                onChanged: (v) => setState(() => now['position'] = v.round()),
+                onChangeEnd: (v) => _send({'seek': v.round()}),
+              ),
+            if (duration > 0)
+              Row(
+                children: [
+                  Text(
+                    formatDuration(Duration(milliseconds: position.round())),
+                    style: text.bodySmall,
+                  ),
+                  const Spacer(),
+                  Text(
+                    formatDuration(Duration(milliseconds: duration.round())),
+                    style: text.bodySmall,
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _button(String key, IconData icon, String label) =>
+      IconButton.filledTonal(
+        tooltip: label,
+        iconSize: 28,
+        padding: const EdgeInsets.all(16),
+        onPressed: () => _send({'k': key}),
+        icon: Icon(icon),
+      );
+
+  Widget _dpad() {
     Widget arrow(String key, IconData icon, Alignment at) => Align(
       alignment: at,
       child: IconButton(
+        tooltip: key,
         iconSize: 40,
         padding: const EdgeInsets.all(16),
         onPressed: () => _send({'k': key}),
         icon: Icon(icon),
       ),
     );
-    Widget button(String key, IconData icon, String label) =>
-        IconButton.filledTonal(
-          tooltip: label,
-          iconSize: 28,
-          padding: const EdgeInsets.all(16),
-          onPressed: () => _send({'k': key}),
-          icon: Icon(icon),
-        );
-    // With the keyboard up there's no room for the D-pad, and typing is all that's going on.
-    final typing = MediaQuery.viewInsetsOf(context).bottom > 0;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
+    return SizedBox.square(
+      dimension: 264,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: scheme.surfaceContainerHigh,
+        ),
+        child: Stack(
           children: [
-            const Spacer(),
-            if (!typing) ...[
-              SizedBox.square(
-                dimension: 280,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: .06),
-                  ),
-                  child: Stack(
-                    children: [
-                      arrow(
-                        'up',
-                        Icons.keyboard_arrow_up_rounded,
-                        Alignment.topCenter,
-                      ),
-                      arrow(
-                        'down',
-                        Icons.keyboard_arrow_down_rounded,
-                        Alignment.bottomCenter,
-                      ),
-                      arrow(
-                        'left',
-                        Icons.keyboard_arrow_left_rounded,
-                        Alignment.centerLeft,
-                      ),
-                      arrow(
-                        'right',
-                        Icons.keyboard_arrow_right_rounded,
-                        Alignment.centerRight,
-                      ),
-                      Center(
-                        child: SizedBox.square(
-                          dimension: 104,
-                          // Holding OK long-presses on the TV too, for episode and history actions.
-                          child: FilledButton(
-                            style: FilledButton.styleFrom(
-                              shape: const CircleBorder(),
-                              backgroundColor: primary,
-                            ),
-                            onPressed: () => _send({'k': 'ok'}),
-                            onLongPress: () {
-                              HapticFeedback.mediumImpact();
-                              _send({'k': 'ok', 'hold': true});
-                            },
-                            child: const Text(
-                              'OK',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 32),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  button('back', Icons.arrow_back_rounded, 'Back'),
-                  button('rewind', Icons.fast_rewind_rounded, 'Rewind'),
-                  button('playpause', Icons.play_arrow_rounded, 'Play / pause'),
-                  button('forward', Icons.fast_forward_rounded, 'Fast forward'),
-                ],
-              ),
-              const Spacer(),
-            ],
-            TextField(
-              controller: typed,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (text) => _send({'text': text}),
-              decoration: InputDecoration(
-                hintText: 'Type into the TV (search box)',
-                filled: true,
-                fillColor: Colors.white.withValues(alpha: .07),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide.none,
-                ),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.send_rounded),
-                  onPressed: () => _send({'text': typed.text}),
+            arrow('up', Icons.keyboard_arrow_up_rounded, Alignment.topCenter),
+            arrow(
+              'down',
+              Icons.keyboard_arrow_down_rounded,
+              Alignment.bottomCenter,
+            ),
+            arrow(
+              'left',
+              Icons.keyboard_arrow_left_rounded,
+              Alignment.centerLeft,
+            ),
+            arrow(
+              'right',
+              Icons.keyboard_arrow_right_rounded,
+              Alignment.centerRight,
+            ),
+            Center(
+              child: SizedBox.square(
+                dimension: 96,
+                // Holding OK long-presses on the TV too, for episode and history actions.
+                child: FilledButton(
+                  style: FilledButton.styleFrom(shape: const CircleBorder()),
+                  onPressed: () => _send({'k': 'ok'}),
+                  onLongPress: () {
+                    HapticFeedback.mediumImpact();
+                    _send({'k': 'ok', 'hold': true});
+                  },
+                  child: const Text('OK'),
                 ),
               ),
             ),

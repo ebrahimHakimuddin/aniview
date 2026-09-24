@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:aniview/pairing.dart';
 import 'package:aniview/settings.dart';
+import 'package:aniview/tv.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -79,6 +80,31 @@ void main() {
         })).statusCode,
         HttpStatus.forbidden,
       );
+
+      // Every answer says what's playing; typing with no text box focused searches on the TV.
+      var sent = DateTime.now().millisecondsSinceEpoch;
+      Future<http.Response> send(Map body) => post('/key', {
+        'id': remoteKeyId(key),
+        'data': base64.encode(seal(key, jsonEncode({...body, 't': ++sent}))),
+      });
+      String? searched;
+      onRemoteSearch = (query) => searched = query;
+      addTearDown(() => onRemoteSearch = null);
+      nowPlaying.value = (
+        title: 'Show',
+        episode: 'Episode 3',
+        paused: false,
+        position: const Duration(seconds: 90),
+        duration: const Duration(minutes: 24),
+      );
+      addTearDown(() => nowPlaying.value = null);
+      final state = jsonDecode((await send({'q': 'state'})).body);
+      expect(
+        (state['playing'], state['episode'], state['position']),
+        (true, 'Episode 3', 90000),
+      );
+      expect((await send({'text': 'frieren'})).statusCode, 200);
+      expect(searched, 'frieren');
     },
   );
 }
