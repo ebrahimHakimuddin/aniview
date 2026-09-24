@@ -53,7 +53,11 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  final player = Player();
+  // mpv-android's defaults: a 64MB cache, zero-copy decoding where the chip allows it and mpv's `fast` profile
+  // (bilinear scaling, no dithering), which TV GPUs need to keep up at 1080p.
+  final player = Player(
+    configuration: const PlayerConfiguration(bufferSize: 64 * 1024 * 1024),
+  );
   late final controller = VideoController(
     player,
     configuration: Settings.directVideo
@@ -61,7 +65,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             vo: 'mediacodec_embed',
             hwdec: 'mediacodec',
           )
-        : const VideoControllerConfiguration(),
+        : const VideoControllerConfiguration(
+            hwdec: 'mediacodec,mediacodec-copy',
+          ),
   );
   final _scaffold = GlobalKey<ScaffoldState>();
   late final session = PlaybackSession(
@@ -139,6 +145,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     PlayerScreen.showing = true;
+    if (player.platform case final NativePlayer mpv) {
+      mpv.command(['apply-profile', 'fast']).ignore();
+    }
     onRemoteSeek = (to) =>
         player.seek(PlaybackSession.clamp(to, player.state.duration));
     _lifecycle;
@@ -670,6 +679,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (!didPop) return setState(() => controls = false);
         _saveHistory();
         player.pause();
+        // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
+        SystemChrome.setPreferredOrientations([]);
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       },
       child: Scaffold(
         key: _scaffold,
@@ -679,9 +691,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
           width: 400,
           child: _EpisodeList(
             episodes: widget.episodes,
-        // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
-        SystemChrome.setPreferredOrientations([]);
-        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
             current: index,
             media: widget.media,
             dub: widget.dub,
