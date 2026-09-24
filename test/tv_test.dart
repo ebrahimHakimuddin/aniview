@@ -9,7 +9,7 @@ void main() {
     var taps = 0, longPresses = 0;
     await tester.pumpWidget(
       MaterialApp(
-        builder: (context, child) => FocusRing(child: child!),
+        builder: (context, child) => TvInput(child: child!),
         home: Scaffold(
           body: Center(
             child: InkWell(
@@ -45,7 +45,7 @@ void main() {
     final mic = FocusNode();
     await tester.pumpWidget(
       MaterialApp(
-        builder: (context, child) => FocusRing(child: child!),
+        builder: (context, child) => TvInput(child: child!),
         home: Scaffold(
           appBar: AppBar(
             // Caret at the start, where Right would otherwise just move it.
@@ -78,7 +78,7 @@ void main() {
     var taps = 0, longPresses = 0;
     await tester.pumpWidget(
       MaterialApp(
-        builder: (context, child) => FocusRing(child: child!),
+        builder: (context, child) => TvInput(child: child!),
         home: Builder(
           builder: (context) => Scaffold(
             body: Center(
@@ -116,4 +116,70 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('pushed'), findsNothing);
   });
+
+  testWidgets(
+    "a row's ends keep focus in the row; Left from its start goes to onLeftEdge",
+    (tester) async {
+      isTv = true;
+      addTearDown(() => isTv = false);
+      var edges = 0;
+      onLeftEdge = () {
+        edges++;
+        return true;
+      };
+      addTearDown(() => onLeftEdge = null);
+      final nodes = List.generate(3, (i) => FocusNode(debugLabel: 'card $i'));
+      final below = FocusNode(debugLabel: 'below');
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => TvInput(child: child!),
+          home: Scaffold(
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TvRow(
+                  child: Row(
+                    children: [
+                      for (final (i, node) in nodes.indexed)
+                        TextButton(
+                          autofocus: i == 2,
+                          focusNode: node,
+                          onPressed: () {},
+                          child: Text('card $i'),
+                        ),
+                    ],
+                  ),
+                ),
+                // Further right than the row's end, on the row below.
+                Padding(
+                  padding: const EdgeInsets.only(left: 600),
+                  child: TextButton(
+                    focusNode: below,
+                    onPressed: () {},
+                    child: const Text('below'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(nodes[2].hasPrimaryFocus, isTrue);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      expect(nodes[2].hasPrimaryFocus, isTrue); // not the button below
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+      expect(nodes[0].hasPrimaryFocus, isTrue);
+      expect(edges, 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+      expect(edges, 1);
+    },
+  );
 }

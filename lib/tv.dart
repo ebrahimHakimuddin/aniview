@@ -2,12 +2,12 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'history.dart';
 import 'platform.dart';
 
-/// Running on Android TV: D-pad navigation, a focus ring, and the TV home layout.
+/// Running on Android TV: D-pad navigation and the TV layouts.
 bool isTv = false;
 
 Future<void> detectTv() async => isTv = await AndroidApp.isTv();
@@ -33,7 +33,32 @@ const remoteKeys = {
     PhysicalKeyboardKey.mediaFastForward,
     LogicalKeyboardKey.mediaFastForward,
   ),
+  'next': (
+    PhysicalKeyboardKey.mediaTrackNext,
+    LogicalKeyboardKey.mediaTrackNext,
+  ),
 };
+
+/// What the TV is playing, for the phone remote's playback controls; null when nothing is.
+typedef NowPlaying = ({
+  String title,
+  String episode,
+  bool paused,
+  Duration position,
+  Duration duration,
+});
+
+final nowPlaying = ValueNotifier<NowPlaying?>(null);
+
+/// The player's seek, for the phone remote's seek bar; set while a player is open.
+void Function(Duration to)? onRemoteSeek;
+
+/// Search on the TV for what's typed on the phone remote ([query]), or just open Search (null). Home sets it; it
+/// does nothing while something plays.
+void Function(String? query)? onRemoteSearch;
+
+/// A search typed on the phone remote, for the Search page to run.
+final remoteQuery = ValueNotifier<String?>(null);
 
 /// Presses a key from the phone remote ([remoteKeys], or 'back') in the app, through the same handling as the
 /// TV remote's keys; [hold] keeps it down long enough to count as a long press. Stays inside Flutter: nothing
@@ -110,76 +135,45 @@ Future<void> listenTv({
 }
 
 /// Mirrors watch history (newest first) into the TV launcher's Continue watching row.
-Future<void> syncWatchNext(List<Map<String, dynamic>> history) async {
+Future<void> syncWatchNext(List<WatchRecord> history) async {
   if (!isTv) return;
   final now = DateTime.now().millisecondsSinceEpoch;
   try {
     await _tv.invokeMethod('watchNext', [
       for (final (i, r) in history.take(10).indexed)
-        if (r['media']['id'] is int)
+        if (r.show.id is int)
           {
-            'id': r['media']['id'],
-            'title':
-                r['media']['title']['userPreferred'] ??
-                r['media']['title']['romaji'] ??
-                r['media']['title']['english'] ??
-                '',
-            'episode': '${r['episode']}',
-            'image': r['media']['coverImage']?['extraLarge'],
-            'position': r['position'],
-            'duration': r['duration'],
+            'id': r.show.id,
+            'title': r.show.title,
+            'episode': '${r.episode}',
+            'image': r.show.cover,
+            'position': r.position.inMilliseconds,
+            'duration': r.duration?.inMilliseconds,
             // Entries saved before this was recorded keep their order.
-            'at': r['at'] ?? now - i * 60000,
+            'at': r.savedAt ?? now - i * 60000,
           },
     ]);
   } catch (_) {} // not on Android
 }
 
-/// The show whose poster has D-pad focus, for the TV home billboard.
+/// The show whose card has D-pad focus, for the TV home's immersive backdrop.
 final focusedMedia = ValueNotifier<Map?>(null);
 
-/// App-wide TV remote handling. Draws a ring around whatever has D-pad focus, following it each frame since
-/// scrolling moves it without a focus change. Holding OK (or the menu key) long-presses the focused widget, so
-/// long-press actions work with a remote; a short press activates it on release. The D-pad always leaves a text
-/// field, which would otherwise trap it (the on-screen keyboard does the editing), and moving focus glides
-/// the list it's in to centre it rather than jumping. Widgets inside [NoFocusRing] draw their own focus.
-class FocusRing extends StatefulWidget {
-  const FocusRing({super.key, required this.child});
+/// App-wide TV remote handling. Holding OK (or the menu key) long-presses the focused widget, so long-press
+/// actions work with a remote; a short press activates it on release. The D-pad always leaves a text field,
+/// which would otherwise trap it (the on-screen keyboard does the editing). Moving focus glides lists instead of
+/// jumping: rows keep the focused card at their start, like Google TV, and a list holding a [ScrollAnchor]
+/// brings that anchor to its top. Focus itself is drawn by each widget (cards scale, buttons invert; see ui.dart).
+class TvInput extends StatefulWidget {
+  const TvInput({super.key, required this.child});
 
   final Widget child;
 
   @override
-  State<FocusRing> createState() => _FocusRingState();
+  State<TvInput> createState() => _TvInputState();
 }
 
-// ponytail: the ring polls the focused widget every frame on TV; listen to focus and scroll changes if that
-// ever costs noticeable frames
-class _FocusRingState extends State<FocusRing>
-    with SingleTickerProviderStateMixin {
-  late final Ticker _ticker = createTicker((elapsed) {
-    final next = _focusedRect();
-    if (next == rect) return;
-    // Glide to a newly focused widget (following it if a scroll carries it along meanwhile), then track
-    // exactly while a scroll moves it.
-    if (rect == null ||
-        next == null ||
-        next.size != rect!.size ||
-        (next.center - rect!.center).distance > 24) {
-      _glideUntil = elapsed + _glide;
-    }
-    setState(() {
-      glide = elapsed < _glideUntil ? _glide : Duration.zero;
-      rect = next;
-      if (next != null) shown = next;
-    });
-  })..start();
-  static const _glide = Duration(milliseconds: 160);
-  Duration _glideUntil = Duration.zero;
-  Rect? rect;
-
-  /// The last focused rect, where the ring fades out when focus goes somewhere it isn't drawn.
-  Rect shown = Rect.zero;
-  Duration glide = Duration.zero;
+class _TvInputState extends State<TvInput> {
   bool _selectDown = false;
   bool _held = false;
   int _pointer = 1 << 20; // synthetic pointers, clear of real ones
@@ -248,110 +242,137 @@ class _FocusRingState extends State<FocusRing>
     Curve? curve,
   }) {
     node.requestFocus();
-    Scrollable.ensureVisible(
-      node.context!,
-      alignment: .5,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-    );
+    final context = node.context;
+    final target = context?.findRenderObject();
+    if (context == null || target is! RenderBox) return;
+    Element? anchor;
+    context.visitAncestorElements((e) {
+      if (e.widget is ScrollAnchor) anchor = e;
+      return anchor == null;
+    });
+    var anchored = false;
+    for (
+      var s = Scrollable.maybeOf(context);
+      s != null;
+      s = Scrollable.maybeOf(s.context)
+    ) {
+      final position = s.position;
+      if (axisDirectionToAxis(s.axisDirection) == Axis.horizontal) {
+        // The focused card sits at the row's start margin while the row can scroll that far.
+        final room = position.viewportDimension - target.size.width;
+        position.ensureVisible(
+          target,
+          alignment: room <= 0 ? 0 : (tvMargin / room).clamp(0.0, 1.0),
+          duration: _glide,
+          curve: Curves.easeOutCubic,
+        );
+      } else if (anchor != null && !anchored) {
+        anchored = true;
+        position.ensureVisible(
+          anchor!.renderObject!,
+          duration: _glide,
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        position.ensureVisible(
+          target,
+          alignment: .5,
+          duration: _glide,
+          curve: Curves.easeOutCubic,
+        );
+      }
+    }
   }
 
-  Rect? _focusedRect() {
-    final node = FocusManager.instance.primaryFocus;
-    if (node == null || node is FocusScopeNode || node.context == null) {
-      return null;
-    }
-    if (node.context!.findAncestorWidgetOfExactType<NoFocusRing>() != null) {
-      return null;
-    }
-    final render = node.context!.findRenderObject();
-    if (render is! RenderBox || !render.attached || !render.hasSize) {
-      return null;
-    }
-    final r = node.rect;
-    final screen = MediaQuery.sizeOf(context);
-    // A whole page or text field wrapper holding focus isn't something to point at.
-    if (r.width * r.height > screen.width * screen.height * .5) return null;
-    return r;
-  }
+  static const _glide = Duration(milliseconds: 260);
 
   @override
-  void dispose() {
-    _ticker.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Stack(
-    children: [
-      Shortcuts(
-        shortcuts: const {
-          SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
-            TraversalDirection.up,
-            ignoreTextFields: false,
-          ),
-          SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
-            TraversalDirection.down,
-            ignoreTextFields: false,
-          ),
-          SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
-            TraversalDirection.left,
-            ignoreTextFields: false,
-          ),
-          SingleActivator(
-            LogicalKeyboardKey.arrowRight,
-          ): DirectionalFocusIntent(
-            TraversalDirection.right,
-            ignoreTextFields: false,
-          ),
-        },
-        child: FocusTraversalGroup(
-          policy: ReadingOrderTraversalPolicy(requestFocusCallback: _glideTo),
-          child: Focus(
-            canRequestFocus: false,
-            skipTraversal: true,
-            onKeyEvent: _onKey,
-            child: widget.child,
-          ),
-        ),
+  Widget build(BuildContext context) => Shortcuts(
+    shortcuts: const {
+      SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
+        TraversalDirection.up,
+        ignoreTextFields: false,
       ),
-      AnimatedPositioned.fromRect(
-        rect: shown.inflate(4),
-        duration: glide,
-        curve: Curves.easeOutCubic,
-        child: IgnorePointer(
-          child: AnimatedOpacity(
-            opacity: rect == null ? 0 : 1,
-            duration: const Duration(milliseconds: 120),
-            child: AnimatedContainer(
-              duration: glide,
-              curve: Curves.easeOutCubic,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.white, width: 3),
-                // Small squares are icon buttons, which are round.
-                borderRadius: BorderRadius.circular(
-                  shown.shortestSide < 64 && shown.longestSide < 72
-                      ? shown.shortestSide / 2 + 4
-                      : 18,
-                ),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x55FFFFFF), blurRadius: 16),
-                ],
-              ),
-            ),
-          ),
-        ),
+      SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
+        TraversalDirection.down,
+        ignoreTextFields: false,
       ),
-    ],
+      SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
+        TraversalDirection.left,
+        ignoreTextFields: false,
+      ),
+      SingleActivator(LogicalKeyboardKey.arrowRight): DirectionalFocusIntent(
+        TraversalDirection.right,
+        ignoreTextFields: false,
+      ),
+    },
+    child: FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(requestFocusCallback: _glideTo),
+      child: Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: _onKey,
+        child: widget.child,
+      ),
+    ),
   );
 }
 
-/// Focus inside [child] draws its own highlight, so the [FocusRing] stays off it.
-class NoFocusRing extends StatelessWidget {
-  const NoFocusRing({super.key, required this.child});
+/// The TV overscan margin at the sides (48dp), from the Android TV layout guide; 24dp at top and bottom.
+const tvMargin = 48.0;
+
+/// On TV, a vertical list brings this to its top when focus moves into it, so a row of cards shows with its
+/// title instead of the focused card being centred.
+class ScrollAnchor extends StatelessWidget {
+  const ScrollAnchor({super.key, required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) => child;
 }
+
+/// What Left from a row's first item does: the home screen opens its drawer when it's showing (returns true);
+/// elsewhere focus stays put.
+bool Function()? onLeftEdge;
+
+/// A horizontal row on TV (cards, buttons, chips): Right from its last item stays put instead of jumping to
+/// whatever lies right of it in another row, and Left from its first item goes to [onLeftEdge].
+class TvRow extends StatelessWidget {
+  const TvRow({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => !isTv
+      ? child
+      : Focus(
+          canRequestFocus: false,
+          skipTraversal: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyUpEvent) return KeyEventResult.ignored;
+            final key = event.logicalKey;
+            final right = key == LogicalKeyboardKey.arrowRight;
+            if (!right && key != LogicalKeyboardKey.arrowLeft) {
+              return KeyEventResult.ignored;
+            }
+            final current = FocusManager.instance.primaryFocus;
+            if (current == null) return KeyEventResult.ignored;
+            final x = current.rect.center.dx;
+            // Lists build a little past their edges, so the next item along is there when there is one.
+            final more = node.traversalDescendants.any(
+              (n) =>
+                  n != current &&
+                  n.canRequestFocus &&
+                  (right ? n.rect.center.dx > x + 1 : n.rect.center.dx < x - 1),
+            );
+            if (more) return KeyEventResult.ignored;
+            if (!right) onLeftEdge?.call();
+            return KeyEventResult.handled;
+          },
+          child: child,
+        );
+}
+
+/// Set when the remote's search key should open voice search on the Search page.
+final voiceSearch = ValueNotifier(false);
