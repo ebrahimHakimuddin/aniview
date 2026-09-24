@@ -20,7 +20,7 @@ fallback when a server never loads, which subtitles to show, when it counts as w
 when to offer or start the next episode (**up next**), what OK on a TV remote does, and where a held seek lands.
 
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order. A
-**source** is one site's adapter (Anikoto, animepahe, Re:Anime, Miruro); history and downloads remember it by name.
+**source** is one site's adapter (Anikoto, animepahe, Re:Anime); history and downloads remember it by name.
 
 **Tracker** (`lib/tracker.dart`): browsing (AniList, with MyAnimeList as a read-only fallback), the AniList
 session, and **tracked progress** saves, queued on-device when AniList can't take them. Each **catalog**
