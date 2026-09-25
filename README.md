@@ -1,13 +1,20 @@
-# AniView
+<p align="center">
+  <img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="AniView" width="120">
+</p>
+
+<h1 align="center">AniView</h1>
+
+<p align="center">
+  Watch and track anime on Android phones and Android TV.<br>
+  <a href="https://github.com/ebrahimHakimuddin/aniview/releases/latest">Download the latest release</a>
+</p>
+
+<p align="center">
+  <a href="https://www.buymeacoffee.com/kidfury"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&slug=kidfury&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="48"></a>
+</p>
 
 Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
 MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
-
-## Support
-
-If AniView is useful to you, you can support its development:
-
-<a href="https://www.buymeacoffee.com/kidfury"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&slug=kidfury&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="48"></a>
 
 ## Disclaimer
 
