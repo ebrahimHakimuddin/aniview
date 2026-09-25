@@ -3,6 +3,12 @@
 Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
 MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
 
+## Support
+
+If AniView is useful to you, you can support its development:
+
+<a href="https://www.buymeacoffee.com/kidfury"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&slug=kidfury&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="48"></a>
+
 ## Disclaimer
 
 AniView does not host, store, upload or serve any video, subtitle or image content. Everything shown in the app
