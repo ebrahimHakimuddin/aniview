@@ -710,6 +710,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             for (final (icon, title, url) in const [
               (
+                Icons.coffee_rounded,
+                'Buy me a coffee',
+                'https://www.buymeacoffee.com/kidfury',
+              ),
+              (
                 Icons.code_rounded,
                 'GitHub',
                 'https://github.com/ebrahimHakimuddin',
