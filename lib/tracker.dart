@@ -151,8 +151,9 @@ class Tracker {
       ? fallback.relations(media)
       : _browse((c) => c.relations(media));
 
-  /// Watching (incl. rewatching) and planning entries.
-  static Future<Map<String, List>> lists() => AniList.lists();
+  /// Watching (incl. rewatching) and planning entries; with [all], every list.
+  static Future<Map<String, List>> lists({bool all = false}) =>
+      AniList.lists(all: all);
 
   /// The list status after watching up to [progress]: completed on the last episode, otherwise
   /// watching (or still rewatching).

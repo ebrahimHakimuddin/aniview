@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -139,7 +140,19 @@ class AniList {
       },
       body: jsonEncode({'query': query, 'variables': variables}),
     );
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    if (res.statusCode == 429) {
+      final wait = int.tryParse(res.headers['retry-after'] ?? '') ?? 60;
+      throw Exception(
+        'AniList is getting too many requests. Try again in ${wait}s',
+      );
+    }
+    // A whole list is hundreds of KB: decoded on the UI thread it drops frames (a back animation, a scroll).
+    final text = res.body;
+    final body =
+        (text.length > 32 * 1024
+                ? await Isolate.run(() => jsonDecode(text))
+                : jsonDecode(text))
+            as Map<String, dynamic>;
     final errors = body['errors'] as List?;
     if (errors != null && errors.isNotEmpty) {
       final message = errors.first['message'] as String;
@@ -155,6 +168,16 @@ class AniList {
     if (token == null) return null;
     return _viewer ??= (await query(
       'query{Viewer{id name avatar{large}}}',
+    ))['Viewer'];
+  }
+
+  /// Your anime totals ({count, episodesWatched, minutesWatched, statuses: [{status, count}]}) and the days
+  /// you updated your list ({date, amount}); null signed out.
+  static Future<Map<String, dynamic>?> stats() async {
+    if (token == null) return null;
+    return (await query(
+      'query{Viewer{statistics{anime{count episodesWatched minutesWatched statuses{status count}}} '
+      'stats{activityHistory{date amount}}}}',
     ))['Viewer'];
   }
 
@@ -230,40 +253,105 @@ class AniList {
     ]..sort((a, b) => a.$1.compareTo(b.$1));
   }
 
-  /// Watching (incl. rewatching) and planning entries, most recently updated first.
-  static Future<Map<String, List>> lists() async {
+  /// Watching (incl. rewatching) and planning entries, most recently updated first; with [all], completed,
+  /// paused and dropped ones too.
+  static Future<Map<String, List>> lists({bool all = false}) async {
     final me = await viewer();
     if (me == null) return {};
     final data = await query(
-      r'query($u:Int){MediaListCollection(userId:$u,type:ANIME,status_in:[CURRENT,REPEATING,PLANNING],'
+      r'query($u:Int,$s:[MediaListStatus]){MediaListCollection(userId:$u,type:ANIME,status_in:$s,'
       r'sort:UPDATED_TIME_DESC){lists{status entries{media{'
       '$_media}}}}}',
-      {'u': me['id']},
+      {
+        'u': me['id'],
+        's': [
+          'CURRENT',
+          'REPEATING',
+          'PLANNING',
+          if (all) ...['COMPLETED', 'PAUSED', 'DROPPED'],
+        ],
+      },
     );
-    final out = <String, List>{'CURRENT': [], 'PLANNING': []};
+    final out = <String, List>{
+      'CURRENT': [],
+      'PLANNING': [],
+      if (all) ...{'COMPLETED': [], 'PAUSED': [], 'DROPPED': []},
+    };
     for (final list in data['MediaListCollection']['lists']) {
-      out[list['status'] == 'PLANNING' ? 'PLANNING' : 'CURRENT']!.addAll([
+      final status = list['status'] as String?;
+      // Custom lists come back without a status.
+      out[status == 'REPEATING' ? 'CURRENT' : status]?.addAll([
         for (final entry in list['entries']) entry['media'],
       ]);
     }
     return out;
   }
 
-  /// The latest episode that aired in the past week of each show in [ids], newest first, as
-  /// {episode, airingAt, media}.
-  static Future<List<Map>> airedThisWeek(Iterable<int> ids) async {
+  /// Episodes of the shows in [ids] from a week ago through the week ahead (from the start of today), soonest
+  /// first, as {episode, airingAt, media}: one request for both [latestAired] and the schedule.
+  static Future<List<Map>> airingAround(Iterable<int> ids) async {
     if (ids.isEmpty) return const [];
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final now = DateTime.now();
+    final today =
+        DateTime(now.year, now.month, now.day).millisecondsSinceEpoch ~/ 1000;
     final data = await query(
       r'query($ids:[Int],$from:Int,$to:Int){Page(perPage:50){airingSchedules(mediaId_in:$ids,'
-      r'airingAt_greater:$from,airingAt_lesser:$to,sort:TIME_DESC){episode airingAt media{'
+      r'airingAt_greater:$from,airingAt_lesser:$to,sort:TIME){episode airingAt media{'
       '$_media}}}}',
-      {'ids': ids.toSet().toList(), 'from': now - 7 * 24 * 3600, 'to': now},
+      {
+        'ids': ids.toSet().toList(),
+        'from': now.millisecondsSinceEpoch ~/ 1000 - 7 * 24 * 3600,
+        'to': today + 7 * 24 * 3600,
+      },
     );
+    return [...data['Page']['airingSchedules'] as List].cast<Map>();
+  }
+
+  /// This week's episodes (from the start of today) of the most popular shows airing now, soonest first, as
+  /// {episode, airingAt, media}: the schedule for someone with no list to go by. [pages] of 50 shows each, one
+  /// request apiece (a page of every episode would take a dozen).
+  static Future<List<Map>> airingPopular({int pages = 2}) async {
+    final now = DateTime.now();
+    final from = DateTime(now.year, now.month, now.day);
+    final to = from.add(const Duration(days: 7));
+    final out = <Map>[];
+    for (var page = 1; page <= pages; page++) {
+      final data = (await query(
+        r'query($p:Int){Page(page:$p,perPage:50){pageInfo{hasNextPage} media(type:ANIME,status:RELEASING,'
+        r'isAdult:false,sort:POPULARITY_DESC){airingSchedule(notYetAired:true,perPage:8){nodes{episode airingAt}} '
+        '$_media}}}',
+        {'p': page},
+      ))['Page'];
+      for (final media in data['media'] as List) {
+        for (final s in media['airingSchedule']['nodes'] as List) {
+          final at = DateTime.fromMillisecondsSinceEpoch(
+            (s['airingAt'] as int) * 1000,
+          );
+          if (at.isBefore(to)) {
+            out.add({
+              'episode': s['episode'],
+              'airingAt': s['airingAt'],
+              'media': media,
+            });
+          }
+        }
+      }
+      if (data['pageInfo']['hasNextPage'] != true) break;
+    }
+    return out
+      ..sort((a, b) => (a['airingAt'] as int).compareTo(b['airingAt'] as int));
+  }
+
+  /// From [airingAround]: the latest episode that has aired of each show in [ids], newest first.
+  static List<Map> latestAired(List<Map> airing, Set<int> ids) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final seen = <Object>{};
     return [
-      for (final s in data['Page']['airingSchedules'] as List)
-        if (seen.add(s['media']['id'])) s as Map,
+      for (final s in airing.reversed)
+        if ((s['airingAt'] as int) <= now &&
+            ids.contains(s['media']['id']) &&
+            seen.add(s['media']['id']))
+          s,
     ];
   }
 
