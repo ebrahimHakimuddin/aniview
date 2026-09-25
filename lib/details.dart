@@ -21,7 +21,7 @@ Future<void> openDetails(
   Map media, {
   VoidCallback? onBack,
 }) async {
-  await Navigator.push(
+  await pushSettled(
     context,
     MaterialPageRoute(builder: (_) => DetailsScreen(media)),
   );
@@ -136,6 +136,7 @@ class _PlayActionState extends State<PlayAction> {
   bool busy = false;
 
   Future<void> _run() async {
+    if (!isTv) HapticFeedback.lightImpact();
     setState(() => busy = true);
     try {
       await widget.onPressed();
@@ -148,12 +149,20 @@ class _PlayActionState extends State<PlayAction> {
 
   @override
   Widget build(BuildContext context) {
-    final icon = busy
-        ? const SizedBox.square(
-            dimension: 20,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          )
-        : const Icon(Icons.play_arrow_rounded, size: 28);
+    final icon = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, a) => ScaleTransition(
+        scale: a,
+        child: FadeTransition(opacity: a, child: child),
+      ),
+      child: busy
+          ? const SizedBox.square(
+              key: ValueKey('busy'),
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            )
+          : const Icon(Icons.play_arrow_rounded, size: 28),
+    );
     final label = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -163,33 +172,38 @@ class _PlayActionState extends State<PlayAction> {
           widget.subtitle,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+            height: 1.2,
+          ),
         ),
       ],
     );
-    if (widget.fab) {
-      return FloatingActionButton.extended(
-        tooltip: '${widget.title} · ${widget.subtitle}',
-        onPressed: busy ? null : _run,
-        icon: icon,
-        label: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.sizeOf(context).width * .55,
-          ),
-          child: label,
-        ),
-      );
-    }
-    return FilledButton.icon(
+    // The same glowing pill everywhere: full width on a show's page, sized to its label on home.
+    final button = FilledButton.icon(
       autofocus: widget.autofocus,
       style: FilledButton.styleFrom(
-        minimumSize: Size(isTv ? 0 : double.infinity, 56),
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        minimumSize: Size(
+          isTv || widget.fab ? 64 : double.infinity,
+          buttonHeight,
+        ),
+        // Its two lines fit the standard height.
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
       ),
       onPressed: busy ? null : _run,
       icon: icon,
-      label: label,
+      label: widget.fab
+          ? ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.sizeOf(context).width * .55,
+              ),
+              child: label,
+            )
+          : label,
     );
+    // Marquee: the main action glows in the accent.
+    return AccentAction(child: button);
   }
 }
 
@@ -227,10 +241,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   late final cachedSeason = _ids.then(
     (_) => Downloads.instance.season(widget.media),
   );
-  bool dub = Settings.preferDub,
-      expanded = false,
-      aboutFocused = false,
-      newestFirst = Settings.newestFirst;
+  bool dub = Settings.preferDub, expanded = false, aboutFocused = false;
+
+  /// The episode order picked on this page; null follows [EpisodePlan.newestFirstFor].
+  bool? newestFirstPicked;
 
   /// Chosen page of episodes; null follows the page holding the next unwatched one.
   int? page;
@@ -332,9 +346,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             if (download?.status == DownloadStatus.done)
-              ListTile(
-                leading: const Icon(Icons.delete_outline_rounded),
-                title: const Text('Delete download'),
+              DestructiveTile(
+                icon: Icons.delete_outline_rounded,
+                title: 'Delete download',
                 onTap: () => Navigator.pop(
                   context,
                   () => confirmDeleteDownload(this.context, download!),
@@ -459,6 +473,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Show get show => Show(media);
   int get _progress => show.progress;
 
+  /// "Fall 2026 · TV", above the title.
+  String? get _eyebrow {
+    final season = media['season'] as String?;
+    final parts = [
+      if (season != null)
+        '${season[0]}${season.substring(1).toLowerCase()} ${media['seasonYear'] ?? ''}'
+            .trim()
+      else if (media['seasonYear'] != null)
+        '${media['seasonYear']}',
+      (media['format'] as String?)?.replaceAll('_', ' '),
+    ].whereType<String>();
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
   /// The main button, as [EpisodePlan.nextUp] decides: back to the saved spot, else the next unwatched episode
   /// on the chosen site.
   Widget _playAction() => FutureBuilder(
@@ -507,14 +535,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ? const SizedBox.shrink()
                 : SizedBox(
                     width: isTv ? 220 : double.infinity,
-                    child: const Skeleton(height: 56, radius: 28),
+                    child: Skeleton(height: buttonHeight, radius: radiusMedium),
                   ),
         };
       },
     ),
   );
 
-  Widget get _audio => SegmentedButton<bool>(
+  // Held to the button height: the control otherwise sits shorter than the buttons beside it.
+  Widget get _audio => SizedBox(height: buttonHeight, child: _audioToggle);
+
+  Widget get _audioToggle => SegmentedButton<bool>(
     segments: const [
       ButtonSegment(value: false, label: Text('Sub')),
       ButtonSegment(value: true, label: Text('Dub')),
@@ -537,7 +568,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
     }
     final all = sources;
-    if (all == null) return const Skeleton(width: 160, height: 40, radius: 20);
+    if (all == null) {
+      return const Skeleton(width: 160, height: 48, radius: radiusMedium);
+    }
     if (all.isEmpty) {
       return Text(
         "None of everythingmoe's top sites are supported yet",
@@ -566,76 +599,82 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// Download episodes, mark the season watched, fix the site's match.
+  /// Download episodes, mark the season watched. (Fixing the site's match sits by the site picker.)
   Widget _moreMenu() => FutureBuilder(
     future: episodes,
     builder: (context, snap) {
       final list = snap.data, site = source;
       final hasEpisodes = list != null && list.isNotEmpty;
-      final actions = <(IconData, String, VoidCallback)>[
+      return MoreMenu(title: titleOf(media), [
         if (hasEpisodes && site != null)
           (
-            Icons.download_rounded,
-            'Download episodes…',
-            () => _downloadSeason(site, list, _progress),
+            icon: Icons.download_rounded,
+            label: 'Download episodes…',
+            onTap: () => _downloadSeason(site, list, _progress),
+            destructive: false,
           ),
         if (hasEpisodes && Tracker.signedIn)
           (
-            Icons.done_all_rounded,
-            'Mark season watched',
-            () => _markWatched(
+            icon: Icons.done_all_rounded,
+            label: 'Mark season watched',
+            onTap: () => _markWatched(
               list.fold(0, (n, e) => e.number > n ? e.number.toInt() : n),
             ),
+            destructive: false,
           ),
-        if (site != null)
-          (
-            Icons.swap_horiz_rounded,
-            'Wrong show? Pick the right one',
-            _fixMatch,
-          ),
-      ];
-      // An empty menu would open as a blank box.
-      if (actions.isEmpty) return const SizedBox.shrink();
-      return PopupMenuButton<VoidCallback>(
-        tooltip: 'More',
-        icon: const Icon(Icons.more_vert_rounded),
-        onSelected: (action) => action(),
-        itemBuilder: (_) => [
-          for (final (icon, label, action) in actions)
-            PopupMenuItem(
-              value: action,
-              child: ListTile(leading: Icon(icon), title: Text(label)),
-            ),
-        ],
-      );
+      ]);
     },
   );
 
+  bool _newestFirst(WatchRecord? saved) =>
+      newestFirstPicked ??
+      EpisodePlan.newestFirstFor(
+        media,
+        preferred: Settings.newestFirst,
+        progress: _progress,
+        watchedHere: saved != null,
+      );
+
+  Widget _orderButton(bool newestFirst) => TextButton.icon(
+    onPressed: () => setState(() {
+      Settings.newestFirst = newestFirstPicked = !newestFirst;
+      page = null;
+    }),
+    icon: const Icon(Icons.swap_vert_rounded, size: 18),
+    label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
+  );
+
+  /// Next to the site picker on both layouts: the site found the wrong show, pick the right one.
+  Widget _wrongShow() => TextButton.icon(
+    onPressed: _fixMatch,
+    icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+    label: const Text('Wrong show?'),
+  );
+
+  /// TV: all the genres, wrapping, where the D-pad reaches each.
   Widget _genres() => Wrap(
     spacing: 8,
     runSpacing: 8,
-    children: [
-      for (final genre in show.genres)
-        ActionChip(
-          label: Text('$genre'),
-          tooltip: 'Browse $genre',
-          onPressed: () =>
-              openSearch(context, SearchFilters(genres: {'$genre'})),
-        ),
-    ],
+    children: [for (final genre in show.genres) _genre('$genre')],
+  );
+
+  Widget _genre(String genre) => ActionChip(
+    label: Text(genre),
+    tooltip: 'Browse $genre',
+    onPressed: () => openSearch(context, SearchFilters(genres: {genre})),
   );
 
   /// The synopsis, a few lines until tapped; focusable so a remote can open it too.
   /// Its outline is drawn around the text as laid out, so it grows with it (an ink highlight kept the size it
   /// had before the text expanded).
   Widget _about(String description) => InkWell(
-    borderRadius: BorderRadius.circular(12),
+    borderRadius: BorderRadius.circular(radiusLarge),
     focusColor: Colors.transparent,
     onFocusChange: (v) => setState(() => aboutFocused = v),
     onTap: () => setState(() => expanded = !expanded),
     child: DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(radiusLarge),
         color: aboutFocused
             ? scheme.onSurface.withValues(alpha: .08)
             : Colors.transparent,
@@ -682,25 +721,35 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final airing = airingLabel(media);
     final score = show.score;
     final description = plainText(show.description);
-    final width = MediaQuery.sizeOf(context).width;
+    final height = MediaQuery.sizeOf(context).height;
     return Scaffold(
       // Play sits in the thumb zone, always in reach while the episodes scroll.
-      bottomNavigationBar: Material(
-        color: scheme.surfaceContainer,
+      // Floats over the episodes, which fade out under it, like the navigation pill.
+      extendBody: true,
+      bottomNavigationBar: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [scheme.surface.withValues(alpha: 0), scheme.surface],
+            stops: const [0, .45],
+          ),
+        ),
         child: SafeArea(
           top: false,
           child: Padding(
-            padding: EdgeInsets.fromLTRB(side, 12, side, 12),
+            padding: EdgeInsets.fromLTRB(side, 28, side, 12),
             child: _playAction(),
           ),
         ),
       ),
       body: CustomScrollView(
         slivers: [
+          // Marquee: the cover as full-bleed key art, fading into the page under the title.
           SliverAppBar(
             pinned: true,
             stretch: true,
-            expandedHeight: width * 9 / 16,
+            expandedHeight: height * .5,
             actions: [_moreMenu()],
             flexibleSpace: FlexibleSpaceBar(
               stretchModes: const [StretchMode.zoomBackground],
@@ -708,22 +757,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 fit: StackFit.expand,
                 children: [
                   Artwork(
-                    show.backdrop,
+                    show.cover,
                     color: show.color,
-                    full: show.hasBanner,
+                    alignment: const Alignment(0, -.4),
                   ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: .55),
-                          Colors.transparent,
-                          scheme.surface,
-                        ],
-                        stops: const [0, .45, 1],
-                      ),
+                  DecoratedBox(decoration: keyArtFade),
+                  Positioned(
+                    left: side,
+                    right: side,
+                    bottom: 8,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_eyebrow case final eyebrow?) Eyebrow(eyebrow),
+                        const SizedBox(height: 8),
+                        Text(
+                          titleOf(media),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.headlineMedium?.copyWith(
+                            fontSize: 32,
+                            height: 1.05,
+                            letterSpacing: -.6,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -734,60 +792,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
             padding: EdgeInsets.symmetric(horizontal: side),
             sliver: SliverList.list(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    SizedBox(
-                      width: 96,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: AspectRatio(
-                          aspectRatio: 2 / 3,
-                          child: Artwork(show.cover, color: show.color),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            titleOf(media),
-                            style: text.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            [
-                              mediaMeta(media, genres: 0),
-                              (media['status'] as String?)
-                                  ?.replaceAll('_', ' ')
-                                  .toLowerCase(),
-                            ].whereType<String>().join(' · '),
-                            style: text.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 4,
-                            children: [
-                              if (score != null) Pill.score(score),
-                              if (airing != null)
-                                Pill(
-                                  'Next $airing',
-                                  icon: Icons.schedule_rounded,
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 8),
+                Text(
+                  [
+                    mediaMeta(media, genres: 0),
+                    (media['status'] as String?)
+                        ?.replaceAll('_', ' ')
+                        .toLowerCase(),
+                  ].whereType<String>().join(' · '),
+                  style: text.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
+                if (score != null || airing != null) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      if (score != null) Pill.score(score),
+                      if (airing != null)
+                        Pill('Next $airing', icon: Icons.schedule_rounded),
+                    ],
+                  ),
+                ],
                 if (Tracker.signedIn) ...[
                   const SizedBox(height: 24),
                   _ListEntry(
@@ -801,13 +829,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   const SizedBox(height: 16),
                   _about(description),
                 ],
-                if (show.genres.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _genres(),
-                ],
               ],
             ),
           ),
+          // One row that scrolls sideways, edge to edge, however many genres there are.
+          if (show.genres.isNotEmpty)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 56,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.fromLTRB(side, 12, side, 4),
+                  itemCount: show.genres.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) => _genre('${show.genres[i]}'),
+                ),
+              ),
+            ),
           SliverToBoxAdapter(child: _related()),
           SliverToBoxAdapter(
             child: Padding(
@@ -822,13 +860,26 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  _sourceMenu(),
+                  Row(
+                    children: [
+                      Flexible(child: _sourceMenu()),
+                      if (source != null) ...[
+                        const SizedBox(width: 8),
+                        _wrongShow(),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
           _episodeList(),
-          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          // Clear of the floating play button.
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 112 + MediaQuery.viewPaddingOf(context).bottom,
+            ),
+          ),
         ],
       ),
     );
@@ -911,12 +962,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if (_eyebrow case final eyebrow?) ...[
+                                Eyebrow(eyebrow),
+                                const SizedBox(height: 8),
+                              ],
                               Text(
                                 titleOf(media),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: text.headlineLarge?.copyWith(
-                                  fontWeight: FontWeight.w600,
+                                  fontSize: 40,
+                                  height: 1.05,
+                                  letterSpacing: -.8,
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -962,6 +1019,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               _playAction(),
                               _audio,
                               _sourceMenu(),
+                              if (source != null) _wrongShow(),
+                              FutureBuilder(
+                                future: record,
+                                builder: (context, saved) =>
+                                    _orderButton(_newestFirst(saved.data)),
+                              ),
                               if (Tracker.signedIn)
                                 FilledButton.tonalIcon(
                                   onPressed: _editEntry,
@@ -1101,6 +1164,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return FutureBuilder(
       future: record,
       builder: (context, saved) {
+        final newestFirst = _newestFirst(saved.data);
         final plan = EpisodePlan(
           list,
           progress: _progress,
@@ -1164,26 +1228,29 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Got it',
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () =>
-                        setState(() => Settings.episodeTipSeen = true),
-                  ),
+                  // On TV a close button there is one more stop for the D-pad; it shows the once instead.
+                  if (isTv)
+                    Builder(
+                      builder: (_) {
+                        Settings.episodeTipSeen = true;
+                        return const SizedBox.shrink();
+                      },
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Got it',
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      onPressed: () =>
+                          setState(() => Settings.episodeTipSeen = true),
+                    ),
                 ],
               ),
             ),
           if (list.length > 1)
             Row(
               children: [
-                TextButton.icon(
-                  onPressed: () => setState(() {
-                    Settings.newestFirst = newestFirst = !newestFirst;
-                    page = null;
-                  }),
-                  icon: const Icon(Icons.swap_vert_rounded, size: 18),
-                  label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
-                ),
+                // TV has it in the action row, with everything else the D-pad walks along.
+                if (!isTv) _orderButton(plan.newestFirst),
                 if (pages.length > 1)
                   Expanded(
                     child: SizedBox(
@@ -1290,8 +1357,11 @@ class _ListEntry extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     return Card.filled(
       margin: EdgeInsets.zero,
-      color: scheme.surfaceContainerHigh,
       clipBehavior: Clip.antiAlias,
+      // The 2dp-cornered bar, 16dp in.
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(nested(16, 2)),
+      ),
       child: InkWell(
         onTap: onTap,
         child: Padding(
@@ -1324,12 +1394,33 @@ class _ListEntry extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: total == null || total == 0
-                    ? 0
-                    : (progress / total).clamp(0.0, 1.0).toDouble(),
-                borderRadius: BorderRadius.circular(4),
-                minHeight: 4,
+              Container(
+                height: 4,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                alignment: Alignment.centerLeft,
+                // Grows to the progress on open and to each new value after.
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(
+                    begin: 0,
+                    end: total == null || total == 0
+                        ? 0
+                        : (progress / total).clamp(0.0, 1.0).toDouble(),
+                  ),
+                  duration: const Duration(milliseconds: 600),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) =>
+                      FractionallySizedBox(widthFactor: value, child: child),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      borderRadius: BorderRadius.circular(2),
+                      boxShadow: accentGlow(.8, 8),
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -1441,7 +1532,10 @@ class _EntrySheetState extends State<_EntrySheet> {
                     onPressed: () => _done(remove: true),
                     icon: const Icon(Icons.delete_outline_rounded),
                     label: const Text('Remove'),
-                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    style: TextButton.styleFrom(
+                      foregroundColor: scheme.error,
+                      iconColor: scheme.error,
+                    ),
                   ),
                 const Spacer(),
                 FilledButton(
@@ -1544,7 +1638,7 @@ class _MatchSheetState extends State<_MatchSheet> {
                         vertical: 4,
                       ),
                       leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(radiusMedium),
                         child: SizedBox(
                           width: 44,
                           height: 62,
@@ -1605,9 +1699,9 @@ class _EpisodesSkeleton extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Skeleton(height: 14, width: 110, radius: 6),
+                      Skeleton(height: 14, width: 110, radius: radiusSmall),
                       SizedBox(height: 8),
-                      Skeleton(height: 12, radius: 6),
+                      Skeleton(height: 12, radius: radiusSmall),
                     ],
                   ),
                 ),
@@ -1715,7 +1809,7 @@ class _EpisodeTile extends StatelessWidget {
             SizedBox(
               width: 128,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(radiusMedium),
                 child: AspectRatio(aspectRatio: 16 / 9, child: _still()),
               ),
             ),
@@ -1780,7 +1874,9 @@ class _EpisodeTile extends StatelessWidget {
           DecoratedBox(
             decoration: BoxDecoration(
               border: Border.all(color: scheme.primary, width: 2),
-              borderRadius: BorderRadius.circular(isTv ? 12 : 8),
+              borderRadius: BorderRadius.circular(
+                isTv ? radiusLarge : radiusMedium,
+              ),
             ),
           ),
         // Pops in when an episode is marked watched.
@@ -2010,7 +2106,7 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
   @override
   Widget build(BuildContext context) {
     final count = picked.length;
-    return AlertDialog(
+    return PanelDialog(
       title: const Text('Download episodes'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2046,25 +2142,13 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
 }
 
 Future<void> confirmDeleteDownload(BuildContext context, Download d) async {
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text('Delete Episode ${epNumber(d.number)}?'),
-      content: Text('${formatBytes(d.bytes)} will be freed on this device.'),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          autofocus: isTv,
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('Delete'),
-        ),
-      ],
-    ),
+  final ok = await confirmDestructive(
+    context,
+    title: 'Delete Episode ${epNumber(d.number)}?',
+    message: '${formatBytes(d.bytes)} will be freed on this device.',
+    action: 'Delete',
   );
-  if (ok != true) return;
+  if (!ok) return;
   await Downloads.instance.remove(d);
   if (context.mounted) showSuccess(context, 'Download deleted');
 }

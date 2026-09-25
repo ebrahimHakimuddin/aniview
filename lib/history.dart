@@ -170,7 +170,7 @@ class EpisodePlan {
     List<Episode> episodes, {
     required this.progress,
     this.record,
-    bool newestFirst = false,
+    this.newestFirst = false,
     int? page,
     int pageSize = 50,
   }) {
@@ -198,6 +198,20 @@ class EpisodePlan {
 
   /// Episodes marked watched on the tracker.
   final int progress;
+
+  /// The order the episodes are in.
+  final bool newestFirst;
+
+  /// Whether a show's episodes start newest first: the preferred order, but only once there's a place to be in
+  /// the list (it's still airing, or it's been watched). A finished show not started yet opens at episode 1.
+  static bool newestFirstFor(
+    Map media, {
+    required bool preferred,
+    required int progress,
+    required bool watchedHere,
+  }) =>
+      preferred &&
+      (media['status'] == 'RELEASING' || progress > 0 || watchedHere);
 
   /// This show's [WatchHistory] entry, if any.
   final WatchRecord? record;

@@ -447,10 +447,18 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (!Navigator.canPop(context))
+              Padding(
+                padding: EdgeInsets.fromLTRB(side, isTv ? 24 : 12, side, 4),
+                child: Text(
+                  'Discover',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+              ),
             Padding(
               padding: EdgeInsets.fromLTRB(
                 Navigator.canPop(context) ? 4 : side,
-                isTv ? 24 : 8,
+                isTv && Navigator.canPop(context) ? 24 : 8,
                 side - 4,
                 8,
               ),
@@ -481,7 +489,8 @@ class _SearchScreenState extends State<SearchScreen> {
     listenable: controller,
     builder: (context, _) => TextField(
       controller: controller,
-      autofocus: widget.filters == null && !isTv,
+      // Never on its own: opening Search may be for the filters or genres, not typing.
+      autofocus: false,
       textInputAction: TextInputAction.search,
       onChanged: search.type,
       onSubmitted: search.submit,
@@ -512,7 +521,9 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!search.searched) {
       final recent = Settings.recentSearches;
       return ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(
+          bottom: 24 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           if (recent.isNotEmpty) ...[
             SectionHeader(
@@ -523,15 +534,24 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: const Text('Clear'),
               ),
             ),
-            for (final q in recent)
-              ListTile(
-                leading: const Icon(Icons.history_rounded),
-                title: Text(q),
-                onTap: () {
-                  controller.text = q;
-                  search.submit(q);
-                },
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: side),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final q in recent)
+                    ActionChip(
+                      avatar: const Icon(Icons.history_rounded, size: 18),
+                      label: Text(q),
+                      onPressed: () {
+                        controller.text = q;
+                        search.submit(q);
+                      },
+                    ),
+                ],
               ),
+            ),
           ],
           FutureBuilder(
             future: trending,
@@ -540,17 +560,32 @@ class _SearchScreenState extends State<SearchScreen> {
                 : MediaRow('Trending now', snap.data!),
           ),
           const SectionHeader('Browse by genre'),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: side),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
+          FutureBuilder(
+            future: trending,
+            builder: (context, snap) => GridView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: EdgeInsets.symmetric(horizontal: side),
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent:
+                    gridTileExtent, // columns line up with the poster grids
+                mainAxisExtent: isTv ? 120 : 96,
+                crossAxisSpacing: gutter,
+                mainAxisSpacing: isTv ? gutter : 16,
+              ),
               children: [
-                for (final genre in _genres)
-                  ActionChip(
-                    label: Text(genre),
-                    onPressed: () =>
-                        _setFilters(SearchFilters(genres: {genre})),
+                for (final (i, genre) in _genres.indexed)
+                  FadeIn(
+                    index: i,
+                    child: _GenreTile(
+                      genre,
+                      // A trending show of the genre lends it its art.
+                      art: (snap.data ?? const [])
+                          .map((m) => Show(m))
+                          .where((m) => m.genres.contains(genre))
+                          .firstOrNull,
+                      onTap: () => _setFilters(SearchFilters(genres: {genre})),
+                    ),
                   ),
               ],
             ),
@@ -613,13 +648,19 @@ class _SearchScreenState extends State<SearchScreen> {
             sliver: SliverGrid.builder(
               gridDelegate: posterGrid,
               itemCount: search.items.length,
-              itemBuilder: (context, i) =>
-                  PosterCard(search.items[i], onBack: _remember),
+              // Rows arrive left to right as they scroll in.
+              itemBuilder: (context, i) => FadeIn(
+                index: i % 3,
+                child: PosterCard(search.items[i], onBack: _remember),
+              ),
             ),
           ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.only(top: 8, bottom: 32),
+              padding: EdgeInsets.only(
+                top: 8,
+                bottom: 32 + MediaQuery.paddingOf(context).bottom,
+              ),
               child: search.error != null
                   ? ErrorState(
                       search.error!,
@@ -635,4 +676,52 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
     );
   }
+}
+
+/// A genre to browse, over the art of a show in it, fading into the page (Marquee).
+class _GenreTile extends StatelessWidget {
+  const _GenreTile(this.genre, {required this.art, required this.onTap});
+
+  final String genre;
+  final Show? art;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => FocusCard(
+    onTap: onTap,
+    radius: radiusLarge, // a tile, like the posters
+    glow: hexColor(art?.color),
+    semanticLabel: 'Browse $genre',
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        Artwork(
+          art?.cover,
+          color: art?.color,
+          alignment: const Alignment(0, -.4),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [scheme.surface, scheme.surface.withValues(alpha: 0)],
+              stops: const [0, .85],
+            ),
+          ),
+        ),
+        Positioned(
+          left: 10,
+          right: 10,
+          bottom: 8,
+          child: Text(
+            genre,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
+      ],
+    ),
+  );
 }

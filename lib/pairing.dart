@@ -448,7 +448,7 @@ Future<({String code, Uint8List key})?> _handshake(
   if (!context.mounted) return null;
   final same = await showDialog<bool>(
     context: context,
-    builder: (context) => AlertDialog(
+    builder: (context) => PanelDialog(
       title: const Text('Does your TV show this code?'),
       content: Text(
         agreed.code,
@@ -644,25 +644,28 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
             : null,
         actions: [
           if (saved != null)
-            PopupMenuButton<VoidCallback>(
-              onSelected: (action) => action(),
-              itemBuilder: (_) => [
-                for (final MapEntry(key: id, value: other) in paired.entries)
-                  if (id != tv)
-                    PopupMenuItem(
-                      value: () => setState(() => tv = id),
-                      child: Text('Switch to ${other['name']}'),
-                    ),
-                PopupMenuItem(
-                  value: () => setState(() => tv = null),
-                  child: const Text('Pair another TV'),
-                ),
-                PopupMenuItem(
-                  value: _forget,
-                  child: const Text('Forget this TV'),
-                ),
-              ],
-            ),
+            MoreMenu([
+              for (final MapEntry(key: id, value: other) in paired.entries)
+                if (id != tv)
+                  (
+                    icon: Icons.tv_rounded,
+                    label: 'Switch to ${other['name']}',
+                    onTap: () => setState(() => tv = id),
+                    destructive: false,
+                  ),
+              (
+                icon: Icons.add_link_rounded,
+                label: 'Pair another TV',
+                onTap: () => setState(() => tv = null),
+                destructive: false,
+              ),
+              (
+                icon: Icons.link_off_rounded,
+                label: 'Forget this TV',
+                onTap: _forget,
+                destructive: true,
+              ),
+            ]),
         ],
       ),
       body: saved == null ? _pairing() : _remote(),

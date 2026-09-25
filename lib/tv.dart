@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
 import 'history.dart';
@@ -10,7 +11,34 @@ import 'platform.dart';
 /// Running on Android TV: D-pad navigation and the TV layouts.
 bool isTv = false;
 
-Future<void> detectTv() async => isTv = await AndroidApp.isTv();
+/// Whether the device itself is a TV (what pairing and the TV launcher go by), whatever layout is chosen.
+bool deviceIsTv = false;
+
+/// The TV layout when the device is a TV, unless [layout] ('phone' or 'tv') says otherwise.
+Future<void> detectTv({String layout = 'auto'}) async {
+  deviceIsTv = await AndroidApp.isTv();
+  applyLayout(layout);
+}
+
+/// Picks the layout; a phone in the TV layout stays in landscape, the shape it's made for.
+void applyLayout(String layout) {
+  isTv = switch (layout) {
+    'tv' => true,
+    'phone' => false,
+    _ => deviceIsTv,
+  };
+  restoreOrientation();
+}
+
+/// The orientations the app allows outside the player.
+void restoreOrientation() => SystemChrome.setPreferredOrientations(
+  isTv && !deviceIsTv
+      ? const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]
+      : const [],
+);
 
 const _tv = MethodChannel('aniview/tv');
 
@@ -274,12 +302,18 @@ class _TvInputState extends State<TvInput> {
           curve: Curves.easeOutCubic,
         );
       } else {
-        position.ensureVisible(
-          target,
-          alignment: .5,
-          duration: _glide,
-          curve: Curves.easeOutCubic,
-        );
+        // Only as far as it takes to show it (with a little room past it): a short page (Me, settings) stays
+        // where it is instead of centring the focused thing and pushing its top off screen.
+        final viewport = RenderAbstractViewport.of(target);
+        const room = 48.0;
+        final start = viewport.getOffsetToReveal(target, 0).offset - room;
+        final end = viewport.getOffsetToReveal(target, 1).offset + room;
+        final to = position.pixels
+            .clamp(end < start ? end : start, end < start ? start : end)
+            .clamp(position.minScrollExtent, position.maxScrollExtent);
+        if (to != position.pixels) {
+          position.animateTo(to, duration: _glide, curve: Curves.easeOutCubic);
+        }
       }
     }
   }

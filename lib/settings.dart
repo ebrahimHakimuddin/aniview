@@ -3,6 +3,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+
+import 'main.dart' show appGeneration;
+
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
@@ -92,8 +95,6 @@ class Settings {
   /// Decoded frames go straight to the screen instead of through the GPU: much smoother on TV chips, but a few
   /// devices' decoders show a black picture with it.
   // Off by default: on some TVs mpv's embedded output shows no picture at all.
-  static bool get directVideo => _prefs.getBool('direct_video') ?? false;
-  static set directVideo(bool v) => _prefs.setBool('direct_video', v);
 
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
   static set speed(double v) => _prefs.setDouble('speed', v);
@@ -114,6 +115,10 @@ class Settings {
   static set watchedPercent(int v) => _prefs.setInt('watched_percent', v);
 
   /// Ecchi shows out of browse and search (adult ones never show); on by default on a shared TV.
+  /// 'auto' (the TV layout on TVs), 'phone' or 'tv'.
+  static String get layout => _prefs.getString('layout') ?? 'auto';
+  static set layout(String v) => _prefs.setString('layout', v);
+
   static bool get hideNsfw => _prefs.getBool('hide_nsfw') ?? isTv;
   static set hideNsfw(bool v) => _prefs.setBool('hide_nsfw', v);
 
@@ -305,25 +310,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (picked != null) setState(() => apply(picked));
   }
 
-  Future<bool> _confirm(String title, String message, String action) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(title),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(action),
-            ),
-          ],
-        ),
-      ) ??
-      false;
+  Future<bool> _confirm(String title, String message, String action) =>
+      confirmDestructive(
+        context,
+        title: title,
+        message: message,
+        action: action,
+      );
 
   Future<void> _signIn() async {
     try {
@@ -348,8 +341,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
-        toolbarHeight: isTv ? 72 : null,
+        toolbarHeight: isTv ? 72 : 64,
         titleSpacing: side,
+        titleTextStyle: Theme.of(context).textTheme.headlineMedium,
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(
@@ -383,6 +377,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _Group('Home screen', [
+            ListTile(
+              title: const Text('Layout'),
+              subtitle: Text(
+                const {
+                  'auto': 'Automatic · TV layout on TVs',
+                  'phone': 'Phone',
+                  'tv': 'TV · for a remote or keyboard, in landscape',
+                }[Settings.layout]!,
+              ),
+              onTap: () async {
+                final picked = await pickOne(context, 'Layout', const {
+                  'auto': 'Automatic',
+                  'phone': 'Phone',
+                  'tv': 'TV',
+                }, Settings.layout);
+                if (picked == null || picked == Settings.layout) return;
+                Settings.layout = picked;
+                applyLayout(picked);
+                appGeneration.value++; // rebuilt in the new layout
+              },
+            ),
             ListTile(
               title: const Text('Sections'),
               subtitle: const Text('Choose and reorder the rows on home'),
@@ -504,14 +519,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: Settings.externalPlayer,
               onChanged: (v) => setState(() => Settings.externalPlayer = v),
             ),
-            SwitchListTile(
-              title: const Text('Direct video output'),
-              subtitle: const Text(
-                'Smoother playback on TVs and slower phones. Turn off if the picture stays black',
-              ),
-              value: Settings.directVideo,
-              onChanged: (v) => setState(() => Settings.directVideo = v),
-            ),
             if (!isTv)
               SwitchListTile(
                 title: const Text('Swipe gestures'),
@@ -609,9 +616,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             ListenableBuilder(
               listenable: Downloads.instance,
-              builder: (context, _) => ListTile(
-                leading: const Icon(Icons.download_for_offline_outlined),
-                title: const Text('Delete all downloads'),
+              builder: (context, _) => DestructiveTile(
+                icon: Icons.download_for_offline_outlined,
+                title: 'Delete all downloads',
                 subtitle: Text(
                   '${formatBytes(Downloads.instance.totalBytes)} used on this device',
                 ),
@@ -632,9 +639,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       },
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.history_rounded),
-              title: const Text('Clear watch history'),
+            DestructiveTile(
+              icon: Icons.history_rounded,
+              title: 'Clear watch history',
               subtitle: const Text(
                 'Removes continue-watching positions on this device',
               ),
@@ -652,9 +659,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.link_off_rounded),
-              title: const Text('Reset show matches'),
+            DestructiveTile(
+              icon: Icons.link_off_rounded,
+              title: 'Reset show matches',
               subtitle: const Text(
                 'Forget shows you picked manually on each site',
               ),
@@ -663,9 +670,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (context.mounted) showSuccess(context, 'Show matches reset');
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.verified_user_outlined),
-              title: const Text('Clear site verifications'),
+            DestructiveTile(
+              icon: Icons.verified_user_outlined,
+              title: 'Clear site verifications',
               subtitle: const Text(
                 'Use this if a site keeps failing after verifying',
               ),
@@ -815,7 +822,8 @@ class _Account extends StatelessWidget {
                   : 'Sign in with AniList to track what you watch',
             ),
             trailing: signedIn
-                ? TextButton(
+                ? OutlinedButton(
+                    style: destructiveButton,
                     onPressed: onSignOut,
                     child: const Text('Sign out'),
                   )
@@ -842,8 +850,19 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
 
   void _save() => setState(() => Settings.homeSections = sections);
 
+  /// Home with nothing on it would be a blank page, so leaving needs at least one section on.
+  bool get _anyShown => sections.any((s) => s.$2);
+
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => PopScope(
+    canPop: _anyShown,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) showError(context, 'Turn on at least one section for Home');
+    },
+    child: _page(context),
+  );
+
+  Widget _page(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const Text('Home sections'),
       actions: [
@@ -882,7 +901,9 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
               ),
               elevation: 12 * t,
               shadowColor: Colors.black,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(
+                nested(8),
+              ), // a card, like the rest
               child: child,
             ),
           );

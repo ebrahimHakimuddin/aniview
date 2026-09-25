@@ -9,6 +9,7 @@ import 'details.dart';
 import 'downloads.dart';
 import 'downloads_screen.dart';
 import 'history.dart';
+import 'library.dart';
 import 'notifications.dart';
 import 'player.dart';
 import 'search.dart';
@@ -19,9 +20,10 @@ import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-/// The app's top level: Home, Search, Downloads and Settings. Phones get a navigation bar (a rail from 600dp
-/// wide), TV a navigation drawer along the left edge that widens with labels while it has focus. Each page keeps
-/// its state while another is shown.
+/// The app's top level: Home, Schedule, Search, My list and Me (your account and stats, and the way to
+/// downloads and settings). Phones get a floating navigation pill (a rail from 600dp wide), TV
+/// a navigation drawer along the left edge that widens with labels while it has focus. Each page keeps its state
+/// while another is shown.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -29,20 +31,40 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-typedef _Destination = (IconData icon, IconData selected, String label);
-
-const _destinations = <_Destination>[
-  (Icons.home_outlined, Icons.home_rounded, 'Home'),
-  (Icons.search_rounded, Icons.search_rounded, 'Search'),
-  (
-    Icons.download_for_offline_outlined,
-    Icons.download_for_offline_rounded,
-    'Downloads',
+enum _Page {
+  home(Icons.home_outlined, Icons.home_rounded, 'Home'),
+  schedule(
+    Icons.calendar_today_outlined,
+    Icons.calendar_today_rounded,
+    'Schedule',
   ),
-  (Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
-];
+  search(Icons.search_rounded, Icons.search_rounded, 'Search'),
+  list(Icons.bookmarks_outlined, Icons.bookmarks_rounded, 'My list'),
+  me(Icons.person_outline_rounded, Icons.person_rounded, 'Me');
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  const _Page(this.icon, this.selected, this.label);
+  final IconData icon, selected;
+  final String label;
+
+  (IconData, IconData, String) get destination => (icon, selected, label);
+}
+
+/// The same five on phones and TV: Downloads and Settings open from Me, which sits last (at the drawer's foot on TV).
+const _pages = [_Page.home, _Page.schedule, _Page.search, _Page.list, _Page.me];
+
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  /// A page switched to fades up into place (Material's fade through), keeping every page's state.
+  late final _tabIn = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+    value: 1,
+  );
+  late final _tabCurve = CurvedAnimation(
+    parent: _tabIn,
+    curve: Curves.easeOutCubic,
+  );
+
   late Future<Map<String, dynamic>?> viewer = Tracker.viewer();
   late Future<Map<String, List>> lists = Tracker.lists();
   late Future<List> trending = Tracker.trending();
@@ -51,21 +73,86 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
   late Future<List<WatchRecord>> history = WatchHistory.all();
 
+  /// A week back and a week ahead of the shows you follow, in one request (AniList allows 30 a minute).
+  late Future<List<Map>> _airing = _loadAiring();
+
+  /// The newest episode out this past week of each show you're watching or watched recently.
   late Future<List<Map>> released = _released();
+
+  /// The week ahead of the shows you're watching or planning and the ones you watched recently, or signed out,
+  /// of the popular shows airing now; loaded the first time Schedule is shown.
+  Future<List<Map>>? _scheduleLoad;
+  Future<List<Map>> get schedule => _scheduleLoad ??= _schedule();
+
+  /// When lists and airing were last fetched; see [_reloadLists].
+  DateTime _fetched = DateTime.now();
+
+  /// Every list, for My list; loaded the first time it's shown.
+  Future<Map<String, List>>? _library;
+  Future<Map<String, List>> get library =>
+      _library ??= Tracker.lists(all: true);
+
+  /// Your AniList totals, for Me; loaded the first time it's shown.
+  Future<Map<String, dynamic>?>? _stats;
+  Future<Map<String, dynamic>?> get stats => _stats ??= AniList.stats();
 
   int tab = 0;
   final _visited = {0}; // pages are built the first time they're opened
 
-  /// New episodes of the shows on your watching list and the ones you watched recently.
-  Future<List<Map>> _released() async {
-    final watching = await lists.then(
-      (l) => l['CURRENT'] ?? const [],
+  Future<List<Map>> _loadAiring() async =>
+      AniList.airingAround(await _followed(['CURRENT', 'PLANNING']));
+
+  Future<List<Map>> _released() async => AniList.latestAired(
+    await _airing,
+    (await _followed(['CURRENT'])).toSet(),
+  );
+
+  Future<List<Map>> _schedule() async {
+    if (!Tracker.signedIn) {
+      final all = await AniList.airingPopular();
+      return [
+        for (final s in all)
+          if (!Settings.hideNsfw ||
+              !Show(s['media'] as Map).genres.contains('Ecchi'))
+            s,
+      ];
+    }
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return [
+      for (final s in await _airing)
+        if (!DateTime.fromMillisecondsSinceEpoch((s['airingAt'] as int) * 1000)
+            .isBefore(today))
+          s,
+    ];
+  }
+
+  /// Home's watching and planning lists: taken from My list's when that's loaded, instead of asking again.
+  Future<Map<String, List>> _lists() => _library == null
+      ? Tracker.lists()
+      : _library!.then(
+          (l) => {'CURRENT': l['CURRENT']!, 'PLANNING': l['PLANNING']!},
+        );
+
+  /// Fetches the lists and what airs, and everything built on them.
+  void _fetchLists() {
+    _fetched = DateTime.now();
+    if (_library != null) _library = Tracker.lists(all: true);
+    lists = _lists();
+    _airing = _loadAiring();
+    released = _released();
+    if (_scheduleLoad != null) _scheduleLoad = _schedule();
+  }
+
+  Future<List<int>> _followed(List<String> statuses) async {
+    final listed = await lists.then(
+      (l) => [for (final s in statuses) ...?l[s]],
       onError: (Object _) => const [], // still check the recently watched ones
     );
-    return AniList.airedThisWeek([
-      for (final m in [...watching, for (final r in await history) r.media])
+    return [
+      for (final m in [...listed, for (final r in await history) r.media])
         if (m['id'] is int) m['id'] as int,
-    ]);
+    ];
   }
 
   @override
@@ -93,14 +180,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (PlayerScreen.showing) return;
     Navigator.popUntil(context, (route) => route.isFirst);
     voiceSearch.value = true;
-    isTv ? _tvSelect(1) : _select(1);
+    isTv ? _tvSelect(_searchTab) : _select(_searchTab);
   }
 
   /// The phone remote's search box: Search on the TV, running what's typed there. Not while something plays.
   void _remoteSearch(String? query) {
     if (PlayerScreen.showing) return;
     Navigator.popUntil(context, (route) => route.isFirst);
-    if (tab != 1) _tvSelect(1);
+    if (tab != _searchTab) _tvSelect(_searchTab);
     if (query != null) remoteQuery.value = query;
   }
 
@@ -109,7 +196,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     onLeftEdge = null;
     onRemoteSearch = null;
     WidgetsBinding.instance.removeObserver(this);
-    for (final node in _drawer) {
+    _tabCurve.dispose();
+    _tabIn.dispose();
+    for (final node in [..._drawer, ..._pageFocus]) {
       node.dispose();
     }
     super.dispose();
@@ -128,16 +217,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         context,
         'Synced $synced offline ${synced == 1 ? 'update' : 'updates'}',
       );
-      _reloadLists();
+      _reloadLists(force: true);
     }
   }
 
-  void _reloadLists() {
+  /// After a show was opened or another tab picked. Watch history is on-device and always re-read; list
+  /// changes made in the app are already in the shared show maps, so AniList is asked again at most once a
+  /// minute unless [force]d (pull to refresh always is).
+  void _reloadLists({bool force = false}) {
     if (!mounted) return;
     setState(() {
-      lists = Tracker.lists();
       history = WatchHistory.all();
-      released = _released();
+      if (force ||
+          DateTime.now().difference(_fetched) > const Duration(minutes: 1)) {
+        _fetchLists();
+      }
     });
     _scheduleNotifications();
   }
@@ -145,11 +239,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _refresh() async {
     setState(() {
       viewer = Tracker.viewer();
-      lists = Tracker.lists();
       trending = Tracker.trending();
       season = Tracker.season();
       history = WatchHistory.all();
-      released = _released();
+      _fetchLists();
+      if (_stats != null) _stats = AniList.stats();
     });
     _syncPending();
     _scheduleNotifications();
@@ -207,39 +301,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (mounted) _refresh();
   }
 
+  int get _searchTab => _pages.indexOf(_Page.search);
+
   /// Settings may have changed the sign-in or the home sections by the time you leave it.
   void _select(int i) {
     if (i == tab) return;
     FocusManager.instance.primaryFocus
         ?.unfocus(); // a search box keeps its keyboard up otherwise
-    if (tab == 3) _refresh();
-    if (i == 0) _reloadLists();
+    if (const [_Page.home, _Page.schedule, _Page.list].contains(_pages[i])) {
+      _reloadLists();
+    }
     setState(() {
       tab = i;
       _visited.add(i);
     });
+    if (!MediaQuery.disableAnimationsOf(context)) _tabIn.forward(from: 0);
   }
 
-  Widget _page(int i) => switch (i) {
-    0 => _HomeFeed(this),
-    1 => const SearchScreen(),
-    2 => DownloadsScreen(onBrowse: () => _select(0)),
-    _ => const SettingsScreen(),
+  Widget _page(int i) => switch (_pages[i]) {
+    _Page.home => _HomeFeed(this),
+    _Page.schedule => ScheduleScreen(
+      schedule: schedule,
+      onRefresh: _refresh,
+      onChanged: _reloadLists,
+    ),
+    _Page.search => const SearchScreen(),
+    _Page.list => MyListScreen(
+      lists: library,
+      onRefresh: _refresh,
+      onChanged: _reloadLists,
+      onSignIn: _signIn,
+    ),
+    _Page.me => _MeScreen(this),
   };
 
   /// The pages, built once visited; only the shown one takes focus or runs animations.
-  Widget get _pages => IndexedStack(
-    index: tab,
-    children: [
-      for (var i = 0; i < _destinations.length; i++)
-        ExcludeFocus(
-          excluding: i != tab,
-          child: TickerMode(
-            enabled: i == tab,
-            child: _visited.contains(i) ? _page(i) : const SizedBox(),
-          ),
-        ),
-    ],
+  Widget get _stack => FadeTransition(
+    opacity: _tabCurve,
+    child: SlideTransition(
+      position: Tween(
+        begin: const Offset(0, .02),
+        end: Offset.zero,
+      ).animate(_tabCurve),
+      child: IndexedStack(
+        index: tab,
+        children: [
+          for (var i = 0; i < _pages.length; i++)
+            ExcludeFocus(
+              excluding: i != tab,
+              child: Focus(
+                focusNode: _pageFocus[i],
+                child: TickerMode(
+                  enabled: i == tab,
+                  child: _visited.contains(i) ? _page(i) : const SizedBox(),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
   );
 
   @override
@@ -262,7 +382,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       onDestinationSelected: _select,
                       groupAlignment: 0,
                       destinations: [
-                        for (final (icon, selected, label) in _destinations)
+                        for (final (icon, selected, label) in [
+                          for (final p in _pages) p.destination,
+                        ])
                           NavigationRailDestination(
                             icon: Icon(icon),
                             selectedIcon: Icon(selected),
@@ -271,24 +393,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                  Expanded(child: _pages),
+                  Expanded(child: _stack),
                 ],
               ),
             );
           }
           return Scaffold(
-            body: _pages,
-            bottomNavigationBar: NavigationBar(
-              selectedIndex: tab,
-              onDestinationSelected: _select,
-              destinations: [
-                for (final (icon, selected, label) in _destinations)
-                  NavigationDestination(
-                    icon: Icon(icon),
-                    selectedIcon: Icon(selected),
-                    label: label,
-                  ),
-              ],
+            // Pages scroll on behind the navigation pill.
+            extendBody: true,
+            body: _stack,
+            bottomNavigationBar: FloatingNav(
+              destinations: [for (final p in _pages) p.destination],
+              selected: tab,
+              onSelect: _select,
             ),
           );
         },
@@ -298,8 +415,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // ───────────────────────────── TV ─────────────────────────────
 
+  /// Each page's subtree, to find its first focusable thing (see [_closeDrawer]).
+  final _pageFocus = List.generate(
+    _pages.length,
+    (i) => FocusNode(
+      debugLabel: 'page $i',
+      canRequestFocus: false,
+      skipTraversal: true,
+    ),
+  );
+
   final _drawer = List.generate(
-    _destinations.length,
+    _pages.length,
     (i) => FocusNode(debugLabel: 'drawer $i'),
   );
   bool _drawerOpen = false;
@@ -320,6 +447,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!fresh && back != null && back.context?.mounted == true) {
         back.requestFocus();
+      } else if (_pageFocus[tab].traversalDescendants.firstOrNull
+          case final first?) {
+        // A page just opened starts at its top, not at whatever lies level with the drawer item.
+        first.requestFocus();
       } else {
         _drawer[tab].focusInDirection(TraversalDirection.right);
       }
@@ -376,12 +507,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: _TvDrawer.collapsed),
+            // Pages keep their 48dp overscan margin, so they start where that puts their content 24dp right of
+            // the rail: the same gap as the rail keeps from the top and left edges.
+            padding: const EdgeInsets.only(
+              left: _TvDrawer.collapsed + _TvDrawer.margin - tvMargin,
+            ),
             child: Focus(
               canRequestFocus: false,
               skipTraversal: true,
               onKeyEvent: _pageKey,
-              child: _pages,
+              child: _stack,
             ),
           ),
           // The drawer only takes focus while it's open, so Up and Down never wander into it.
@@ -420,7 +555,10 @@ class _TvDrawer extends StatelessWidget {
     this.avatar,
   });
 
-  static const collapsed = 80.0, expanded = 256.0;
+  /// The rail floats [margin] in from the top, left and bottom, like the phone's navigation pill; [collapsed]
+  /// is the page space it takes (margin included).
+  static const margin = 24.0, rail = 72.0, collapsed = margin + rail;
+  static const expanded = 240.0;
 
   final bool open;
   final int selected;
@@ -432,9 +570,9 @@ class _TvDrawer extends StatelessWidget {
   Widget build(BuildContext context) {
     const ease = Duration(milliseconds: 220);
     Widget item(int i) {
-      final (icon, selectedIcon, label) = _destinations[i];
+      final (icon, selectedIcon, label) = _pages[i].destination;
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: ListenableBuilder(
           listenable: focusNodes[i],
           builder: (context, _) {
@@ -447,24 +585,28 @@ class _TvDrawer extends StatelessWidget {
             return InkWell(
               focusNode: focusNodes[i],
               onTap: () => onSelect(i),
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(buttonRadius),
               focusColor: Colors.transparent,
               child: AnimatedContainer(
                 duration: ease,
                 curve: Curves.easeOutCubic,
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                // A square while the rail is collapsed, 8dp in from each side of it; the full width open.
+                width: open ? expanded - 16 : buttonHeight,
+                height: buttonHeight,
+                padding: EdgeInsets.symmetric(
+                  horizontal: (buttonHeight - 24) / 2,
+                ),
                 decoration: BoxDecoration(
                   color: focused
                       ? scheme.onSurface
-                      : i == selected && open
-                      ? scheme.secondaryContainer
+                      : i == selected
+                      ? scheme.primary.withValues(alpha: .16)
                       : Colors.transparent,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(buttonRadius),
                 ),
                 child: Row(
                   children: [
-                    if (i == 3 && avatar != null)
+                    if (_pages[i] == _Page.me && avatar != null)
                       CircleAvatar(
                         radius: 12,
                         backgroundImage: NetworkImage(avatar!),
@@ -475,17 +617,28 @@ class _TvDrawer extends StatelessWidget {
                         size: 24,
                         color: color,
                       ),
-                    const SizedBox(width: 20),
-                    Flexible(
-                      child: AnimatedOpacity(
-                        opacity: open ? 1 : 0,
-                        duration: ease,
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(color: color),
+                    // Laid out at full width and clipped to what the item has, so the collapsed square (and every
+                    // width while it opens) fits.
+                    Expanded(
+                      child: ClipRect(
+                        child: OverflowBox(
+                          alignment: Alignment.centerLeft,
+                          minWidth: 0,
+                          maxWidth: expanded,
+                          child: AnimatedOpacity(
+                            opacity: open ? 1 : 0,
+                            duration: ease,
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 20),
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(color: color),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -523,38 +676,45 @@ class _TvDrawer extends StatelessWidget {
             ),
           ),
         ),
-        AnimatedContainer(
-          duration: ease,
-          curve: Curves.easeOutCubic,
-          width: open ? expanded : collapsed,
-          clipBehavior: Clip.hardEdge,
-          decoration: const BoxDecoration(),
-          child: OverflowBox(
-            alignment: Alignment.centerLeft,
-            minWidth: expanded,
-            maxWidth: expanded,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(left: 24),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.asset(
-                        'assets/icon/aniview_icon.png',
-                        width: 32,
-                        height: 32,
-                        cacheWidth: 96,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(margin, margin, 0, margin),
+          child: AnimatedContainer(
+            duration: ease,
+            curve: Curves.easeOutCubic,
+            width: open ? expanded : rail,
+            // Its 48dp items sit 8dp in.
+            child: Panel(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(nested(8)),
+              ),
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                minWidth: expanded,
+                maxWidth: expanded,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(left: (rail - 32) / 2),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(radiusMedium),
+                          child: Image.asset(
+                            'assets/icon/aniview_icon.png',
+                            width: 32,
+                            height: 32,
+                            cacheWidth: 96,
+                          ),
+                        ),
                       ),
-                    ),
+                      const Spacer(),
+                      for (var i = 0; i < _pages.length - 1; i++) item(i),
+                      const Spacer(),
+                      item(_pages.length - 1),
+                    ],
                   ),
-                  const Spacer(),
-                  for (var i = 0; i < 3; i++) item(i),
-                  const Spacer(),
-                  item(3),
-                ],
+                ),
               ),
             ),
           ),
@@ -601,20 +761,24 @@ class _HomeFeed extends StatelessWidget {
     final featured =
         Settings.homeSections.contains((HomeSection.featured, true)) &&
         !(snap.hasError && _downloaded.isNotEmpty);
+    final page = context;
     return Scaffold(
       floatingActionButton: FutureBuilder(
         future: home.history,
         builder: (context, snap) {
           final record = snap.data?.firstOrNull;
           if (record == null) return const SizedBox.shrink();
-          return PlayAction(
-            fab: true,
-            title: 'Continue EP ${epNumber(record.episode)}',
-            subtitle: record.show.title,
-            onPressed: () async {
-              await resumeWatching(context, record);
-              home._reloadLists();
-            },
+          return ClearOfNav(
+            page: page,
+            child: PlayAction(
+              fab: true,
+              title: 'Continue EP ${epNumber(record.episode)}',
+              subtitle: record.show.title,
+              onPressed: () async {
+                await resumeWatching(context, record);
+                home._reloadLists();
+              },
+            ),
           );
         },
       ),
@@ -646,7 +810,11 @@ class _HomeFeed extends StatelessWidget {
               ),
             SliverList.list(children: rows),
             // Clear of the continue button.
-            const SliverToBoxAdapter(child: SizedBox(height: 96)),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 88 + MediaQuery.paddingOf(context).bottom,
+              ),
+            ),
           ],
         ),
       ),
@@ -659,6 +827,16 @@ class _HomeFeed extends StatelessWidget {
     List<Widget> rows,
   ) {
     final height = MediaQuery.sizeOf(context).height;
+    // The first row's card takes focus by itself, but the first row in the settings may be one with nothing in it
+    // (no new episodes, signed out): then the first card there is gets it, so the remote works from the start.
+    if (snap.hasData || snap.hasError) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final focused = FocusManager.instance.primaryFocus;
+        if (context.mounted && (focused == null || focused is FocusScopeNode)) {
+          FocusScope.of(context).nextFocus();
+        }
+      });
+    }
     return Stack(
       children: [
         ValueListenableBuilder(
@@ -678,17 +856,11 @@ class _HomeFeed extends StatelessWidget {
           children: [
             SizedBox(height: height * .44),
             Expanded(
-              // Rows scrolled past fade out under the backdrop instead of covering it.
-              child: ShaderMask(
-                blendMode: BlendMode.dstIn,
-                shaderCallback: (bounds) => const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black],
-                  stops: [0, .08],
-                ).createShader(bounds),
-                child: ListView(
-                  padding: const EdgeInsets.only(bottom: 24),
+              // Rows scrolled past are cut off here, under the header. The room after the last row lets any row
+              // scroll up to this edge, so none stops short with the one above it still showing.
+              child: LayoutBuilder(
+                builder: (context, box) => ListView(
+                  padding: EdgeInsets.only(bottom: box.maxHeight),
                   children: [
                     if (snap.hasError && _downloaded.isEmpty)
                       ErrorState(
@@ -814,7 +986,7 @@ class _HomeFeed extends StatelessWidget {
               title: 'Your list is empty',
               message: 'Shows you watch or plan to watch show up here.',
               action: FilledButton.tonalIcon(
-                onPressed: () => home._select(1),
+                onPressed: () => home._select(home._searchTab),
                 icon: const Icon(Icons.search_rounded),
                 label: const Text('Find a show'),
               ),
@@ -896,10 +1068,10 @@ class _HomeFeed extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             sheetTitle(context, record.show.title),
-            ListTile(
+            DestructiveTile(
               autofocus: isTv,
-              leading: const Icon(Icons.history_toggle_off_rounded),
-              title: const Text('Remove from recently watched'),
+              icon: Icons.history_toggle_off_rounded,
+              title: 'Remove from recently watched',
               onTap: () => Navigator.pop(context, true),
             ),
             const SizedBox(height: 8),
@@ -1029,7 +1201,8 @@ class _FeaturedState extends State<_Featured> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final height = (size.width * 1.2).clamp(360.0, size.height * .66);
+    // Marquee: the key art takes most of the first screen.
+    final height = (size.width * 1.35).clamp(420.0, size.height * .72);
     return SizedBox(
       height: height,
       child: Stack(
@@ -1052,17 +1225,19 @@ class _FeaturedState extends State<_Featured> {
               controller: controller,
               itemCount: widget.items.length,
               onPageChanged: (i) => setState(() => page = i),
-              itemBuilder: (context, i) => _FeaturedPage(widget.items[i]),
+              itemBuilder: (context, i) => _FeaturedPage(
+                widget.items[i],
+                rank: i + 1,
+                controller: controller,
+              ),
             ),
           SafeArea(
             child: Padding(
               padding: EdgeInsets.fromLTRB(side, 8, side, 0),
               child: Text(
                 'AniView',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary,
-                ),
+                style: Theme.of(context).textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
           ),
@@ -1084,7 +1259,7 @@ class _FeaturedState extends State<_Featured> {
                         color: i == page
                             ? scheme.primary
                             : scheme.onSurface.withValues(alpha: .3),
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(radiusSmall),
                       ),
                     ),
                 ],
@@ -1097,9 +1272,15 @@ class _FeaturedState extends State<_Featured> {
 }
 
 class _FeaturedPage extends StatelessWidget {
-  const _FeaturedPage(this.media);
+  const _FeaturedPage(
+    this.media, {
+    required this.rank,
+    required this.controller,
+  });
 
   final Map media;
+  final int rank;
+  final PageController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1110,26 +1291,31 @@ class _FeaturedPage extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Artwork(
-            Show(media).cover,
-            color: Show(media).color,
-            alignment: Alignment.topCenter,
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  scheme.surface.withValues(alpha: .7),
-                  scheme.surface.withValues(alpha: 0),
-                  scheme.surface.withValues(alpha: .85),
-                  scheme.surface,
-                ],
-                stops: const [0, .25, .72, 1],
+          // Parallax: the art trails the swipe, so it seems to sit behind the page.
+          ClipRect(
+            child: AnimatedBuilder(
+              animation: controller,
+              builder: (context, child) {
+                final position =
+                    controller.hasClients && controller.position.haveDimensions
+                    ? controller.page! - (rank - 1)
+                    : 0.0;
+                return Transform.translate(
+                  offset: Offset(
+                    position * MediaQuery.sizeOf(context).width * .4,
+                    0,
+                  ),
+                  child: child,
+                );
+              },
+              child: Artwork(
+                Show(media).cover,
+                color: Show(media).color,
+                alignment: Alignment.topCenter,
               ),
             ),
           ),
+          DecoratedBox(decoration: keyArtFade),
           Positioned(
             left: side,
             right: side,
@@ -1137,12 +1323,16 @@ class _FeaturedPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Eyebrow(['Trending #$rank', ?airingLabel(media)].join(' · ')),
+                const SizedBox(height: 8),
                 Text(
                   titleOf(media),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: text.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+                    fontSize: 32,
+                    height: 1.05,
+                    letterSpacing: -.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1158,10 +1348,12 @@ class _FeaturedPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: () => openDetails(context, media),
-                  icon: const Icon(Icons.play_arrow_rounded),
-                  label: const Text('Watch now'),
+                AccentAction(
+                  child: FilledButton.icon(
+                    onPressed: () => openDetails(context, media),
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Watch now'),
+                  ),
                 ),
               ],
             ),
@@ -1241,12 +1433,18 @@ class _Immersive extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              if (show.genres.isNotEmpty) ...[
+                Eyebrow(show.genres.take(3).join(' · ')),
+                const SizedBox(height: 8),
+              ],
               Text(
                 titleOf(media),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: text.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
+                  fontSize: 40,
+                  height: 1.05,
+                  letterSpacing: -.8,
                 ),
               ),
               const SizedBox(height: 8),
@@ -1307,6 +1505,10 @@ class _SignInCard extends StatelessWidget {
         child: Card.filled(
           margin: EdgeInsets.zero,
           color: scheme.surfaceContainerHigh,
+          // Its button, 16dp in.
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(nested(16)),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -1336,6 +1538,178 @@ class _SignInCard extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Phones: your AniList account and stats, and the way to Downloads and Settings.
+class _MeScreen extends StatelessWidget {
+  const _MeScreen(this.home);
+
+  final _HomeScreenState home;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    Future<void> open(Widget page) =>
+        pushSettled(context, MaterialPageRoute<void>(builder: (_) => page));
+    final downloads = DownloadsScreen(
+      onBrowse: () {
+        Navigator.pop(context);
+        home._select(0);
+      },
+    );
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: ListView(
+          padding: EdgeInsets.only(
+            bottom: 24 + MediaQuery.paddingOf(context).bottom,
+          ),
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(side, 12, side - 8, 8),
+              child: FutureBuilder(
+                future: home.viewer,
+                builder: (context, snap) {
+                  final me = snap.data;
+                  final avatar = me?['avatar']?['large'] as String?;
+                  return Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: scheme.surfaceContainerHigh,
+                        foregroundImage: avatar == null
+                            ? null
+                            : NetworkImage(avatar),
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              me?['name'] as String? ?? 'Not signed in',
+                              style: text.titleMedium,
+                            ),
+                            Text(
+                              me == null
+                                  ? 'Watching on this device'
+                                  : 'AniList',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Downloads',
+                        icon: const Icon(Icons.download_for_offline_outlined),
+                        onPressed: () => open(downloads),
+                      ),
+                      IconButton(
+                        tooltip: 'Settings',
+                        icon: const Icon(Icons.settings_outlined),
+                        // Settings may have changed the sign-in or the home sections.
+                        onPressed: () =>
+                            open(const SettingsScreen())
+                                .then((_) => home._refresh()),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Signed out there are no stats to show: say what signing in brings, where they'd be.
+            if (Tracker.signedIn)
+              StatsView(home.stats, onRetry: home._refresh)
+            else
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: side),
+                child: Card.filled(
+                  margin: EdgeInsets.zero,
+                  // Its button, 16dp in.
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(nested(16)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.insights_rounded, color: scheme.primary),
+                        const SizedBox(height: 12),
+                        Text('Your stats', style: text.titleMedium),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Sign in with AniList to track what you watch and see your time watched, your list and your activity here.',
+                          style: text.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          autofocus: isTv,
+                          onPressed: home._signIn,
+                          child: const Text('Sign in with AniList'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
+            // Downloads finish in the order they were queued, so the newest are last.
+            ListenableBuilder(
+              listenable: Downloads.instance,
+              builder: (context, _) {
+                final latest = <Object?, Download>{};
+                for (final d in Downloads.instance.items.reversed) {
+                  if (d.status == DownloadStatus.done) {
+                    latest.putIfAbsent(d.media['id'], () => d);
+                  }
+                }
+                if (latest.isEmpty) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SectionHeader('Recently downloaded'),
+                      EmptyState(
+                        compact: true,
+                        icon: Icons.download_for_offline_outlined,
+                        title: 'Nothing downloaded yet',
+                        message: "Long-press an episode on a show's page, or pick Download episodes from its ⋮ menu, to watch offline.",
+                        action: OutlinedButton(
+                          onPressed: () => open(downloads),
+                          child: const Text('Open downloads'),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                final shown = latest.values.take(10).toList();
+                return MediaRow(
+                  'Recently downloaded',
+                  [for (final d in shown) d.media],
+                  subtitles: [
+                    for (final d in shown) 'EP ${epNumber(d.number)}',
+                  ],
+                  onBack: home._reloadLists,
+                  onSeeAll: () => open(downloads),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );

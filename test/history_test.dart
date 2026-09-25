@@ -126,4 +126,30 @@ void main() {
       expect(EpisodePlan.nextUp(null, null, 0), isNull); // still loading
     },
   );
+
+  test('a finished show not started yet opens at episode 1', () {
+    bool newest(String status, {int progress = 0, bool watched = false}) =>
+        EpisodePlan.newestFirstFor(
+          {'status': status},
+          preferred: true,
+          progress: progress,
+          watchedHere: watched,
+        );
+    expect(newest('FINISHED'), isFalse);
+    expect(newest('FINISHED', progress: 3), isTrue);
+    expect(
+      newest('FINISHED', watched: true),
+      isTrue,
+    ); // watched here, signed out
+    expect(newest('RELEASING'), isTrue); // the new episodes are the point
+    expect(
+      EpisodePlan.newestFirstFor(
+        {'status': 'RELEASING'},
+        preferred: false,
+        progress: 3,
+        watchedHere: true,
+      ),
+      isFalse,
+    );
+  });
 }

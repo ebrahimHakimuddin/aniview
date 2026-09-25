@@ -63,10 +63,10 @@ void main() {
       }
       expect(focused(), 'drawer 0'); // Home, the page shown
 
-      for (var i = 0; i < 5; i++) {
+      for (var i = 0; i < 7; i++) {
         await press(LogicalKeyboardKey.arrowDown);
       }
-      expect(focused(), 'drawer 3'); // stops at the end
+      expect(focused(), 'drawer 4'); // stops at the end
 
       await press(LogicalKeyboardKey.arrowRight);
       expect(focused(), isNot(startsWith('drawer')));

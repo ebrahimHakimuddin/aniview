@@ -39,28 +39,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   Future<void> _deleteShow(List<Download> group) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete ${group.length} downloads?'),
-        content: Text(
+    final ok = await confirmDestructive(
+      context,
+      title: 'Delete ${group.length} downloads?',
+      message:
           '${titleOf(group.first.media)} · '
           '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))} will be freed on this device.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            autofocus: isTv,
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      action: 'Delete',
     );
-    if (ok != true) return;
+    if (!ok) return;
     for (final d in [...group]) {
       await Downloads.instance.remove(d);
     }
@@ -71,8 +58,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: const Text('Downloads'),
-      toolbarHeight: isTv ? 72 : null,
+      toolbarHeight: isTv ? 72 : 64,
       titleSpacing: side,
+      titleTextStyle: Theme.of(context).textTheme.headlineMedium,
     ),
     body: ListenableBuilder(
       listenable: Downloads.instance,
@@ -193,7 +181,7 @@ class _ShowHeader extends StatelessWidget {
       contentPadding: EdgeInsets.fromLTRB(side, 8, side - 12, 0),
       onTap: onToggle,
       leading: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(radiusMedium),
         child: SizedBox(
           width: 40,
           height: 56,
@@ -217,26 +205,20 @@ class _ShowHeader extends StatelessWidget {
             expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
             color: scheme.onSurfaceVariant,
           ),
-          PopupMenuButton<VoidCallback>(
-            tooltip: 'Show actions',
-            onSelected: (action) => action(),
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: () => openDetails(context, media),
-                child: const ListTile(
-                  leading: Icon(Icons.info_outline_rounded),
-                  title: Text('Open show'),
-                ),
-              ),
-              PopupMenuItem(
-                value: onDelete,
-                child: const ListTile(
-                  leading: Icon(Icons.delete_outline_rounded),
-                  title: Text('Delete all'),
-                ),
-              ),
-            ],
-          ),
+          MoreMenu(title: titleOf(media), [
+            (
+              icon: Icons.info_outline_rounded,
+              label: 'Open show',
+              onTap: () => openDetails(context, media),
+              destructive: false,
+            ),
+            (
+              icon: Icons.delete_outline_rounded,
+              label: 'Delete all',
+              onTap: onDelete,
+              destructive: true,
+            ),
+          ]),
         ],
       ),
     );
@@ -270,7 +252,7 @@ class _DownloadTile extends StatelessWidget {
           ? () => playDownload(context, d, group)
           : null,
       leading: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(radiusMedium),
         child: SizedBox(
           width: 88,
           height: 50,
