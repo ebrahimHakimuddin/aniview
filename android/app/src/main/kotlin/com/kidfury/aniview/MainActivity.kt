@@ -20,6 +20,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
+@androidx.media3.common.util.UnstableApi
 class MainActivity : FlutterActivity() {
     private var notifications: MethodChannel? = null
     private var externalResult: MethodChannel.Result? = null
@@ -43,6 +44,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        ExoPlayers(this, flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/downloads")
             .setMethodCallHandler { call, result ->
                 showDownload(

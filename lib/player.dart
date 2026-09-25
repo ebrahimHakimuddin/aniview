@@ -3,14 +3,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
 import 'downloads.dart';
+import 'exo.dart';
 import 'history.dart';
 import 'hls_proxy.dart';
 import 'metadata.dart';
@@ -53,22 +52,8 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  // mpv-android's defaults: a 64MB cache, zero-copy decoding where the chip allows it and mpv's `fast` profile
-  // (bilinear scaling, no dithering), which TV GPUs need to keep up at 1080p.
-  final player = Player(
-    configuration: const PlayerConfiguration(bufferSize: 64 * 1024 * 1024),
-  );
-  late final controller = VideoController(
-    player,
-    configuration: Settings.directVideo
-        ? const VideoControllerConfiguration(
-            vo: 'mediacodec_embed',
-            hwdec: 'mediacodec',
-          )
-        : const VideoControllerConfiguration(
-            hwdec: 'mediacodec,mediacodec-copy',
-          ),
-  );
+  // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
+  final player = ExoPlayer();
   final _scaffold = GlobalKey<ScaffoldState>();
   late final session = PlaybackSession(
     widget.episodes,
@@ -145,9 +130,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     PlayerScreen.showing = true;
-    if (player.platform case final NativePlayer mpv) {
-      mpv.command(['apply-profile', 'fast']).ignore();
-    }
     onRemoteSeek = (to) =>
         player.seek(PlaybackSession.clamp(to, player.state.duration));
     _lifecycle;
@@ -277,6 +259,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _playFocus.dispose();
+    _tvLabel.dispose();
     _keys.dispose();
     _controlsNode.dispose();
     _lifecycle.dispose();
@@ -292,7 +275,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timelineTimer?.cancel();
     player.dispose();
     ScreenBrightness().resetApplicationScreenBrightness();
-    SystemChrome.setPreferredOrientations([]);
+    restoreOrientation();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -340,17 +323,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => session.playing(stream));
     final resume = at != null && at > Duration.zero ? at : null;
     await player.open(
-      // HLS goes through the local proxy; direct files (mp4) get their headers from mpv itself.
-      Media(
-        stream.isLocal || !stream.isHls
-            ? stream.url
-            : await HlsProxy.url(stream.url, stream.headers),
-        httpHeaders: stream.isHls ? null : stream.headers,
-        // mpv starts the file here; a seek right after opening is often dropped while a stream is still loading.
-        start: resume,
-      ),
+      // HLS goes through the local proxy (it strips the fake image prefix some hosts put on segments); direct
+      // files (mp4) are fetched with their headers.
+      stream.isLocal || !stream.isHls
+          ? stream.url
+          : await HlsProxy.url(stream.url, stream.headers),
+      headers: stream.isHls ? null : stream.headers,
+      hls: stream.isHls,
+      start: resume,
+      // Loaded with the video, so switching to one later needs no reload.
+      subtitles: [
+        for (final s in stream.subtitles)
+          (url: await _subtitleUrl(stream, s), label: s.label),
+      ],
     );
-    // open() returns before mpv has loaded the file, and seeking or adding a subtitle track before that is dropped.
+    // open() returns before the stream has loaded, and picking a subtitle track before that is dropped.
     if (player.state.duration == Duration.zero) {
       await player.stream.duration
           .firstWhere((d) => d > Duration.zero)
@@ -404,29 +391,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _applySubtitle(VideoStream stream) async {
     final pick = session.subtitleFor(stream);
-    if (pick.off) return _setSubtitle(SubtitleTrack.no(), 'Off');
+    if (pick.off) return _setSubtitle(SubtitleTrack.off, 'Off');
     if (pick.track case final track?) return _setExternal(stream, track);
     return _setSubtitle(
-      SubtitleTrack.auto(),
+      SubtitleTrack.auto,
       'Auto',
     ); // embedded or burned-in subs
   }
 
-  /// Subtitle hosts refuse requests without the stream's Referer, which mpv doesn't send, so go through the proxy.
-  Future<void> _setExternal(VideoStream stream, Subtitle s) async =>
-      _setSubtitle(
-        SubtitleTrack.uri(
-          stream.isLocal
-              ? s.url
-              : await HlsProxy.url(
-                  s.url,
-                  stream.headers,
-                  ext: Uri.parse(s.url).path.split('.').last,
-                ),
-          title: s.label,
-        ),
-        s.label,
-      );
+  /// Subtitle hosts refuse requests without the stream's Referer, so they go through the proxy.
+  Future<String> _subtitleUrl(VideoStream stream, Subtitle s) async =>
+      stream.isLocal
+      ? s.url
+      : HlsProxy.url(
+          s.url,
+          stream.headers,
+          ext: Uri.parse(s.url).path.split('.').last,
+        );
+
+  /// A subtitle file loaded with the stream (see [_play]), picked once its track shows up.
+  Future<void> _setExternal(VideoStream stream, Subtitle s) async {
+    bool isIt(SubtitleTrack t) => t.title == s.label;
+    final track =
+        player.state.subtitles.where(isIt).firstOrNull ??
+        await player.stream.tracks
+            .map((tracks) => tracks.where(isIt).firstOrNull)
+            .firstWhere((t) => t != null)
+            .timeout(const Duration(seconds: 15), onTimeout: () => null);
+    if (track != null) await _setSubtitle(track, s.label);
+  }
 
   Future<void> _setSubtitle(SubtitleTrack track, String label) async {
     await player.setSubtitleTrack(track);
@@ -608,18 +601,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget get _videoView {
     if (_video == null || _videoFit != fit) {
       _videoFit = fit;
-      _video = Video(
-        controller: controller,
-        controls: NoVideoControls,
+      _video = ExoVideo(
+        player,
         fit: fit,
-        subtitleViewConfiguration: SubtitleViewConfiguration(
-          // media_kit otherwise shrinks text relative to a 1920×1080 view, making it tiny on phones.
-          textScaler: TextScaler.noScaling,
-          style: TextStyle(
-            fontSize: Settings.subtitleSize,
-            color: Colors.white,
-            shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
-          ),
+        subtitleStyle: TextStyle(
+          fontSize: Settings.subtitleSize,
+          color: Colors.white,
+          height: 1.3,
+          shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
         ),
       );
     }
@@ -680,7 +669,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _saveHistory();
         player.pause();
         // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
-        SystemChrome.setPreferredOrientations([]);
+        restoreOrientation();
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       },
       child: Scaffold(
@@ -689,16 +678,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
         endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
         endDrawer: Drawer(
           width: 400,
-          child: _EpisodeList(
-            episodes: widget.episodes,
-            current: index,
-            media: widget.media,
-            dub: widget.dub,
-            online: widget.source != null,
-            onSelect: (i) {
-              _scaffold.currentState?.closeEndDrawer();
-              if (i != index) _load(i);
-            },
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          // A solid panel over the video, like every other.
+          child: Panel(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.horizontal(
+                left: Radius.circular(nested(24)),
+              ),
+            ),
+            color: scheme.surfaceContainerLow,
+            child: _EpisodeList(
+              episodes: widget.episodes,
+              current: index,
+              media: widget.media,
+              dub: widget.dub,
+              online: widget.source != null,
+              onSelect: (i) {
+                _scaffold.currentState?.closeEndDrawer();
+                if (i != index) _load(i);
+              },
+            ),
           ),
         ),
         body: Stack(
@@ -802,8 +802,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   alignment: const Alignment(0, -.6),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .72),
-                      borderRadius: BorderRadius.circular(28),
+                      color: scheme.surfaceContainerHigh,
+                      borderRadius: BorderRadius.circular(radiusLarge),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -1000,8 +1000,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!isTv) return _scaffold.currentState?.openEndDrawer();
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      builder: (context) => PanelDialog(
         child: SizedBox(
           width: 600,
           height: MediaQuery.sizeOf(context).height * .8,
@@ -1023,7 +1022,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _openSubtitles() async {
     final external = current?.subtitles ?? const <Subtitle>[];
-    final embedded = player.state.tracks.subtitle
+    final embedded = player.state.subtitles
         .where(
           (t) =>
               t.id != 'auto' &&
@@ -1048,7 +1047,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       case SubtitleTrack t:
         await _setSubtitle(t, name(t));
       case 'off':
-        await _setSubtitle(SubtitleTrack.no(), 'Off');
+        await _setSubtitle(SubtitleTrack.off, 'Off');
     }
   }
 
@@ -1071,50 +1070,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (streams.length < 2 || !streams.contains(current)) return null;
     return TextButton.icon(
       style: _onVideo(TextButton.styleFrom(foregroundColor: Colors.white)),
-      onPressed: () async {
-        final s = await _pick('Server', {
-          for (final s in streams) s: s.label,
-        }, current!);
-        if (s != null && s != current && mounted) {
-          await _play(s, at: player.state.position);
-        }
-      },
+      onPressed: _pickServer,
       icon: const Icon(Icons.dns_outlined),
       label: Text(current!.label),
     );
   }
 
+  bool get _canSwitchServer => streams.length > 1 && streams.contains(current);
+
+  Future<void> _pickServer() async {
+    final s = await _pick('Server', {
+      for (final s in streams) s: s.label,
+    }, current!);
+    if (s != null && s != current && mounted) {
+      await _play(s, at: player.state.position);
+    }
+  }
+
+  Future<void> _pickSpeed() async {
+    final r = await _pick('Speed', {
+      for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0]) r: '$r×',
+    }, rate);
+    if (r == null || !mounted) return;
+    setState(() => rate = r);
+    await player.setRate(r);
+  }
+
   Widget _speedButton() => TextButton.icon(
     style: _onVideo(TextButton.styleFrom(foregroundColor: Colors.white)),
-    onPressed: () async {
-      final r = await _pick('Speed', {
-        for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0]) r: '$r×',
-      }, rate);
-      if (r == null || !mounted) return;
-      setState(() => rate = r);
-      await player.setRate(r);
-    },
+    onPressed: _pickSpeed,
     icon: const Icon(Icons.speed_rounded),
     label: Text('$rate×'),
   );
 
+  IconData get _fitIcon => switch (fit) {
+    BoxFit.cover => Icons.crop_free_rounded,
+    BoxFit.fill => Icons.open_in_full_rounded,
+    _ => Icons.fit_screen_rounded,
+  };
+
   /// Fit, fill (crop) or stretch, a tap each.
+  void _cycleFit() {
+    final next = switch (fit) {
+      BoxFit.contain => BoxFit.cover,
+      BoxFit.cover => BoxFit.fill,
+      _ => BoxFit.contain,
+    };
+    setState(() => fit = next);
+    _hint(_fits[next]!, icon: Icons.aspect_ratio_rounded);
+  }
+
   Widget _fitButton() => IconButton(
     tooltip: 'Picture · ${_fits[fit]}',
-    icon: Icon(switch (fit) {
-      BoxFit.cover => Icons.crop_free_rounded,
-      BoxFit.fill => Icons.open_in_full_rounded,
-      _ => Icons.fit_screen_rounded,
-    }),
-    onPressed: () {
-      final next = switch (fit) {
-        BoxFit.contain => BoxFit.cover,
-        BoxFit.cover => BoxFit.fill,
-        _ => BoxFit.contain,
-      };
-      setState(() => fit = next);
-      _hint(_fits[next]!, icon: Icons.aspect_ratio_rounded);
-    },
+    icon: Icon(_fitIcon),
+    onPressed: _cycleFit,
   );
 
   Future<void> _openExternal() async {
@@ -1123,11 +1132,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (at != null && at > Duration.zero) player.seek(at);
   }
 
+  bool get _hasSubtitles =>
+      (current?.subtitles.isNotEmpty ?? false) ||
+      player.state.subtitles.isNotEmpty;
+
   /// Episodes, subtitles and handing off to another app.
   List<Widget> _menus() {
-    final hasSubtitles =
-        (current?.subtitles.isNotEmpty ?? false) ||
-        player.state.tracks.subtitle.any((t) => t.id != 'auto' && t.id != 'no');
     return [
       if (widget.episodes.length > 1)
         IconButton(
@@ -1135,7 +1145,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           icon: const Icon(Icons.video_library_outlined),
           onPressed: _openEpisodes,
         ),
-      if (hasSubtitles)
+      if (_hasSubtitles)
         IconButton(
           tooltip: 'Subtitles · $subtitle',
           icon: Icon(
@@ -1220,84 +1230,245 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  /// TV: the title at the top, and along the bottom the seek bar (which takes focus: left/right on it scrub) and a
-  /// row of buttons that turn solid when focused. No lock or gestures, which are for touch.
-  Widget _tvOverlay(Duration position, bool loading) => Padding(
-    padding: const EdgeInsets.fromLTRB(tvMargin, 24, tvMargin, 24),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _titles(tv: true),
-        const Spacer(),
-        Focus(
-          onKeyEvent: (_, event) {
-            final key = event.logicalKey;
-            if (event is KeyUpEvent ||
-                (key != LogicalKeyboardKey.arrowLeft &&
-                    key != LogicalKeyboardKey.arrowRight)) {
-              return KeyEventResult
-                  .ignored; // releases land the scrub in _onKey
-            }
-            _scheduleHide();
-            _scrub(event);
-            return KeyEventResult.handled;
-          },
-          child: Builder(
-            builder: (context) {
-              final focused = Focus.of(context).hasPrimaryFocus;
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  color: focused ? Colors.white12 : Colors.transparent,
-                ),
-                child: _timeline(position),
-              );
+  /// Names the focused TV control, between the times under the seek bar.
+  final _tvLabel = ValueNotifier<String>('');
+
+  /// TV: the show and episode on a card at the top left; along the bottom a thin seek bar (it takes focus:
+  /// left/right on it scrub), the time played and left either side of the focused control's name, and one centred
+  /// row of controls, play the largest. No lock or gestures, which are for touch.
+  Widget _tvOverlay(Duration position, bool loading) {
+    final title = episode.title;
+    final duration = player.state.duration;
+    final shown = seekTarget ?? position;
+    final skip = Settings.skipMode == SkipMode.off
+        ? null
+        : session.activeSkip(position);
+    const tabular = TextStyle(
+      color: Colors.white,
+      fontSize: 16,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+    Widget control(
+      IconData icon,
+      String label,
+      VoidCallback? onPressed, {
+      bool big = false,
+      FocusNode? focusNode,
+    }) => _TvControl(
+      icon: icon,
+      label: label,
+      onPressed: onPressed == null
+          ? null
+          : () {
+              onPressed();
+              _scheduleHide();
             },
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            loading
-                ? const SizedBox(width: 56, height: 56)
-                : _RoundButton(
-                    player.state.playing
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                    () {
-                      player.playOrPause();
-                      _scheduleHide();
-                    },
-                    tooltip: player.state.playing ? 'Pause' : 'Play',
-                    focusNode: _playFocus,
+      big: big,
+      focusNode: focusNode,
+      labels: _tvLabel,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(tvMargin, 24, tvMargin, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.topLeft,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(radiusLarge),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 24, 14),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.sizeOf(context).width * .45,
                   ),
-            const SizedBox(width: 8),
-            if (index > 0)
-              _RoundButton(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        titleOf(widget.media),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        'Episode ${epNumber(episode.number)}${title == null ? '' : ': $title'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.white70,
+                        ),
+                      ),
+                      Text(
+                        '$_sourceName${current == null ? '' : ' · ${current!.label}'}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          // The skip for the range playing, where the eye already is.
+          if (skip != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: control(
+                  Icons.double_arrow_rounded,
+                  'Skip ${_skipName(skip.type)}',
+                  () => player.seek(skip.end),
+                ),
+              ),
+            ),
+          Focus(
+            onFocusChange: (v) {
+              if (v) _tvLabel.value = 'Seek · ◀ ▶';
+            },
+            onKeyEvent: (_, event) {
+              final key = event.logicalKey;
+              if (event is KeyUpEvent ||
+                  (key != LogicalKeyboardKey.arrowLeft &&
+                      key != LogicalKeyboardKey.arrowRight)) {
+                return KeyEventResult
+                    .ignored; // releases land the scrub in _onKey
+              }
+              _scheduleHide();
+              _scrub(event);
+              return KeyEventResult.handled;
+            },
+            child: Builder(
+              builder: (context) {
+                final focused = Focus.of(context).hasPrimaryFocus;
+                // Thin until it's the thing being moved.
+                return AnimatedScale(
+                  scale: focused ? 1 : .98,
+                  duration: const Duration(milliseconds: 150),
+                  child: AnimatedOpacity(
+                    opacity: focused ? 1 : .85,
+                    duration: const Duration(milliseconds: 150),
+                    child: ExcludeFocus(child: _seekBar(shown, duration)),
+                  ),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Text(formatDuration(shown), style: tabular),
+                Expanded(
+                  child: ValueListenableBuilder(
+                    valueListenable: _tvLabel,
+                    builder: (context, label, _) => AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 150),
+                      child: Text(
+                        label,
+                        key: ValueKey(label),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Text(
+                  duration > Duration.zero
+                      ? '-${formatDuration(duration - shown)}'
+                      : '',
+                  style: tabular,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              control(
                 Icons.skip_previous_rounded,
-                () => _load(index - 1),
-                tooltip: 'Previous episode',
+                'Previous episode',
+                index > 0 ? () => _load(index - 1) : null,
               ),
-            if (hasNext)
-              _RoundButton(
+              control(
+                Icons.fast_rewind_rounded,
+                'Back ${Settings.seekSeconds}s',
+                () => _seekBy(-Settings.seekSeconds),
+              ),
+              if (loading)
+                const SizedBox(width: _TvControl.bigSize + 16)
+              else
+                control(
+                  player.state.playing
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  player.state.playing ? 'Pause' : 'Play',
+                  player.playOrPause,
+                  big: true,
+                  focusNode: _playFocus,
+                ),
+              control(
+                Icons.fast_forward_rounded,
+                'Forward ${Settings.skipSeconds}s',
+                () => _seekBy(Settings.skipSeconds),
+              ),
+              control(
                 Icons.skip_next_rounded,
-                () => _load(index + 1),
-                tooltip: 'Next episode',
+                'Next episode',
+                hasNext ? () => _load(index + 1) : null,
               ),
-            const SizedBox(width: 8),
-            _skipButton(position),
-            const Spacer(),
-            ?_serverButton(),
-            _speedButton(),
-            _fitButton(),
-            ..._menus(),
-          ],
-        ),
-      ],
-    ),
-  );
+              const SizedBox(width: 24),
+              if (widget.episodes.length > 1)
+                control(
+                  Icons.video_library_outlined,
+                  'Episodes',
+                  _openEpisodes,
+                ),
+              if (_hasSubtitles)
+                control(
+                  subtitle == 'Off'
+                      ? Icons.subtitles_off_outlined
+                      : Icons.subtitles_outlined,
+                  'Subtitles · $subtitle',
+                  _openSubtitles,
+                ),
+              if (_canSwitchServer)
+                control(
+                  Icons.dns_outlined,
+                  'Server · ${current!.label}',
+                  _pickServer,
+                ),
+              control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
+              control(_fitIcon, 'Picture · ${_fits[fit]}', _cycleFit),
+              control(
+                Icons.open_in_new_rounded,
+                'Open in another app',
+                current == null ? null : _openExternal,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _overlay(Duration position, bool loading) => SafeArea(
     child: Padding(
@@ -1635,73 +1806,74 @@ class _EpisodeListState extends State<_EpisodeList> {
                 final i = _row(row);
                 final e = episodes[i];
                 final playing = i == widget.current;
-                return ListTile(
-                  autofocus: isTv && playing,
-                  selected: playing,
-                  selectedTileColor: colors.secondaryContainer.withValues(
-                    alpha: .5,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                  onTap: () => widget.onSelect(i),
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SizedBox(
-                      width: 112,
-                      child: AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Artwork(
-                              e.thumbnail,
-                              placeholder: Center(
-                                child: Text(
-                                  epNumber(e.number),
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: colors.onSurfaceVariant,
+                return ScrollIntoViewOnFocus(
+                  child: ListTile(
+                    autofocus: isTv && playing,
+                    selected: playing,
+                    // Quieter than the focus highlight, so the row the remote is on always stands out.
+                    selectedTileColor: colors.primary.withValues(alpha: .08),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    onTap: () => widget.onSelect(i),
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 112,
+                        child: AspectRatio(
+                          aspectRatio: 16 / 9,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Artwork(
+                                e.thumbnail,
+                                placeholder: Center(
+                                  child: Text(
+                                    epNumber(e.number),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: colors.onSurfaceVariant,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (playing)
-                              const ColoredBox(
-                                color: Color(0x88000000),
-                                child: Icon(
-                                  Icons.graphic_eq_rounded,
-                                  color: Colors.white,
+                              if (playing)
+                                const ColoredBox(
+                                  color: Color(0x88000000),
+                                  child: Icon(
+                                    Icons.graphic_eq_rounded,
+                                    color: Colors.white,
+                                  ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  title: Text('Episode ${epNumber(e.number)}'),
-                  subtitle: e.title == null
-                      ? null
-                      : Text(
-                          e.title!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (Downloads.instance.toPlay(
-                            widget.media,
-                            e.number,
-                            dub: widget.dub,
-                            online: widget.online,
-                          ) !=
-                          null)
-                        const Icon(Icons.download_done_rounded, size: 18),
-                      if (EpisodePlan.isWatched(e, progress))
-                        const Padding(
-                          padding: EdgeInsets.only(left: 8),
-                          child: Icon(Icons.check_circle_rounded, size: 18),
-                        ),
-                    ],
+                    title: Text('Episode ${epNumber(e.number)}'),
+                    subtitle: e.title == null
+                        ? null
+                        : Text(
+                            e.title!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (Downloads.instance.toPlay(
+                              widget.media,
+                              e.number,
+                              dub: widget.dub,
+                              online: widget.online,
+                            ) !=
+                            null)
+                          const Icon(Icons.download_done_rounded, size: 18),
+                        if (EpisodePlan.isWatched(e, progress))
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8),
+                            child: Icon(Icons.check_circle_rounded, size: 18),
+                          ),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -1718,6 +1890,96 @@ String _skipName(SkipType type) => switch (type) {
   SkipType.outro => 'outro',
   SkipType.recap => 'recap',
 };
+
+/// A TV player control: an icon in a circle, ringed in the accent and a touch larger while focused, naming
+/// itself in [labels] (shown between the times) so the row needs no text of its own.
+class _TvControl extends StatefulWidget {
+  const _TvControl({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    required this.labels,
+    this.big = false,
+    this.focusNode,
+  });
+
+  static const size = 52.0, bigSize = 72.0;
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final ValueNotifier<String> labels;
+  final bool big;
+  final FocusNode? focusNode;
+
+  @override
+  State<_TvControl> createState() => _TvControlState();
+}
+
+class _TvControlState extends State<_TvControl> {
+  bool focused = false;
+
+  @override
+  void didUpdateWidget(_TvControl old) {
+    super.didUpdateWidget(old);
+    // Play turning into Pause while focused renames it.
+    if (focused && old.label != widget.label) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => widget.labels.value = widget.label,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = widget.big ? _TvControl.bigSize : _TvControl.size;
+    final enabled = widget.onPressed != null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Semantics(
+        button: true,
+        label: widget.label,
+        child: InkWell(
+          focusNode: widget.focusNode,
+          customBorder: const CircleBorder(),
+          focusColor: Colors.transparent,
+          onTap: widget.onPressed,
+          onFocusChange: (v) {
+            setState(() => focused = v);
+            if (v) widget.labels.value = widget.label;
+          },
+          child: AnimatedScale(
+            scale: focused ? 1.1 : 1,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOutCubic,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                // Solid when focused, and always behind play; the rest are icons alone.
+                color: focused || widget.big
+                    ? scheme.surfaceContainerHigh
+                    : Colors.transparent,
+                border: Border.all(
+                  color: focused ? scheme.primary : Colors.transparent,
+                  width: 3,
+                ),
+                boxShadow: focused ? accentGlow(.35, 16) : const [],
+              ),
+              child: Icon(
+                widget.icon,
+                size: widget.big ? 40 : 28,
+                color: enabled ? Colors.white : Colors.white30,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// A round transport control: translucent on video, solid when focused on TV (from the theme).
 class _RoundButton extends StatelessWidget {
@@ -1744,7 +2006,7 @@ class _RoundButton extends StatelessWidget {
     padding: EdgeInsets.all(big ? 16 : 8),
     style: _onVideo(
       IconButton.styleFrom(
-        backgroundColor: Colors.white.withValues(alpha: big ? .18 : .1),
+        backgroundColor: big ? scheme.surfaceContainerHigh : Colors.transparent,
         foregroundColor: Colors.white,
         disabledForegroundColor: Colors.white24,
       ),
