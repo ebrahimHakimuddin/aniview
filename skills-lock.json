@@ -7,12 +7,6 @@
       "skillPath": "skills/dart-add-unit-test/SKILL.md",
       "computedHash": "55dabb37175bc8091a02b7d78d405f7e33173698c48a649ea29748f1186ac9c0"
     },
-    "dart-build-cli-app": {
-      "source": "dart-lang/skills",
-      "sourceType": "github",
-      "skillPath": "skills/dart-build-cli-app/SKILL.md",
-      "computedHash": "97f042ce6ff6f15fdba29b3acea44266f9e311fce8984002e1fd46bd25754cab"
-    },
     "dart-collect-coverage": {
       "source": "dart-lang/skills",
       "sourceType": "github",
@@ -48,18 +42,6 @@
       "sourceType": "github",
       "skillPath": "skills/dart-run-static-analysis/SKILL.md",
       "computedHash": "e64ea092e216ecdc9b4a8b49b06d0b9a0b49f680c1116ada1d247b2de3fa6fe1"
-    },
-    "dart-use-doc-examples": {
-      "source": "dart-lang/skills",
-      "sourceType": "github",
-      "skillPath": "skills/dart-use-doc-examples/SKILL.md",
-      "computedHash": "516b718be053a5e94aab16a40a7c4ca7adba83380722ae42d43d101a5dcb721f"
-    },
-    "dart-use-ffigen": {
-      "source": "dart-lang/skills",
-      "sourceType": "github",
-      "skillPath": "skills/dart-use-ffigen/SKILL.md",
-      "computedHash": "688ec3e0218b3a96437916be5bdcaea87fe4f90ba869c3deec2f3392f1c6b626"
     },
     "dart-use-path-package": {
       "source": "dart-lang/skills",
@@ -126,18 +108,6 @@
       "sourceType": "github",
       "skillPath": "skills/flutter-implement-json-serialization/SKILL.md",
       "computedHash": "0eed26f25308d78c6a9036ec936db93342f064d64f2cbac5e0e8648ba6b9db3f"
-    },
-    "flutter-setup-declarative-routing": {
-      "source": "flutter/skills",
-      "sourceType": "github",
-      "skillPath": "skills/flutter-setup-declarative-routing/SKILL.md",
-      "computedHash": "2341440c8bce0f176663695eaa71f9f7d7c967772a1dcd0d833c9778504b227e"
-    },
-    "flutter-setup-localization": {
-      "source": "flutter/skills",
-      "sourceType": "github",
-      "skillPath": "skills/flutter-setup-localization/SKILL.md",
-      "computedHash": "671bf254ca8f3172b6bda5287d9e756e9fd5b49165a815f710c5b707ebaa38f8"
     }
   }
 }
