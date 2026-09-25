@@ -24,19 +24,17 @@ String friendlyError(Object error) => switch (error) {
   _ => '$error'.replaceFirst('Exception: ', ''),
 };
 
-/// A modal bottom sheet on phones; on TV a panel in the middle of the screen, since a sheet from the bottom edge
-/// is a touch idiom.
+/// A bottom sheet on phones; on TV a panel in the middle of the screen, since a sheet from the bottom
+/// edge is a touch idiom. [height] fixes a phone sheet at that share of the screen below the status bar.
 Future<T?> showSheet<T>(
   BuildContext context,
   WidgetBuilder builder, {
   bool scrollControlled = false,
+  double? height,
 }) => isTv
     ? showDialog<T>(
         context: context,
-        builder: (context) => Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(28),
-          ),
+        builder: (context) => PanelDialog(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
             child: Padding(
@@ -48,9 +46,46 @@ Future<T?> showSheet<T>(
       )
     : showModalBottomSheet<T>(
         context: context,
-        isScrollControlled: scrollControlled,
+        isScrollControlled: scrollControlled || height != null,
         useSafeArea: true,
-        builder: builder,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        showDragHandle: false, // drawn on the panel below
+        builder: (context) {
+          final screen = MediaQuery.sizeOf(context).height;
+          final sheet = Panel(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(nested(24)),
+              ),
+            ),
+            color: scheme.surfaceContainerLow,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 16),
+                    width: 32,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: scheme.onSurfaceVariant.withValues(alpha: .4),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                if (height != null)
+                  Expanded(child: builder(context))
+                else
+                  Flexible(child: builder(context)),
+              ],
+            ),
+          );
+          return height == null
+              ? sheet
+              : SizedBox(height: screen * height, child: sheet);
+        },
       );
 
 void showSuccess(BuildContext context, String message) =>
@@ -80,7 +115,12 @@ void _snack(BuildContext context, String message, IconData icon, Color color) =>
 
 /// A placeholder block that pulses gently while content loads.
 class Skeleton extends StatefulWidget {
-  const Skeleton({super.key, this.width, this.height, this.radius = 12});
+  const Skeleton({
+    super.key,
+    this.width,
+    this.height,
+    this.radius = radiusLarge,
+  });
 
   final double? width, height;
   final double radius;
@@ -137,7 +177,7 @@ class ErrorState extends StatelessWidget {
         padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
         child: Material(
           color: scheme.errorContainer.withValues(alpha: .35),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(nested(8)), // its button's inset
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
             child: Row(
