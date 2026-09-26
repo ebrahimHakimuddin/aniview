@@ -460,26 +460,50 @@ class ReAnime extends Source {
     ];
   }
 
+  /// Search reports some shows' AniList id as 0 (One Piece, for one); the show's own entry has the real one.
+  Future<String> _anilistId(String animeId) async =>
+      '${jsonDecode(await fetch('$base/api/v1/anime/$animeId'))['anilist_id'] ?? ''}';
+
+  static bool _unknown(String anilistId) =>
+      anilistId.isEmpty || anilistId == '0';
+
   @override
   Future<String?> match(Map media) async {
     for (final title in _searchTitles(media)) {
-      final hit = (await search(title))
+      final results = await search(title);
+      final hit = results
           .where((r) => r.id.endsWith('|${media['id']}'))
           .firstOrNull;
       if (hit != null) return hit.id;
+      for (final r
+          in results.where((r) => _unknown(r.id.split('|')[1])).take(3)) {
+        final animeId = r.id.split('|')[0];
+        if (await _anilistId(animeId) == '${media['id']}') {
+          return '$animeId|${media['id']}';
+        }
+      }
     }
     return null;
   }
 
   @override
   Future<List<Episode>> episodesOf(String id) async {
-    final [animeId, anilistId] = id.split('|');
-    final data =
-        jsonDecode(
-              await fetch('$base/api/v1/anime/$animeId/episodes?limit=5000'),
-            )['data']
-            as List? ??
-        const [];
+    var [animeId, anilistId] = id.split('|');
+    // A manual pick of an entry search listed without its AniList id.
+    if (_unknown(anilistId)) anilistId = await _anilistId(animeId);
+    // Pages hold at most 1000; a bigger limit silently falls back to 30.
+    final data = [];
+    for (var total = 1; data.length < total;) {
+      final json = jsonDecode(
+        await fetch(
+          '$base/api/v1/anime/$animeId/episodes?limit=1000&offset=${data.length}',
+        ),
+      );
+      final page = json['data'] as List? ?? const [];
+      if (page.isEmpty) break;
+      data.addAll(page);
+      total = json['total'] as int? ?? 0;
+    }
     return [
       for (final e in data)
         Episode(
