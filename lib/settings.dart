@@ -50,6 +50,13 @@ enum HomeSection {
       const {featured, airing, season, trending}.contains(this);
 }
 
+/// The player's picture modes, in the order its button cycles through them.
+const pictureFits = {
+  BoxFit.contain: 'Fit',
+  BoxFit.cover: 'Fill (crop)',
+  BoxFit.fill: 'Stretch',
+};
+
 /// User preferences; read synchronously after [load] runs at startup.
 class Settings {
   static late SharedPreferences _prefs;
@@ -98,6 +105,12 @@ class Settings {
 
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
   static set speed(double v) => _prefs.setDouble('speed', v);
+
+  /// How the picture fills the screen when an episode starts.
+  static BoxFit get videoFit =>
+      pictureFits.keys.asNameMap()[_prefs.getString('video_fit')] ??
+      BoxFit.contain;
+  static set videoFit(BoxFit v) => _prefs.setString('video_fit', v.name);
 
   /// Subtitle track to pick by label prefix ("English", "Spanish", …); "Off" disables subtitles.
   static String get subtitleLanguage =>
@@ -563,6 +576,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
                 Settings.speed,
                 (v) => Settings.speed = v,
+              ),
+            ),
+            _Choice(
+              title: 'Default picture',
+              value: pictureFits[Settings.videoFit]!,
+              onTap: () => _choose(
+                'Default picture',
+                pictureFits,
+                Settings.videoFit,
+                (v) => Settings.videoFit = v,
               ),
             ),
           ]),

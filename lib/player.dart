@@ -77,7 +77,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool controls = true, locked = false;
 
   /// Fit, fill (crop) or stretch.
-  BoxFit fit = BoxFit.contain;
+  BoxFit fit = Settings.videoFit;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
 
@@ -1051,12 +1051,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  static const _fits = {
-    BoxFit.contain: 'Fit',
-    BoxFit.cover: 'Fill (crop)',
-    BoxFit.fill: 'Stretch',
-  };
-
   /// A choice from a sheet (a panel on TV), with the controls kept up meanwhile.
   Future<T?> _pick<T>(String title, Map<T, String> options, T current) async {
     _hideTimer?.cancel();
@@ -1117,11 +1111,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _ => BoxFit.contain,
     };
     setState(() => fit = next);
-    _hint(_fits[next]!, icon: Icons.aspect_ratio_rounded);
+    _hint(pictureFits[next]!, icon: Icons.aspect_ratio_rounded);
   }
 
   Widget _fitButton() => IconButton(
-    tooltip: 'Picture · ${_fits[fit]}',
+    tooltip: 'Picture · ${pictureFits[fit]}',
     icon: Icon(_fitIcon),
     onPressed: _cycleFit,
   );
@@ -1457,7 +1451,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   _pickServer,
                 ),
               control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
-              control(_fitIcon, 'Picture · ${_fits[fit]}', _cycleFit),
+              control(_fitIcon, 'Picture · ${pictureFits[fit]}', _cycleFit),
               control(
                 Icons.open_in_new_rounded,
                 'Open in another app',
