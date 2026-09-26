@@ -73,7 +73,7 @@ time home loads. Toggle it in Settings → Notifications.
 ## Analytics
 
 With a Rybbit site id, the app sends screen views and a fixed set of events (`episode_play`, `episode_watched`,
-`search`, `search_filter`, `download_queue`, `sign_in`) from `lib/analytics.dart`. Events carry AniList ids,
+`search`, `search_filter`, `download_queue`, `sign_in`, `app_update`, `usage_stats`) from `lib/analytics.dart`. Events carry AniList ids,
 episode numbers, counts and fixed choices, never search text or account details; users are counted by a random
 per-install id. The Rybbit site must be of type **mobile**: it accepts native traffic with only the public site
 id, so no API key ships in the APK. Users can turn it off in Settings → About.

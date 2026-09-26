@@ -263,6 +263,7 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
           action: SnackBarAction(
             label: 'Update',
             onPressed: () async {
+              Analytics.event('app_update', {'from': current, 'to': version});
               if (apk == null) {
                 return AndroidApp.open(release['html_url']).ignore();
               }
@@ -729,7 +730,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'Which screens and features get used. No account, search text or personal data',
                 ),
                 value: Settings.analytics,
-                onChanged: (v) => setState(() => Settings.analytics = v),
+                // Sent while analytics is on: before switching it off, after switching it on.
+                onChanged: (v) {
+                  if (!v) Analytics.event('usage_stats', {'enabled': false});
+                  setState(() => Settings.analytics = v);
+                  if (v) Analytics.event('usage_stats', {'enabled': true});
+                },
               ),
             for (final (icon, title, url) in const [
               (
