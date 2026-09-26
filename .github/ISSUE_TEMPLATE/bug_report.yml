@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in AniView is broken
+labels: [bug]
+body:
+  - type: checkboxes
+    attributes:
+      label: Before you start
+      options:
+        - label: I'm on the latest release
+          required: true
+        - label: I searched existing issues and this isn't reported yet
+          required: true
+  - type: input
+    attributes:
+      label: App version
+      description: Settings → About
+      placeholder: "2.1.1"
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Platform
+      options: [Phone, Android TV, Both]
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Device / Android version
+      placeholder: Pixel 7, Android 14
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open any episode with an intro marker
+        2. Tap "Skip intro"
+        3. App closes
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: How often
+      options: [Every time, Sometimes, Only once]
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Show / episode / site
+      description: For playback problems. Site name only, no links.
+  - type: textarea
+    attributes:
+      label: Screenshots or recordings
+      description: Drag files in here.
