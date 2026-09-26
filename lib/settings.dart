@@ -744,6 +744,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'https://www.buymeacoffee.com/kidfury',
               ),
               (
+                Icons.discord,
+                'Join the Discord',
+                'https://discord.gg/TXkEgGK9cp',
+              ),
+              (
                 Icons.code_rounded,
                 'GitHub',
                 'https://github.com/ebrahimHakimuddin',

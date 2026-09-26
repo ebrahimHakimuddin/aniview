@@ -6,7 +6,7 @@
 
 <p align="center">
   Watch and track anime on Android phones and Android TV.<br>
-  <a href="https://github.com/ebrahimHakimuddin/aniview/releases/latest">Download the latest release</a>
+  <a href="https://github.com/ebrahimHakimuddin/aniview/releases/latest">Download the latest release</a> · <a href="https://discord.gg/TXkEgGK9cp">Join the Discord</a>
 </p>
 
 <p align="center">
