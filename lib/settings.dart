@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
+import 'changelog.dart';
 import 'downloads.dart';
 import 'history.dart';
 import 'notifications.dart';
@@ -909,15 +910,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
               future: AndroidApp.version(),
               builder: (context, snap) => ListTile(
                 leading: const Icon(Icons.info_outline_rounded),
-                title: const Text('AniView'),
+                title: Text(isBetaBuild ? 'AniView Beta' : 'AniView'),
                 subtitle: Text(
                   snap.hasData
-                      ? 'Version ${snap.data} · Tap to check for updates'
+                      ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · Tap to check for updates'}'
                       : 'Version',
                 ),
-                trailing: const Icon(Icons.system_update_rounded, size: 18),
-                onTap: () => checkForUpdate(context),
+                trailing: isBetaBuild
+                    ? null
+                    : const Icon(Icons.system_update_rounded, size: 18),
+                onTap: isBetaBuild ? null : () => checkForUpdate(context),
               ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.new_releases_outlined),
+              title: const Text('What’s new'),
+              subtitle: const Text('Version $changelogVersion'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => showChangelog(context),
             ),
             if (Analytics.available)
               SwitchListTile(

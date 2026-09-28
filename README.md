@@ -46,14 +46,30 @@ install over builds signed with the same key.
 2. Build and publish:
 
    ```sh
-   fvm flutter build apk --release --split-per-abi --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" \
-     --dart-define=ANILIST_CLIENT_ID=<client id> \
-     --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>
-   git tag v1.5.2 && git push origin main v1.5.2
-   gh release create v1.5.2 build/app/outputs/flutter-apk/app-*-release.apk --generate-notes
+   fvm flutter build apk --release --split-per-abi \
+     --dart-define-from-file=dart_defines.env \
+     --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"
+   git tag v2.2.0 && git push origin main v2.2.0
+   gh release create v2.2.0 build/app/outputs/flutter-apk/app-*-release.apk \
+     --title v2.2.0 --notes-file /tmp/aniview-v2.2.0-notes.md
    ```
 
+   Prepare the short release notes file before the final command. Publish the three split APKs with their
+   `app-*-release.apk` names so the in-app updater can select the device's ABI.
+
 The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
+
+To build a separate installable beta with the local app configuration and current streaming-source ranking, run:
+
+```sh
+fvm flutter build apk --release --android-project-arg=aniviewBeta=true \
+  --dart-define-from-file=dart_defines.env \
+  --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" \
+  --dart-define=ANIVIEW_BETA=true
+```
+
+Its app name is **AniView Beta** and its application id is `com.kidfury.aniview.beta`; the beta build does not offer
+production APK updates.
 The update APK is downloaded through Android's DownloadManager; its progress notification is shown while downloading.
 When it finishes, AniView posts a notification that opens Android's package installer. Android may ask you to
 allow installs from AniView the first time.
@@ -72,6 +88,8 @@ asks AniList which episodes aired since its last successful check, for shows on 
 the ones you watched recently, and posts a notification for each; a missed check is caught up on the next run
 (up to a day back). Tapping a notification opens that show's page. The app keeps the job's inputs current each
 time home loads. Toggle it in Settings → Notifications.
+The bell next to the home wordmark shows the past week's episode releases for your watching list and recently
+watched shows. Opening it marks those entries as seen.
 
 ## Analytics
 
@@ -89,6 +107,10 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 - Offline downloads save the HLS playlist, segments, encryption keys and preferred subtitles on-device. A
   downloaded episode is preferred during playback even when the network is available. Interrupted downloads
   resume when AniView next runs; downloads only progress while the app process is alive.
+- Settings → Storage → Download folder lets you pick a folder for new offline episodes. Existing episodes stay
+  where they were saved. The app stages a download in private storage, copies its HLS files to the selected folder,
+  then removes the staging copy; playback and deletion use the selected folder. Android's folder picker grants
+  access across reboots.
 - **Download episodes…** (⋮ next to SUB/DUB) queues a range of episodes on the chosen site and audio, starting
   at the first unwatched one, skipping ones already saved or queued and retrying failed ones. Settings → Storage
   caps the download quality.
