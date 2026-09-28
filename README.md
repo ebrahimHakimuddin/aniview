@@ -54,6 +54,9 @@ install over builds signed with the same key.
    ```
 
 The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
+The update APK is downloaded through Android's DownloadManager; its progress notification is shown while downloading.
+When it finishes, AniView posts a notification that opens Android's package installer. Android may ask you to
+allow installs from AniView the first time.
 
 ## Tracking
 

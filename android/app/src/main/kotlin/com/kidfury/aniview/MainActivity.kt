@@ -66,14 +66,17 @@ class MainActivity : FlutterActivity() {
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
                     // For the analytics user agent, e.g. "Android 14; Pixel 7".
                     "device" -> result.success("Android ${Build.VERSION.RELEASE}; ${Build.MODEL}")
-                    // The system notification opens the installer when tapped.
+                    // DownloadManager shows progress; our completion receiver opens the installer.
                     "download" -> {
                         val request = DownloadManager.Request(Uri.parse(call.argument<String>("url")))
                             .setTitle(call.argument<String>("title"))
                             .setMimeType("application/vnd.android.package-archive")
-                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                        result.success(null)
+                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+                            .setDestinationInExternalFilesDir(this, android.os.Environment.DIRECTORY_DOWNLOADS,
+                                "aniview-update-${System.currentTimeMillis()}.apk")
+                        val id = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                        getSharedPreferences("app_update", MODE_PRIVATE).edit().putLong("download_id", id).apply()
+                        result.success(id)
                     }
                     "external" -> playExternal(call.arguments as Map<*, *>, result)
                     "gallery" -> Thread {

@@ -263,19 +263,25 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
           action: SnackBarAction(
             label: 'Update',
             onPressed: () async {
-              Analytics.event('app_update', {'from': current, 'to': version});
-              if (apk == null) {
-                return AndroidApp.open(release['html_url']).ignore();
-              }
-              await AndroidApp.downloadApk(
-                apk['browser_download_url'],
-                title: 'AniView $version',
-              );
-              if (context.mounted) {
-                showSuccess(
-                  context,
-                  'Downloading update · tap the notification to install',
-                );
+              try {
+                Analytics.event('app_update', {'from': current, 'to': version});
+                if (apk == null) {
+                  await AndroidApp.open(release['html_url']);
+                } else {
+                  await EpisodeNotifications.requestPermission();
+                  await AndroidApp.downloadApk(
+                    apk['browser_download_url'],
+                    title: 'AniView $version',
+                  );
+                  if (context.mounted) {
+                    showSuccess(
+                      context,
+                      'Downloading update · tap the finished notification to install',
+                    );
+                  }
+                }
+              } catch (e) {
+                if (context.mounted) showError(context, e);
               }
             },
           ),
