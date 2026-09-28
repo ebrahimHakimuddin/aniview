@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-import 'main.dart' show appGeneration;
+import 'main.dart' show appGeneration, themeGeneration;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -24,6 +24,62 @@ import 'ui.dart';
 import 'platform.dart';
 
 enum SkipMode { button, auto, off }
+
+/// A fixed set of visual themes; the saved enum names preserve earlier choices.
+enum ThemeSelection {
+  custom(
+    'AniView Custom',
+    'Original dark look',
+    Color(0xFF01C4FA),
+    Brightness.dark,
+  ),
+  materialLight(
+    'Cyan Light',
+    'Material 3 · cyan',
+    Color(0xFF01C4FA),
+    Brightness.light,
+  ),
+  materialDark(
+    'Cyan Dark',
+    'Material 3 · cyan',
+    Color(0xFF01C4FA),
+    Brightness.dark,
+  ),
+  violetLight(
+    'Violet Light',
+    'Material 3 · violet',
+    Color(0xFF6750A4),
+    Brightness.light,
+  ),
+  violetDark(
+    'Violet Dark',
+    'Material 3 · violet',
+    Color(0xFF6750A4),
+    Brightness.dark,
+  ),
+  forestLight(
+    'Forest Light',
+    'Material 3 · green',
+    Color(0xFF006B5F),
+    Brightness.light,
+  ),
+  forestDark(
+    'Forest Dark',
+    'Material 3 · green',
+    Color(0xFF006B5F),
+    Brightness.dark,
+  );
+
+  const ThemeSelection(
+    this.label,
+    this.description,
+    this.seedColor,
+    this.brightness,
+  );
+  final String label, description;
+  final Color seedColor;
+  final Brightness brightness;
+}
 
 /// Rows of the home screen, in their default order.
 enum HomeSection {
@@ -60,9 +116,21 @@ const pictureFits = {
 /// User preferences; read synchronously after [load] runs at startup.
 class Settings {
   static late SharedPreferences _prefs;
+  static bool _loaded = false;
 
-  static Future<void> load() async =>
-      _prefs = await SharedPreferences.getInstance();
+  static Future<void> load() async {
+    _prefs = await SharedPreferences.getInstance();
+    _loaded = true;
+  }
+
+  /// The original AniView theme remains the default for existing installs.
+  static ThemeSelection get themeSelection =>
+      ThemeSelection.values.asNameMap()[_loaded
+          ? _prefs.getString('theme_selection')
+          : null] ??
+      ThemeSelection.custom;
+  static set themeSelection(ThemeSelection value) =>
+      _prefs.setString('theme_selection', value.name);
 
   static bool get preferDub => _prefs.getBool('prefer_dub') ?? false;
   static set preferDub(bool v) => _prefs.setBool('prefer_dub', v);
@@ -151,6 +219,24 @@ class Settings {
   static set episodeNotifications(bool v) =>
       _prefs.setBool('episode_notifications', v);
 
+  /// Last time the home release inbox was opened, in Unix seconds.
+  static int get releaseSeenAt => _prefs.getInt('release_seen_at') ?? 0;
+  static set releaseSeenAt(int v) => _prefs.setInt('release_seen_at', v);
+
+  /// Android document tree picked for new offline episodes. Empty uses app storage.
+  static String get downloadFolder => _prefs.getString('download_folder') ?? '';
+  static set downloadFolder(String v) => _prefs.setString('download_folder', v);
+
+  static String get downloadFolderLabel {
+    if (downloadFolder.isEmpty) {
+      return 'App storage · choose a folder for new episodes';
+    }
+    final location = Uri.parse(downloadFolder).pathSegments.last;
+    return location.startsWith('primary:')
+        ? location.replaceFirst('primary:', 'Internal storage/')
+        : location.replaceFirst(':', '/');
+  }
+
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);
 
@@ -214,6 +300,7 @@ class Settings {
 
 const _latestRelease =
     'https://api.github.com/repos/ebrahimHakimuddin/aniview/releases/latest';
+const isBetaBuild = bool.fromEnvironment('ANIVIEW_BETA');
 
 /// Whether release tag [latest] ("v1.5.2") is a newer version than [current] ("1.5.1").
 bool isNewerVersion(String latest, String current) {
@@ -238,6 +325,8 @@ Map? updateApk(List assets, String? abi) => assets
 /// Offers the latest GitHub release when it is newer than this build.
 /// [quiet] (the check on launch) stays silent when up to date or offline.
 Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
+  // The beta package has a different application id; production APKs cannot update it.
+  if (isBetaBuild) return;
   try {
     final current = await AndroidApp.version() ?? '';
     final res = await http
@@ -330,6 +419,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (picked != null) setState(() => apply(picked));
   }
 
+  Future<void> _pickTheme() async {
+    final picked = await showSheet<ThemeSelection>(
+      context,
+      height: .72,
+      (sheet) => SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            sheetTitle(sheet, 'Choose a theme'),
+            Expanded(
+              child: ListView.builder(
+                itemCount: ThemeSelection.values.length,
+                itemBuilder: (context, index) {
+                  final choice = ThemeSelection.values[index];
+                  final colors = themeScheme(choice);
+                  final selected = choice == Settings.themeSelection;
+                  return ScrollIntoViewOnFocus(
+                    child: ListTile(
+                      autofocus: selected,
+                      selected: selected,
+                      leading: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Stack(
+                          children: [
+                            Positioned(
+                              left: 1,
+                              top: 1,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: colors.surface,
+                                  border: Border.all(color: colors.outline),
+                                ),
+                                child: const SizedBox.square(dimension: 34),
+                              ),
+                            ),
+                            Positioned(
+                              right: 1,
+                              bottom: 1,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: colors.primary,
+                                ),
+                                child: const SizedBox.square(dimension: 26),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      title: Text(choice.label),
+                      subtitle: Text(choice.description),
+                      trailing: selected
+                          ? const Icon(Icons.check_circle_rounded)
+                          : null,
+                      onTap: () => Navigator.pop(sheet, choice),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || picked == null || picked == Settings.themeSelection) return;
+    setState(() => Settings.themeSelection = picked);
+    themeGeneration.value++;
+  }
+
   Future<bool> _confirm(String title, String message, String action) =>
       confirmDestructive(
         context,
@@ -375,6 +535,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         children: [
           _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
+          _Group('Appearance', [
+            ListTile(
+              title: const Text('Theme'),
+              subtitle: Text(Settings.themeSelection.label),
+              onTap: _pickTheme,
+            ),
+          ]),
           _Group('Tracking', [
             SwitchListTile(
               title: const Text('Update progress automatically'),
@@ -625,6 +792,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _Group('Storage', [
+            ListTile(
+              leading: const Icon(Icons.folder_open_rounded),
+              title: const Text('Download folder'),
+              subtitle: Text(Settings.downloadFolderLabel),
+              trailing: Settings.downloadFolder.isEmpty
+                  ? const Icon(Icons.chevron_right_rounded)
+                  : IconButton(
+                      tooltip: 'Use app storage for new downloads',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () =>
+                          setState(() => Settings.downloadFolder = ''),
+                    ),
+              onTap: () async {
+                try {
+                  final folder = await AndroidApp.pickDownloadFolder();
+                  if (folder != null && mounted) {
+                    setState(() => Settings.downloadFolder = folder);
+                  }
+                } catch (e) {
+                  if (mounted) showError(this.context, e);
+                }
+              },
+            ),
             _Choice(
               title: 'Download quality',
               subtitle: 'Lower quality takes less space',

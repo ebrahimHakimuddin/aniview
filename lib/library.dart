@@ -228,73 +228,83 @@ class _MyListScreenState extends State<MyListScreen> {
                 final lists = snap.data ?? const {};
                 final total = lists.values.fold(0, (n, l) => n + l.length);
                 final shown = lists[status] ?? const [];
-                return RefreshIndicator(
-                  onRefresh: widget.onRefresh,
-                  child: CustomScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: picked != null
-                              ? _selectionBar(shown)
-                              : _Headline(
+                return Column(
+                  children: [
+                    if (picked != null)
+                      Material(
+                        color: scheme.surface,
+                        child: _selectionBar(shown),
+                      ),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: widget.onRefresh,
+                        child: CustomScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          slivers: [
+                            if (picked == null)
+                              SliverToBoxAdapter(
+                                child: _Headline(
                                   'My list',
                                   note: snap.hasData
                                       ? '$total titles · ${isTv ? 'hold OK on' : 'hold'} one to edit several'
                                       : null,
                                 ),
-                        ),
-                      ),
-                      SliverToBoxAdapter(child: _chips(lists)),
-                      if (snap.hasError)
-                        SliverFillRemaining(
-                          hasScrollBody: false,
-                          child: ErrorState(
-                            snap.error!,
-                            onRetry: widget.onRefresh,
-                          ),
-                        )
-                      else if (!snap.hasData)
-                        _grid(12, (_, _) => const _PosterSkeleton())
-                      else if (shown.isEmpty)
-                        SliverFillRemaining(
-                          hasScrollBody: false,
-                          child: EmptyState(
-                            icon: Icons.video_library_outlined,
-                            title:
-                                'Nothing ${_statuses[status]!.toLowerCase()}',
-                          ),
-                        )
-                      else
-                        _grid(
-                          shown.length,
-                          (context, i) => FadeIn(
-                            key: ValueKey((status, i)),
-                            index: i,
-                            child: PosterCard(
-                              shown[i],
-                              autofocus: isTv && i == 0,
-                              onBack: widget.onChanged,
-                              selected: picked?.containsKey(shown[i]['id']),
-                              onTap: picked == null
-                                  ? null
-                                  : busy
-                                  ? () {}
-                                  : () => _toggle(shown[i]),
-                              onLongPress: busy
-                                  ? null
-                                  : () => _toggle(shown[i]),
+                              ),
+                            SliverToBoxAdapter(child: _chips(lists)),
+                            if (snap.hasError)
+                              SliverFillRemaining(
+                                hasScrollBody: false,
+                                child: ErrorState(
+                                  snap.error!,
+                                  onRetry: widget.onRefresh,
+                                ),
+                              )
+                            else if (!snap.hasData)
+                              _grid(12, (_, _) => const _PosterSkeleton())
+                            else if (shown.isEmpty)
+                              SliverFillRemaining(
+                                hasScrollBody: false,
+                                child: EmptyState(
+                                  icon: Icons.video_library_outlined,
+                                  title:
+                                      'Nothing ${_statuses[status]!.toLowerCase()}',
+                                ),
+                              )
+                            else
+                              _grid(
+                                shown.length,
+                                (context, i) => FadeIn(
+                                  key: ValueKey((status, i)),
+                                  index: i,
+                                  child: PosterCard(
+                                    shown[i],
+                                    autofocus: isTv && i == 0,
+                                    onBack: widget.onChanged,
+                                    selected: picked?.containsKey(
+                                      shown[i]['id'],
+                                    ),
+                                    onTap: picked == null
+                                        ? null
+                                        : busy
+                                        ? () {}
+                                        : () => _toggle(shown[i]),
+                                    onLongPress: busy
+                                        ? null
+                                        : () => _toggle(shown[i]),
+                                  ),
+                                ),
+                              ),
+                            SliverToBoxAdapter(
+                              child: SizedBox(
+                                height:
+                                    24 + MediaQuery.paddingOf(context).bottom,
+                              ),
                             ),
-                          ),
-                        ),
-                      SliverToBoxAdapter(
-                        child: SizedBox(
-                          height: 24 + MediaQuery.paddingOf(context).bottom,
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -359,12 +369,14 @@ class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({
     super.key,
     required this.schedule,
+    required this.allSchedule,
     required this.onRefresh,
     required this.onChanged,
   });
 
   /// From [AniList.airingAround], from the start of today.
   final Future<List<Map>> schedule;
+  final Future<List<Map>> allSchedule;
   final Future<void> Function() onRefresh;
   final VoidCallback onChanged;
 
@@ -375,6 +387,7 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> {
   /// Days from today.
   int day = 0;
+  bool allShows = false;
 
   @override
   void initState() {
@@ -395,7 +408,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     body: SafeArea(
       bottom: false,
       child: FutureBuilder(
-        future: widget.schedule,
+        future: allShows && Tracker.signedIn
+            ? widget.allSchedule
+            : widget.schedule,
         builder: (context, snap) {
           final all = snap.data ?? const <Map>[];
           final date = _today.add(Duration(days: day));
@@ -416,10 +431,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     'This week',
                     note: snap.hasData
                         ? '${all.length} ${all.length == 1 ? 'episode' : 'episodes'} '
-                              '${Tracker.signedIn ? 'from your list and recent shows' : 'of popular shows airing now'}'
+                              '${Tracker.signedIn && !allShows ? 'from your list and recent shows' : 'of popular shows airing now'}'
                         : null,
                   ),
                 ),
+                if (Tracker.signedIn)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(side, 12, side, 0),
+                      child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(value: false, label: Text('My shows')),
+                          ButtonSegment(value: true, label: Text('All shows')),
+                        ],
+                        selected: {allShows},
+                        onSelectionChanged: (value) => setState(() {
+                          allShows = value.first;
+                        }),
+                      ),
+                    ),
+                  ),
                 SliverToBoxAdapter(child: _days()),
                 if (snap.hasError)
                   SliverFillRemaining(

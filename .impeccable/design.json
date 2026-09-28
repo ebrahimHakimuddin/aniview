@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-28T10:21:02.076Z",
+  "title": "Design System: AniView",
+  "extensions": {
+    "colorMeta": {
+      "brand-cyan": {
+        "role": "primary",
+        "displayName": "AniView cyan",
+        "canonical": "#01C4FA"
+      },
+      "violet-seed": {
+        "role": "primary",
+        "displayName": "Material violet",
+        "canonical": "#6750A4"
+      },
+      "forest-seed": {
+        "role": "primary",
+        "displayName": "Material forest",
+        "canonical": "#006B5F"
+      },
+      "episode-highlight": {
+        "role": "status",
+        "displayName": "Episode highlight",
+        "canonical": "#FFC857"
+      }
+    },
+    "motion": [
+      {
+        "name": "tab-switch",
+        "value": "220ms ease-out-cubic",
+        "purpose": "Bottom menu selection and page transitions."
+      },
+      {
+        "name": "dialog-transition",
+        "value": "Material 3 platform transition",
+        "purpose": "Dialogs, sheets, and menus."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "navigation-rail",
+        "value": "600dp"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The main action, 48dp on phones and 56dp on TV.",
+      "html": "<button class=\"ds-button\">Continue</button>",
+      "css": ".ds-button { min-height:48px; padding:0 16px; border-radius:8px; border:1px solid #01C4FA; color:#01C4FA; background:#161b1d; font:600 14px system-ui; cursor:pointer; transition:background 220ms ease-out; } .ds-button:hover, .ds-button:focus-visible { background:#01C4FA22; } .ds-button:active { background:#01C4FA44; } .ds-button:disabled { opacity:.45; cursor:default; }"
+    },
+    {
+      "name": "Content Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Tonal surface for anime content.",
+      "html": "<div class=\"ds-card\">Anime artwork and details</div>",
+      "css": ".ds-card { padding:16px; border-radius:16px; color:#f1f3f4; background:#242a2d; font:400 14px system-ui; }"
+    },
+    {
+      "name": "Search Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Filled field with visible focus and error outline.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search anime\" aria-label=\"Search anime\">",
+      "css": ".ds-input { min-height:48px; padding:0 16px; border-radius:12px; border:1px solid transparent; color:#f1f3f4; background:#30373a; font:400 14px system-ui; } .ds-input:focus-visible { outline:2px solid #01C4FA; outline-offset:0; } .ds-input:disabled { opacity:.45; }"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "description": "Floating phone navigation pill with selected destination label and 48dp targets in every theme.",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-item\">Home</button><button class=\"ds-nav-item\" aria-current=\"page\">My list</button></nav>",
+      "css": ".ds-nav { display:flex; gap:8px; padding:8px; border-radius:16px; background:#242a2d; } .ds-nav-item { min-height:48px; padding:0 12px; border:0; border-radius:8px; color:#f1f3f4; background:transparent; cursor:pointer; } .ds-nav-item[aria-current], .ds-nav-item:hover, .ds-nav-item:focus-visible { color:#01C4FA; background:#01C4FA22; } .ds-nav-item:active { background:#01C4FA44; }"
+    },
+    {
+      "name": "Selection Chip",
+      "kind": "chip",
+      "description": "Status filter with an outlined selected state.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\">Watching</button>",
+      "css": ".ds-chip { min-height:48px; padding:0 12px; border:1px solid #657075; border-radius:8px; color:#f1f3f4; background:transparent; font:600 14px system-ui; cursor:pointer; } .ds-chip[aria-pressed=true], .ds-chip:hover, .ds-chip:focus-visible { border-color:#01C4FA; color:#01C4FA; background:#01C4FA22; } .ds-chip:active { background:#01C4FA44; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Content-first Material",
+    "overview": "Anime artwork leads. Shared Material color roles, clear type, and restrained control states keep the interface consistent across phone and TV.",
+    "keyCharacteristics": [
+      "Custom dark theme is the default",
+      "Cyan, Violet, and Forest light and dark presets are selectable",
+      "Tonal surfaces and cyan selection"
+    ],
+    "rules": [],
+    "dos": [
+      "Use semantic ColorScheme roles.",
+      "Keep phone touch targets at least 48dp."
+    ],
+    "donts": [
+      "Do not let navigation labels overflow narrow screens."
+    ]
+  }
+}

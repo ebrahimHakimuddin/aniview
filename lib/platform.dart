@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 /// call throws [MissingPluginException]; failures on Android arrive as [PlatformException] with the reason.
 class AndroidApp {
   static const _app = MethodChannel('aniview/app');
+  static const _folder = MethodChannel('aniview/folder');
   static const _volume = MethodChannel('aniview/volume');
 
   static Future<String?> version() => _app.invokeMethod<String>('version');
@@ -29,6 +30,29 @@ class AndroidApp {
   /// Downloads an APK through the system download manager, whose notification opens the installer.
   static Future<void> downloadApk(String url, {required String title}) =>
       _app.invokeMethod('download', {'url': url, 'title': title});
+
+  /// A persisted Android document tree URI, or null when the picker was cancelled.
+  static Future<String?> pickDownloadFolder() =>
+      _folder.invokeMethod<String>('pick');
+
+  static Future<void> exportDownloadFolder(
+    String tree,
+    String id,
+    String path,
+  ) => _folder.invokeMethod('export', {'tree': tree, 'id': id, 'path': path});
+
+  static Future<Uint8List?> readDownloadFile(
+    String tree,
+    String id,
+    String file,
+  ) => _folder.invokeMethod<Uint8List>('read', {
+    'tree': tree,
+    'id': id,
+    'file': file,
+  });
+
+  static Future<void> deleteDownloadFolder(String tree, String id) =>
+      _folder.invokeMethod('delete', {'tree': tree, 'id': id});
 
   /// Plays a stream in another video app until it returns: {position, duration, completed}, empty from apps that
   /// don't report back. Throws code "no_player" when none is installed.

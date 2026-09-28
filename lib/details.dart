@@ -1358,9 +1358,9 @@ class _ListEntry extends StatelessWidget {
     return Card.filled(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
-      // The 2dp-cornered bar, 16dp in.
+      // The 16dp inset leaves room for a visibly rounded content-card corner.
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(nested(16, 2)),
+        borderRadius: BorderRadius.circular(contentPanelRadius),
       ),
       child: InkWell(
         onTap: onTap,
@@ -1395,10 +1395,10 @@ class _ListEntry extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Container(
-                height: 4,
+                height: progressBarHeight,
                 decoration: BoxDecoration(
                   color: scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(progressBarHeight / 2),
                 ),
                 alignment: Alignment.centerLeft,
                 // Grows to the progress on open and to each new value after.
@@ -1416,9 +1416,12 @@ class _ListEntry extends StatelessWidget {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: scheme.primary,
-                      borderRadius: BorderRadius.circular(2),
+                      borderRadius: BorderRadius.circular(
+                        progressBarHeight / 2,
+                      ),
                       boxShadow: accentGlow(.8, 8),
                     ),
+                    child: const SizedBox(height: progressBarHeight),
                   ),
                 ),
               ),
@@ -2096,7 +2099,10 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       decoration: InputDecoration(
         labelText: label,
-        border: const OutlineInputBorder(),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(nested(4)),
+          borderSide: BorderSide(color: hairline),
+        ),
         filled: false,
       ),
       onChanged: (_) => setState(() {}),

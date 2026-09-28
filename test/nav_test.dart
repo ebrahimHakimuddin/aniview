@@ -1,8 +1,27 @@
 import 'package:aniview/ui.dart';
+import 'package:aniview/home.dart';
+import 'package:aniview/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets('a Material phone theme keeps the floating navigation pill', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    Settings.themeSelection = ThemeSelection.violetLight;
+    addTearDown(() => Settings.themeSelection = ThemeSelection.custom);
+    await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
+
+    expect(find.byType(FloatingNav), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
+  });
+
   testWidgets('a page\'s floating button sits above the navigation pill', (
     tester,
   ) async {

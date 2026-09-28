@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'sources.dart';
+import 'platform.dart';
 
 /// Localhost relay for HLS streams: sends each stream's headers upstream (over HTTP/2 where a host refuses
 /// FFmpeg's HTTP/1.1, via [fetchBytes]) and strips the fake image prefix some hosts put in front of MPEG-TS
@@ -12,6 +13,7 @@ class HlsProxy {
   // ponytail: header sets are never evicted; one small map per opened stream is fine for a session
   static final _headers = <Map<String, String>>[];
   static final _dirs = <String>[];
+  static final _documents = <(String, String)>[];
 
   /// Leads every path, so other apps on the device can't use the relay or read downloads without an address it gave out.
   static final _token = base64Url
@@ -46,6 +48,21 @@ class HlsProxy {
     return 'http://127.0.0.1:$port/$_token/local/$id/$file';
   }
 
+  /// Serves a file in an Android folder chosen through the system picker.
+  static Future<String> documentFile(String url) async {
+    final parts = url.substring('saf://'.length).split('/');
+    final tree = Uri.decodeComponent(parts[0]);
+    final id = parts[1];
+    final file = parts[2];
+    final port = (await _server).port;
+    var index = _documents.indexOf((tree, id));
+    if (index == -1) {
+      _documents.add((tree, id));
+      index = _documents.length - 1;
+    }
+    return 'http://127.0.0.1:$port/$_token/document/$index/$file';
+  }
+
   // The upstream URL lives in the path (no query) so FFmpeg's segment-extension check sees `.ts`/`.m3u8`.
   static String _local(int port, int id, String upstream, String ext) =>
       'http://127.0.0.1:$port/$_token/$id/${base64Url.encode(utf8.encode(upstream)).replaceAll('=', '')}.$ext';
@@ -72,6 +89,22 @@ class HlsProxy {
         final local = File('${_dirs[int.parse(id)]}/$file');
         if (!await local.exists()) throw const FileSystemException();
         await response.addStream(local.openRead());
+        return await response.close();
+      }
+      if (path case ['document', final index, final file]) {
+        if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) {
+          throw const FormatException();
+        }
+        if (file.endsWith('.m3u8')) {
+          response.headers.contentType = ContentType(
+            'application',
+            'vnd.apple.mpegurl',
+          );
+        }
+        final (tree, id) = _documents[int.parse(index)];
+        final bytes = await AndroidApp.readDownloadFile(tree, id, file);
+        if (bytes == null) throw const FileSystemException();
+        response.add(bytes);
         return await response.close();
       }
       final [id, file] = path;

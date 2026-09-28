@@ -492,6 +492,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   final client = http.Client();
   String? tv; // the paired TV's id being controlled
   bool scanning = false, pairing = false;
+  String? manualAddressError;
   int _sent = 0;
 
   /// What the TV said it's playing, from its last answer; null when nothing is.
@@ -545,9 +546,22 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   }
 
   Future<void> _pair(String address) async {
-    setState(() => pairing = true);
+    final trimmed = address.trim();
+    final target = Uri.tryParse('http://$trimmed');
+    if (target == null ||
+        target.host.isEmpty ||
+        !target.hasPort ||
+        target.port < 1 ||
+        target.port > 65535) {
+      setState(() => manualAddressError = 'Enter a TV address with its port');
+      return;
+    }
+    setState(() {
+      pairing = true;
+      manualAddressError = null;
+    });
     try {
-      final base = 'http://${address.trim()}';
+      final base = target.toString();
       final token = AniList.token;
       final agreed = await _handshake(
         context,
@@ -571,13 +585,21 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
         ...paired,
         id: {
           'key': base64.encode(agreed.key),
-          'name': found[address.trim()]?.name ?? 'TV',
-          'address': address.trim(),
+          'name': found[trimmed]?.name ?? 'TV',
+          'address': trimmed,
         },
       };
-      if (mounted) setState(() => tv = id);
+      if (mounted) {
+        setState(() => tv = id);
+        showSuccess(context, 'Paired with ${found[trimmed]?.name ?? 'TV'}');
+      }
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted) {
+        if (trimmed == manual.text.trim()) {
+          setState(() => manualAddressError = friendlyError(e));
+        }
+        showError(context, e);
+      }
     } finally {
       if (mounted) setState(() => pairing = false);
     }
@@ -705,13 +727,20 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
       const SizedBox(height: 16),
       TextField(
         controller: manual,
+        onChanged: (_) {
+          if (manualAddressError != null) {
+            setState(() => manualAddressError = null);
+          }
+        },
         keyboardType: TextInputType.url,
         textInputAction: TextInputAction.go,
         onSubmitted: pairing ? null : _pair,
         decoration: InputDecoration(
           labelText: 'TV address',
           hintText: '192.168.1.20:40123',
+          errorText: manualAddressError,
           suffixIcon: IconButton(
+            tooltip: 'Pair with TV',
             icon: const Icon(Icons.arrow_forward_rounded),
             onPressed: pairing ? null : () => _pair(manual.text),
           ),

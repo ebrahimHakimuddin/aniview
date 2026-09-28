@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'anilist.dart';
 import 'details.dart';
+import 'settings.dart';
 import 'states.dart';
 import 'tv.dart';
 
@@ -16,11 +17,26 @@ import 'tv.dart';
 const seed = Color(0xFF01C4FA);
 
 /// Fidelity keeps the icon's vivid cyan as the accent instead of muting it.
-final scheme = ColorScheme.fromSeed(
+final _customScheme = ColorScheme.fromSeed(
   seedColor: seed,
   brightness: Brightness.dark,
   dynamicSchemeVariant: DynamicSchemeVariant.fidelity,
 );
+
+final _materialSchemes = {
+  for (final choice in ThemeSelection.values)
+    if (choice != ThemeSelection.custom)
+      choice: ColorScheme.fromSeed(
+        seedColor: choice.seedColor,
+        brightness: choice.brightness,
+      ),
+};
+
+ColorScheme themeScheme(ThemeSelection choice) =>
+    choice == ThemeSelection.custom ? _customScheme : _materialSchemes[choice]!;
+
+/// Shared semantic colors for both Material widgets and app-specific artwork.
+ColorScheme get scheme => themeScheme(Settings.themeSelection);
 
 /// Side margin: 16dp on phones, the TV overscan margin on TV.
 double get side => isTv ? tvMargin : 16;
@@ -33,7 +49,7 @@ double get posterWidth => isTv ? 124 : 116;
 
 /// Four sizes and two weights, and nothing else: 28 for a screen's headline, 18 for titles, 14 for body text
 /// and labels, 12 for captions; regular for reading, semibold for anything that names or labels.
-final typeScale = () {
+TextTheme get typeScale {
   // Tracking by size: large text reads loose, so it tightens; small text opens up a touch to stay legible.
   TextStyle style(double size, FontWeight weight, double height) => TextStyle(
     fontSize: size,
@@ -67,9 +83,12 @@ final typeScale = () {
     labelMedium: style(12, semibold, 1.3),
     labelSmall: style(12, semibold, 1.3),
   );
-}();
+}
 
 ThemeData buildTheme() {
+  if (Settings.themeSelection != ThemeSelection.custom) {
+    return _buildMaterialTheme();
+  }
   final text = typeScale;
   // TV: a focused button turns solid (light on dark becomes dark on light), readable from across the room.
   // Unfocused states resolve to null, which falls through to each button's own defaults.
@@ -115,6 +134,7 @@ ThemeData buildTheme() {
         statusBarColor: Colors.transparent,
         systemNavigationBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
@@ -182,7 +202,7 @@ ThemeData buildTheme() {
       backgroundColor: scheme.surfaceContainerHigh,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(nested(24)),
+        borderRadius: BorderRadius.circular(contentPanelRadius),
       ),
     ),
     popupMenuTheme: PopupMenuThemeData(
@@ -212,6 +232,14 @@ ThemeData buildTheme() {
           nested(4),
         ), // its icon buttons, 4dp in
         borderSide: BorderSide(color: scheme.primary, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(nested(4)),
+        borderSide: BorderSide(color: scheme.error),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(nested(4)),
+        borderSide: BorderSide(color: scheme.error, width: 2),
       ),
     ),
     // Nocturne's buttons. Primary (filled and tonal): an accent outline and label on a solid fill.
@@ -273,22 +301,124 @@ ThemeData buildTheme() {
   );
 }
 
+ThemeData _buildMaterialTheme() {
+  final colors = scheme;
+  final controlShape = RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(buttonRadius),
+  );
+  final fieldShape = OutlineInputBorder(
+    borderRadius: BorderRadius.circular(radiusLarge),
+  );
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: colors,
+    visualDensity: VisualDensity.standard,
+    materialTapTargetSize: MaterialTapTargetSize.padded,
+    scaffoldBackgroundColor: colors.surface,
+    focusColor: isTv ? colors.primary.withValues(alpha: .24) : null,
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
+      },
+    ),
+    appBarTheme: AppBarTheme(
+      backgroundColor: colors.surface,
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        statusBarIconBrightness: colors.brightness == Brightness.light
+            ? Brightness.dark
+            : Brightness.light,
+        systemNavigationBarIconBrightness: colors.brightness == Brightness.light
+            ? Brightness.dark
+            : Brightness.light,
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        minimumSize: Size(64, buttonHeight),
+        shape: controlShape,
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        minimumSize: Size(64, buttonHeight),
+        shape: controlShape,
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        minimumSize: Size(64, buttonHeight),
+        shape: controlShape,
+      ),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        minimumSize: WidgetStatePropertyAll(Size(48, buttonHeight)),
+        shape: WidgetStatePropertyAll(controlShape),
+      ),
+    ),
+    cardTheme: CardThemeData(
+      color: colors.surfaceContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(nested(8)),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: colors.surfaceContainerHigh,
+      border: fieldShape,
+      enabledBorder: fieldShape.copyWith(
+        borderSide: BorderSide(color: colors.outline),
+      ),
+      focusedBorder: fieldShape.copyWith(
+        borderSide: BorderSide(color: colors.primary, width: 2),
+      ),
+      errorBorder: fieldShape.copyWith(
+        borderSide: BorderSide(color: colors.error),
+      ),
+      focusedErrorBorder: fieldShape.copyWith(
+        borderSide: BorderSide(color: colors.error, width: 2),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: colors.surfaceContainerHigh,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(contentPanelRadius),
+      ),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: colors.surfaceContainerLow,
+      showDragHandle: true,
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: colors.inverseSurface,
+      contentTextStyle: TextStyle(color: colors.onInverseSurface),
+    ),
+  );
+}
+
 /// Marquee's key art: full-bleed, darkened a little under the status bar and fading into the page at its foot.
-BoxDecoration get keyArtFade => BoxDecoration(
-  gradient: LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    // Dark enough by the lower third that the text set there reads over any art.
-    colors: [
-      scheme.surface.withValues(alpha: .45),
-      scheme.surface.withValues(alpha: 0),
-      scheme.surface.withValues(alpha: 0),
-      scheme.surface.withValues(alpha: .75),
-      scheme.surface,
-    ],
-    stops: const [0, .25, .4, .7, 1],
-  ),
-);
+BoxDecoration get keyArtFade {
+  final colors = scheme;
+  final light = colors.brightness == Brightness.light;
+  return BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      // Light themes need a denser surface behind dark text over arbitrary art.
+      colors: [
+        colors.surface.withValues(alpha: .45),
+        colors.surface.withValues(alpha: 0),
+        colors.surface.withValues(alpha: 0),
+        colors.surface.withValues(alpha: light ? .95 : .75),
+        colors.surface,
+      ],
+      stops: light ? const [0, .25, .4, .65, .9] : const [0, .25, .4, .7, 1],
+    ),
+  );
+}
 
 /// The accent's soft glow, behind the main action and live progress.
 List<BoxShadow> accentGlow([double alpha = .35, double blur = 24]) => [
@@ -305,21 +435,25 @@ class Eyebrow extends StatelessWidget {
   final String label;
 
   @override
-  Widget build(BuildContext context) => Text(
-    label.toUpperCase(),
-    maxLines: 1,
-    overflow: TextOverflow.ellipsis,
-    // Often over artwork: heavier, and shadowed so bright art behind it can't swallow it.
-    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-      color: scheme.primary,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1.2,
-      shadows: const [
-        Shadow(color: Colors.black87, blurRadius: 8),
-        Shadow(color: Colors.black54, blurRadius: 2),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Text(
+      label.toUpperCase(),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+        color: colors.primary,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 1.2,
+        shadows: colors.brightness == Brightness.dark
+            ? const [
+                Shadow(color: Colors.black87, blurRadius: 8),
+                Shadow(color: Colors.black54, blurRadius: 2),
+              ]
+            : null,
+      ),
+    );
+  }
 }
 
 /// Fades and lifts its child in the first time it's built, [index] steps (of 40ms, up to 8) after the first, so
@@ -568,7 +702,7 @@ class ClearOfNav extends StatelessWidget {
   );
 }
 
-/// Every dialog: a solid panel like the sheets and the navigation, 32dp corners (its buttons sit 24dp in). Give
+/// Every dialog: a solid panel like the sheets and the navigation, 24dp corners. Give
 /// it a [title], [content] and [actions] like an AlertDialog, or a [child] to fill it.
 class PanelDialog extends StatelessWidget {
   const PanelDialog({
@@ -583,7 +717,7 @@ class PanelDialog extends StatelessWidget {
   final List<Widget> actions;
 
   static final shape = RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(nested(24)),
+    borderRadius: BorderRadius.circular(contentPanelRadius),
   );
 
   @override
@@ -772,13 +906,19 @@ class DestructiveTile extends StatelessWidget {
 /// Buttons have [buttonRadius]; a container holding one [padding] in from its edge gets [nested].
 const buttonRadius = radiusMedium;
 
+/// Shared outer corner for dialogs, sheets, and cards with deeply inset content.
+const contentPanelRadius = buttonRadius + 16;
+
+/// Track and fill thickness for episode progress throughout the app.
+const progressBarHeight = 4.0;
+
 /// Every button is this tall: text, icon, segmented and the main play action alike (and the navigation items).
 /// TV's are taller, so a two-line play button sits level with the rest of its row.
 double get buttonHeight => isTv ? 56 : 48;
 
-/// The corner scale. Small: badges and text placeholders. Medium: buttons, small thumbnails and stills. Large:
-/// posters, tiles, and cards without buttons in them. Chips, the navigation and the search field are pills; any
-/// container holding one of these takes its corner from [nested].
+/// The corner scale. Small: badges and placeholders. Medium: buttons, chips and small thumbnails. Large:
+/// posters and stills. Content cards, floating navigation and snackbars use [nested] with 8dp padding (16dp
+/// corners); dialogs and sheets use a larger nested corner.
 const radiusSmall = 4.0, radiusMedium = 8.0, radiusLarge = 12.0;
 double nested(double padding, [double inner = buttonRadius]) => inner + padding;
 
@@ -1042,12 +1182,16 @@ class Pill extends StatelessWidget {
             Icon(icon, size: 12, color: iconColor ?? scheme.primary),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: scheme.onSurface,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
             ),
           ),
         ],
@@ -1140,11 +1284,22 @@ class PosterCard extends StatelessWidget {
                   child: Pill(subtitle!),
                 ),
               ),
-            if (airing != null)
+            if (airing != null || (!isTv && line != null))
               Positioned(
                 left: 8,
+                right: 8,
                 bottom: 8,
-                child: Pill(airing, icon: Icons.schedule_rounded),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (airing != null)
+                      Pill(airing, icon: Icons.schedule_rounded),
+                    if (airing != null && !isTv && line != null)
+                      const SizedBox(height: 4),
+                    if (!isTv && line != null) Pill(line),
+                  ],
+                ),
               ),
             if (progress != null && total != null && total > 0)
               Positioned(
@@ -1152,7 +1307,7 @@ class PosterCard extends StatelessWidget {
                 right: 0,
                 bottom: 0,
                 child: Container(
-                  height: 3,
+                  height: progressBarHeight,
                   color: Colors.black54,
                   alignment: Alignment.centerLeft,
                   child: FractionallySizedBox(
@@ -1162,6 +1317,7 @@ class PosterCard extends StatelessWidget {
                         color: scheme.primary,
                         boxShadow: accentGlow(.8, 6),
                       ),
+                      child: const SizedBox(height: progressBarHeight),
                     ),
                   ),
                 ),
@@ -1213,13 +1369,6 @@ class PosterCard extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: text.bodyMedium?.copyWith(height: 1.25),
         ),
-        if (line != null)
-          Text(
-            line,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: text.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
       ],
     );
   }

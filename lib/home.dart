@@ -84,6 +84,18 @@ class _HomeScreenState extends State<HomeScreen>
   Future<List<Map>>? _scheduleLoad;
   Future<List<Map>> get schedule => _scheduleLoad ??= _schedule();
 
+  /// The popular, all-show schedule for the second Schedule tab.
+  Future<List<Map>>? _allScheduleLoad;
+  Future<List<Map>> get allSchedule =>
+      _allScheduleLoad ??= AniList.airingPopular().then(
+        (all) => [
+          for (final s in all)
+            if (!Settings.hideNsfw ||
+                !Show(s['media'] as Map).genres.contains('Ecchi'))
+              s,
+        ],
+      );
+
   /// When lists and airing were last fetched; see [_reloadLists].
   DateTime _fetched = DateTime.now();
 
@@ -109,13 +121,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<List<Map>> _schedule() async {
     if (!Tracker.signedIn) {
-      final all = await AniList.airingPopular();
-      return [
-        for (final s in all)
-          if (!Settings.hideNsfw ||
-              !Show(s['media'] as Map).genres.contains('Ecchi'))
-            s,
-      ];
+      return allSchedule;
     }
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -142,6 +148,16 @@ class _HomeScreenState extends State<HomeScreen>
     _airing = _loadAiring();
     released = _released();
     if (_scheduleLoad != null) _scheduleLoad = _schedule();
+    if (_allScheduleLoad != null) {
+      _allScheduleLoad = AniList.airingPopular().then(
+        (all) => [
+          for (final s in all)
+            if (!Settings.hideNsfw ||
+                !Show(s['media'] as Map).genres.contains('Ecchi'))
+              s,
+        ],
+      );
+    }
   }
 
   Future<List<int>> _followed(List<String> statuses) async {
@@ -290,6 +306,136 @@ class _HomeScreenState extends State<HomeScreen>
     await EpisodeNotifications.refresh([for (final r in recent) r.media]);
   }
 
+  Future<void> _showReleases() async {
+    setState(
+      () => Settings.releaseSeenAt =
+          DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    );
+    var inbox = released;
+    await showSheet<void>(
+      context,
+      height: .65,
+      (sheet) => StatefulBuilder(
+        builder: (sheet, refreshSheet) => SafeArea(
+          child: SizedBox(
+            height: isTv ? 480 : null,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 16, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Recent episodes',
+                          style: Theme.of(sheet).textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Refresh',
+                        onPressed: () {
+                          setState(() {
+                            history = WatchHistory.all();
+                            _fetchLists();
+                          });
+                          refreshSheet(() {
+                            inbox = released;
+                          });
+                        },
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: FutureBuilder(
+                    future: inbox,
+                    builder: (sheet, snap) {
+                      if (!snap.hasData && !snap.hasError) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snap.hasError) {
+                        return ErrorState(
+                          snap.error!,
+                          onRetry: () {
+                            setState(() {
+                              history = WatchHistory.all();
+                              _fetchLists();
+                            });
+                            refreshSheet(() => inbox = released);
+                          },
+                        );
+                      }
+                      final entries = snap.data ?? const <Map>[];
+                      if (entries.isEmpty) {
+                        return const EmptyState(
+                          icon: Icons.notifications_none_rounded,
+                          title: 'No new episodes this week',
+                          message: 'New releases from your shows appear here.',
+                        );
+                      }
+                      return ListView.builder(
+                        itemCount: entries.length,
+                        itemBuilder: (sheet, i) {
+                          final entry = entries[i];
+                          final media = entry['media'] as Map;
+                          return ListTile(
+                            title: Text(
+                              titleOf(media),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              'Episode ${entry['episode']} · ${_ago(entry['airingAt'] as int)}',
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () {
+                              Navigator.pop(sheet);
+                              openDetails(context, media, onBack: _reloadLists);
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget get _releaseBell => FutureBuilder(
+    future: released,
+    builder: (context, snap) {
+      final unseen = (snap.data ?? const <Map>[])
+          .where((e) => (e['airingAt'] as int) > Settings.releaseSeenAt)
+          .length;
+      return Badge(
+        isLabelVisible: unseen > 0,
+        label: Text('$unseen'),
+        child: IconButton(
+          tooltip: 'Recent episode releases',
+          onPressed: _showReleases,
+          icon: const Icon(Icons.notifications_none_rounded),
+        ),
+      );
+    },
+  );
+
+  Widget get _wordmark => Image.asset(
+    'assets/icon/aniview_wordmark.png',
+    width: 120,
+    height: 36,
+    fit: BoxFit.contain,
+    color: scheme.brightness == Brightness.light ? scheme.onSurface : null,
+    colorBlendMode: BlendMode.srcIn,
+    semanticLabel: 'AniView',
+    cacheWidth: 360,
+  );
+
   Future<void> _signIn() async {
     try {
       final name = await Tracker.signIn(context);
@@ -322,6 +468,7 @@ class _HomeScreenState extends State<HomeScreen>
     _Page.home => _HomeFeed(this),
     _Page.schedule => ScheduleScreen(
       schedule: schedule,
+      allSchedule: allSchedule,
       onRefresh: _refresh,
       onChanged: _reloadLists,
     ),
@@ -795,18 +942,15 @@ class _HomeFeed extends StatelessWidget {
                   loading: !snap.hasData && !snap.hasError,
                   error: snap.error,
                   onRetry: home._refresh,
+                  wordmark: home._wordmark,
+                  releaseBell: home._releaseBell,
                 ),
               )
             else
               SliverAppBar(
                 floating: true,
-                title: Text(
-                  'AniView',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: scheme.primary,
-                  ),
-                ),
+                title: home._wordmark,
+                actions: [home._releaseBell, const SizedBox(width: 16)],
               ),
             SliverList.list(children: rows),
             // Clear of the continue button.
@@ -1176,12 +1320,15 @@ class _Featured extends StatefulWidget {
     required this.items,
     required this.loading,
     required this.onRetry,
+    required this.wordmark,
+    required this.releaseBell,
     this.error,
   });
 
   final List items;
   final bool loading;
   final VoidCallback onRetry;
+  final Widget wordmark, releaseBell;
   final Object? error;
 
   @override
@@ -1233,11 +1380,9 @@ class _FeaturedState extends State<_Featured> {
             ),
           SafeArea(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(side, 8, side, 0),
-              child: Text(
-                'AniView',
-                style: Theme.of(context).textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
+              padding: EdgeInsets.fromLTRB(side, 8, side, side),
+              child: Row(
+                children: [widget.wordmark, const Spacer(), widget.releaseBell],
               ),
             ),
           ),
@@ -1505,9 +1650,9 @@ class _SignInCard extends StatelessWidget {
         child: Card.filled(
           margin: EdgeInsets.zero,
           color: scheme.surfaceContainerHigh,
-          // Its button, 16dp in.
+          // The same 16dp corner as the other content cards.
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(nested(16)),
+            borderRadius: BorderRadius.circular(nested(8)),
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -1638,9 +1783,9 @@ class _MeScreen extends StatelessWidget {
                 padding: EdgeInsets.symmetric(horizontal: side),
                 child: Card.filled(
                   margin: EdgeInsets.zero,
-                  // Its button, 16dp in.
+                  // Match the other content cards.
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(nested(16)),
+                    borderRadius: BorderRadius.circular(nested(8)),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(16),

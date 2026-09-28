@@ -325,7 +325,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await player.open(
       // HLS goes through the local proxy (it strips the fake image prefix some hosts put on segments); direct
       // files (mp4) are fetched with their headers.
-      stream.isLocal || !stream.isHls
+      stream.url.startsWith('saf://')
+          ? await HlsProxy.documentFile(stream.url)
+          : stream.isLocal || !stream.isHls
           ? stream.url
           : await HlsProxy.url(stream.url, stream.headers),
       headers: stream.isHls ? null : stream.headers,
@@ -358,8 +360,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<Duration?> _playExternal(VideoStream stream, {Duration? at}) async {
     setState(() => session.current = stream);
     // Other apps can't send the stream's headers or read app storage, so both go through the local proxy.
-    final dir = stream.isLocal ? File(stream.url).parent.path : null;
-    Future<String> address(String url) => dir != null
+    final dir = stream.isLocal && !stream.url.startsWith('saf://')
+        ? File(stream.url).parent.path
+        : null;
+    Future<String> address(String url) => url.startsWith('saf://')
+        ? HlsProxy.documentFile(url)
+        : dir != null
         ? HlsProxy.localFile(dir, url.split('/').last)
         : HlsProxy.url(
             url,
@@ -401,7 +407,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Subtitle hosts refuse requests without the stream's Referer, so they go through the proxy.
   Future<String> _subtitleUrl(VideoStream stream, Subtitle s) async =>
-      stream.isLocal
+      s.url.startsWith('saf://')
+      ? HlsProxy.documentFile(s.url)
+      : stream.isLocal
       ? s.url
       : HlsProxy.url(
           s.url,
@@ -904,7 +912,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       width: 340,
       child: Material(
         color: const Color(0xE6141218),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(nested(8)),
         clipBehavior: Clip.antiAlias,
         child: Row(
           children: [
@@ -1538,15 +1546,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 onPressed: () => setState(() => locked = true),
               ),
               _skipButton(position),
-              if (hasNext)
-                TextButton.icon(
-                  style: _onVideo(
-                    TextButton.styleFrom(foregroundColor: Colors.white),
-                  ),
-                  onPressed: () => _load(index + 1),
-                  icon: const Icon(Icons.skip_next_rounded),
-                  label: const Text('Next episode'),
-                ),
               const Spacer(),
               ?_serverButton(),
               _speedButton(),
@@ -1809,7 +1808,7 @@ class _EpisodeListState extends State<_EpisodeList> {
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                     onTap: () => widget.onSelect(i),
                     leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(radiusMedium),
                       child: SizedBox(
                         width: 112,
                         child: AspectRatio(

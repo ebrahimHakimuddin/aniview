@@ -8,8 +8,6 @@ import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const _success = Color(0xFF4ADE80);
-
 /// Turns exceptions into short messages people can act on.
 String friendlyError(Object error) => switch (error) {
   CloudflareChallenge() =>
@@ -56,7 +54,7 @@ Future<T?> showSheet<T>(
           final sheet = Panel(
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(
-                top: Radius.circular(nested(24)),
+                top: Radius.circular(contentPanelRadius),
               ),
             ),
             color: scheme.surfaceContainerLow,
@@ -88,30 +86,43 @@ Future<T?> showSheet<T>(
         },
       );
 
-void showSuccess(BuildContext context, String message) =>
-    _snack(context, message, Icons.check_circle_rounded, _success);
+void showSuccess(BuildContext context, String message) => _snack(
+  context,
+  message,
+  Icons.check_circle_rounded,
+  scheme.onInverseSurface,
+);
 
 void showError(BuildContext context, Object error) => _snack(
   context,
   friendlyError(error),
   Icons.error_rounded,
-  scheme.errorContainer,
+  scheme.onErrorContainer,
+  background: scheme.errorContainer,
 );
 
-void _snack(BuildContext context, String message, IconData icon, Color color) =>
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              Icon(icon, color: color == _success ? _success : scheme.error),
-              const SizedBox(width: 12),
-              Expanded(child: Text(message)),
-            ],
+void _snack(
+  BuildContext context,
+  String message,
+  IconData icon,
+  Color color, {
+  Color? background,
+}) => ScaffoldMessenger.of(context)
+  ..hideCurrentSnackBar()
+  ..showSnackBar(
+    SnackBar(
+      backgroundColor: background,
+      content: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(message, style: TextStyle(color: color)),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
 /// A placeholder block that pulses gently while content loads.
 class Skeleton extends StatefulWidget {

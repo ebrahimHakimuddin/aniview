@@ -29,13 +29,16 @@ Future<void> main() async {
 /// Bumped to rebuild the app from the top, as when the layout changes in settings.
 final appGeneration = ValueNotifier(0);
 
+/// Rebuilds MaterialApp's theme while keeping the current navigation route.
+final themeGeneration = ValueNotifier(0);
+
 class App extends StatelessWidget {
   const App({super.key});
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: appGeneration,
-    builder: (context, generation, _) => _app(ValueKey(generation)),
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([appGeneration, themeGeneration]),
+    builder: (context, _) => _app(ValueKey(appGeneration.value)),
   );
 
   Widget _app(Key key) => MaterialApp(
@@ -43,6 +46,8 @@ class App extends StatelessWidget {
     title: 'AniView',
     debugShowCheckedModeBanner: false,
     theme: buildTheme(),
+    // App-specific widgets read [scheme] directly, so every color must switch in the same frame.
+    themeAnimationDuration: Duration.zero,
     builder: isTv ? (context, child) => TvInput(child: child!) : null,
     home: const HomeScreen(),
   );

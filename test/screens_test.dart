@@ -33,6 +33,23 @@ void main() {
     expect(airingLabel({'nextAiringEpisode': null}), isNull);
   });
 
+  testWidgets('refreshing recent episodes keeps the inbox open', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
+
+    await tester.tap(find.byTooltip('Recent episode releases'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent episodes'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Refresh'));
+    await tester.pump();
+    expect(find.text('Recent episodes'), findsOneWidget);
+    expect(find.byTooltip('Refresh'), findsOneWidget);
+  });
+
   testWidgets(
     "TV home: the drawer only takes focus from the page's left edge",
     (tester) async {

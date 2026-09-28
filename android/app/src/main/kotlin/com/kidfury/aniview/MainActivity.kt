@@ -26,6 +26,8 @@ class MainActivity : FlutterActivity() {
     private var externalResult: MethodChannel.Result? = null
     private var tv: MethodChannel? = null
     private var voiceResult: MethodChannel.Result? = null
+    private var folderResult: MethodChannel.Result? = null
+
 
     /** A new-episode notification, or a show in the TV launcher's Continue watching row, opened while the app runs. */
     override fun onNewIntent(intent: Intent) {
@@ -92,6 +94,43 @@ class MainActivity : FlutterActivity() {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
                         result.success(null)
                     }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/folder")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "pick" -> {
+                        if (folderResult != null) return@setMethodCallHandler result.error("busy", "Folder picker is open", null)
+                        folderResult = result
+                        startActivityForResult(
+                            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                            ),
+                            FOLDER_REQUEST,
+                        )
+                    }
+                    "export", "read", "delete" -> Thread {
+                        try {
+                            val tree = call.argument<String>("tree")!!
+                            val id = call.argument<String>("id")!!
+                            val answer: Any? = when (call.method) {
+                                "export" -> {
+                                    DownloadFolder.export(this, tree, id, call.argument<String>("path")!!)
+                                    null
+                                }
+                                "read" -> DownloadFolder.read(this, tree, id, call.argument<String>("file")!!)
+                                else -> {
+                                    DownloadFolder.delete(this, tree, id)
+                                    null
+                                }
+                            }
+                            runOnUiThread { result.success(answer) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("folder", e.message ?: "Folder is unavailable", null) }
+                        }
+                    }.start()
                     else -> result.notImplemented()
                 }
             }
@@ -194,6 +233,18 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == FOLDER_REQUEST) {
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+                folderResult?.success(uri.toString())
+            } else folderResult?.success(null)
+            folderResult = null
+            return
+        }
         if (requestCode == VOICE_REQUEST) {
             voiceResult?.success(data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull())
             voiceResult = null
@@ -263,5 +314,6 @@ class MainActivity : FlutterActivity() {
         const val PROGRESS_ID = 1
         const val EXTERNAL_REQUEST = 1
         const val VOICE_REQUEST = 2
+        const val FOLDER_REQUEST = 3
     }
 }

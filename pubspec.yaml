@@ -26,3 +26,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/aniview_icon.png
+    - assets/icon/aniview_wordmark.png

@@ -31,6 +31,7 @@ class Download {
     this.error,
     this.subtitles = const [],
     this.skips = const [],
+    this.storageUri,
   });
 
   final Map media;
@@ -45,6 +46,7 @@ class Download {
   String? error;
   List<Subtitle> subtitles; // file names inside the download folder
   List<SkipTime> skips;
+  String? storageUri;
 
   String get id => '${media['id']}-${epNumber(number)}-${dub ? 'dub' : 'sub'}';
 
@@ -63,6 +65,7 @@ class Download {
     'progress': progress,
     'bytes': bytes,
     'error': error,
+    'storageUri': storageUri,
     'subtitles': [
       for (final s in subtitles) {'label': s.label, 'file': s.url},
     ],
@@ -90,6 +93,7 @@ class Download {
     progress: (json['progress'] as num? ?? 0).toDouble(),
     bytes: json['bytes'] ?? 0,
     error: json['error'],
+    storageUri: json['storageUri'],
     subtitles: [
       for (final s in json['subtitles'] as List? ?? const [])
         Subtitle(s['label'], s['file']),
@@ -205,7 +209,9 @@ class Downloads extends ChangeNotifier {
   }
 
   VideoStream streamFor(Download d) {
-    final dir = _dir(d).path;
+    final dir = d.storageUri == null
+        ? _dir(d).path
+        : 'saf://${Uri.encodeComponent(d.storageUri!)}/${d.id}';
     return VideoStream(
       'Downloaded',
       '$dir/index.m3u8',
@@ -295,7 +301,11 @@ class Downloads extends ChangeNotifier {
     _notify(save: true);
     await activeDone;
     try {
-      await _dir(d).delete(recursive: true);
+      if (d.storageUri case final tree?) {
+        await AndroidApp.deleteDownloadFolder(tree, d.id);
+      } else {
+        await _dir(d).delete(recursive: true);
+      }
     } catch (_) {} // nothing on disk yet
     if (!items.any((i) => i.media['id'] == d.media['id'])) {
       _seasonFile(d.media).delete().ignore();
@@ -305,9 +315,17 @@ class Downloads extends ChangeNotifier {
   Future<void> removeAll() async {
     final activeDone = _activeDone?.future;
     if (activeDone != null) _cancel = true;
+    final removed = [...items];
     items.clear();
     _notify(save: true);
     await activeDone;
+    for (final d in removed) {
+      if (d.storageUri case final tree?) {
+        try {
+          await AndroidApp.deleteDownloadFolder(tree, d.id);
+        } catch (_) {}
+      }
+    }
     for (final entity in await _root.list().toList()) {
       if (entity is Directory) await entity.delete(recursive: true);
     }
@@ -402,9 +420,18 @@ class Downloads extends ChangeNotifier {
       final community = await aniSkip(d.media['idMal'], d.number, length);
       d
         ..skips = community.isNotEmpty ? community : stream.skips
-        ..status = DownloadStatus.done
         ..progress = 1;
+      if (Settings.downloadFolder.isNotEmpty) {
+        await AndroidApp.exportDownloadFolder(
+          Settings.downloadFolder,
+          d.id,
+          dir.path,
+        );
+        d.storageUri = Settings.downloadFolder;
+      }
+      d.status = DownloadStatus.done;
       if (Settings.saveToGallery) note = await _saveToGallery(d, dir);
+      if (d.storageUri != null) await dir.delete(recursive: true);
     } catch (e) {
       if (_cancel) return; // removed while downloading
       d

@@ -12,6 +12,9 @@ val keyProperties = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 
+// `flutter build apk --android-project-arg=aniviewBeta=true` makes a second, installable app.
+val betaBuild = project.findProperty("aniviewBeta") == "true"
+
 android {
     namespace = "com.kidfury.aniview"
     compileSdk = flutter.compileSdkVersion
@@ -24,7 +27,8 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.kidfury.aniview"
+        applicationId = if (betaBuild) "com.kidfury.aniview.beta" else "com.kidfury.aniview"
+        manifestPlaceholders["appLabel"] = if (betaBuild) "AniView Beta" else "AniView"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -65,6 +69,7 @@ flutter {
 }
 
 dependencies {
+    implementation("androidx.documentfile:documentfile:1.1.0")
     // Playback, as CloudStream does it: ExoPlayer with HLS.
     val media3 = "1.8.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
