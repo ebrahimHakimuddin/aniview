@@ -79,6 +79,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// Whether the video was playing when a hold paused it, to play it again on release.
   bool heldPlaying = false;
 
+  /// Held for 2×: shows [_FastForward] until let go.
+  bool fastHeld = false;
+
   /// Fit, fill (crop) or stretch.
   BoxFit fit = Settings.videoFit;
 
@@ -771,11 +774,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         return;
                       }
                       player.setRate(2);
-                      _hint(
-                        '2× speed',
-                        icon: Icons.fast_forward_rounded,
-                        sticky: true,
-                      );
+                      setState(() => fastHeld = true);
                     },
               onLongPressEnd: hold == 'off'
                   ? null
@@ -784,6 +783,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         if (heldPlaying) player.play();
                       } else {
                         player.setRate(rate);
+                        setState(() => fastHeld = false);
                       }
                       _clearHint();
                     },
@@ -827,13 +827,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: CircularProgressIndicator(color: Colors.white),
                 ),
               ),
+            if (fastHeld)
+              const IgnorePointer(
+                child: Align(
+                  alignment: Alignment(0, -.85),
+                  child: _FastForward(),
+                ),
+              ),
             if (hint != null)
               IgnorePointer(
                 child: Align(
                   alignment: const Alignment(0, -.6),
                   child: DecoratedBox(
+                    // Dark in every theme: it sits on the video, and its text is white.
                     decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHigh,
+                      color: Colors.black.withValues(alpha: .7),
                       borderRadius: BorderRadius.circular(radiusLarge),
                     ),
                     child: Padding(
@@ -1970,6 +1978,74 @@ String _skipName(SkipType type) => switch (type) {
 
 /// A TV player control: an icon in a circle, ringed in the accent and a touch larger while focused, naming
 /// itself in [labels] (shown between the times) so the row needs no text of its own.
+/// Holding for 2×: "2×" and three chevrons lighting up in turn, left to right, for as long as the finger stays down.
+class _FastForward extends StatefulWidget {
+  const _FastForward();
+
+  @override
+  State<_FastForward> createState() => _FastForwardState();
+}
+
+class _FastForwardState extends State<_FastForward>
+    with SingleTickerProviderStateMixin {
+  late final wave = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    wave.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: .6),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 10, 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '2×',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 4),
+          AnimatedBuilder(
+            animation: wave,
+            builder: (context, _) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < 3; i++)
+                  Opacity(
+                    // Each chevron brightens as the wave reaches it, then fades.
+                    opacity: switch ((wave.value * 3 - i) % 3) {
+                      final phase when phase < 1 => 1 - phase * .7,
+                      _ => .3,
+                    },
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _TvControl extends StatefulWidget {
   const _TvControl({
     required this.icon,
