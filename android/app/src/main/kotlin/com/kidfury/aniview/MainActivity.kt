@@ -86,6 +86,10 @@ class MainActivity : FlutterActivity() {
                             Configuration.UI_MODE_TYPE_TELEVISION,
                     )
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
+                    // 0 is the three-button bar, 1 two-button, 2 gestures; phones from before the setting have buttons.
+                    "navigationMode" -> result.success(
+                        android.provider.Settings.Secure.getInt(contentResolver, "navigation_mode", 0),
+                    )
                     // The wallpaper accent Android 12+ themes its own apps from; null before Material You.
                     "accent" -> result.success(
                         if (Build.VERSION.SDK_INT >= 31) getColor(android.R.color.system_accent1_500) else null,

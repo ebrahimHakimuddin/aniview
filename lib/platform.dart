@@ -30,6 +30,15 @@ class AndroidApp {
   static Future<Object?> extensions(String method, [Map? args]) =>
       _extensions.invokeMethod(method, args);
 
+  /// Whether Android shows navigation buttons (three-button, or the old two-button) rather than gestures.
+  static Future<bool> buttonNavigation() async {
+    try {
+      return await _app.invokeMethod<int>('navigationMode') != 2;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Running on a TV (leanback UI mode); false off Android.
   static Future<bool> isTv() async {
     try {

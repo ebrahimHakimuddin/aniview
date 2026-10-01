@@ -14,6 +14,22 @@ import 'tv.dart';
 /// 16dp margins, 48dp touch targets), and on TV the Google TV rules: 48dp side / 24dp top and bottom overscan,
 /// cards that scale 1.1× with a border and glow when focused, and buttons that invert on focus.
 
+/// Android shows navigation buttons rather than gestures, read at startup.
+// ponytail: switching the navigation mode in Android's settings shows here on the next launch
+bool buttonNavigation = false;
+
+/// How pages move on Android. Flutter's predictive back animates the system's way for a back *gesture*, but falls back
+/// to fading both whole pages for a button press, re-painting every layer of each on every frame: a raster stall on
+/// busy pages like Home and Details. Phones with navigation buttons get the zoom, which snapshots a page into one
+/// image and moves that.
+PageTransitionsTheme get pageTransitions => PageTransitionsTheme(
+  builders: {
+    TargetPlatform.android: buttonNavigation
+        ? const ZoomPageTransitionsBuilder()
+        : const PredictiveBackPageTransitionsBuilder(),
+  },
+);
+
 /// The cyan of the play triangle in the app icon.
 const seed = Color(0xFF01C4FA);
 
@@ -132,11 +148,7 @@ ThemeData buildTheme() {
     splashFactory: InkRipple.splashFactory,
     splashColor: scheme.onSurface.withValues(alpha: .10),
     highlightColor: Colors.transparent,
-    pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
-      },
-    ),
+    pageTransitionsTheme: pageTransitions,
     appBarTheme: AppBarTheme(
       backgroundColor: scheme.surface,
       surfaceTintColor: Colors.transparent,
@@ -338,11 +350,7 @@ ThemeData _buildMaterialTheme() {
     materialTapTargetSize: MaterialTapTargetSize.padded,
     scaffoldBackgroundColor: colors.surface,
     focusColor: isTv ? colors.primary.withValues(alpha: .24) : null,
-    pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
-      },
-    ),
+    pageTransitionsTheme: pageTransitions,
     appBarTheme: AppBarTheme(
       backgroundColor: colors.surface,
       systemOverlayStyle: SystemUiOverlayStyle(
