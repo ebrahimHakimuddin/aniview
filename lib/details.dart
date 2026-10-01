@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -250,6 +252,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
   int? page;
   static const _pageSize = 50;
 
+  /// Phones: episodes picked for a bulk action, by number; null when not picking.
+  Map<num, Episode>? picked;
+
+  void _togglePick(Episode episode) {
+    final eps = picked ??= {};
+    eps.remove(episode.number) ?? (eps[episode.number] = episode);
+    selectionTick();
+    setState(() {
+      Settings.episodeTipSeen = true;
+      if (eps.isEmpty) picked = null;
+    });
+  }
+
   Map get media => widget.media;
 
   @override
@@ -361,6 +376,128 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
     action?.call();
   }
+
+  /// Phones, while picking episodes: download them, delete their downloads, or mark them (un)watched.
+  Widget _pickedActions() => ListenableBuilder(
+    listenable: Downloads.instance,
+    builder: (context, _) => FutureBuilder(
+      future: episodes,
+      builder: (context, snap) {
+        final season = snap.data ?? const <Episode>[];
+        final eps = picked!.values.toList();
+        final site = source;
+        final entries = [
+          for (final e in eps)
+            (e, Downloads.instance.entry(media, e.number, dub)),
+        ];
+        final toDownload = [
+          for (final (e, d) in entries)
+            if (d == null || d.status == DownloadStatus.failed) e,
+        ];
+        final downloaded = [
+          for (final (_, d) in entries)
+            if (d?.status == DownloadStatus.done) d!,
+        ];
+        final allWatched = eps.every(
+          (e) => EpisodePlan.isWatched(e, _progress),
+        );
+        void done() => setState(() => picked = null);
+        return Material(
+          color: scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(radiusLarge),
+          child: SizedBox(
+            height: buttonHeight + 8,
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Done',
+                  onPressed: done,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+                Expanded(
+                  child: Text(
+                    '${eps.length} selected',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                if (season.length > eps.length)
+                  TextButton(
+                    onPressed: () => setState(
+                      () => picked = {for (final e in season) e.number: e},
+                    ),
+                    child: const Text('All'),
+                  ),
+                if (site != null && toDownload.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Download ${toDownload.length}',
+                    icon: const Icon(Icons.download_rounded),
+                    onPressed: () {
+                      Downloads.instance.enqueue(
+                        media,
+                        site.name,
+                        toDownload,
+                        dub: dub,
+                        season: season,
+                      );
+                      showSuccess(
+                        context,
+                        'Downloading ${toDownload.length} ${dub ? 'dub' : 'sub'} episodes',
+                      );
+                      done();
+                    },
+                  ),
+                if (downloaded.isNotEmpty)
+                  IconButton(
+                    tooltip: 'Delete ${downloaded.length} downloads',
+                    color: scheme.error,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    onPressed: () async {
+                      final ok = await confirmDestructive(
+                        context,
+                        title: 'Delete ${downloaded.length} downloads?',
+                        message:
+                            '${formatBytes(downloaded.fold(0, (n, d) => n + d.bytes))} will be freed on this device.',
+                        action: 'Delete',
+                      );
+                      if (!ok) return;
+                      for (final d in downloaded) {
+                        await Downloads.instance.remove(d);
+                      }
+                      if (!mounted) return;
+                      showSuccess(this.context, 'Downloads deleted');
+                      done();
+                    },
+                  ),
+                if (Tracker.signedIn)
+                  IconButton(
+                    tooltip: allWatched
+                        ? 'Mark unwatched'
+                        : 'Mark watched up to here',
+                    icon: Icon(
+                      allWatched
+                          ? Icons.remove_done_rounded
+                          : Icons.done_all_rounded,
+                    ),
+                    onPressed: () {
+                      // Tracking is a count: unwatch from the earliest picked, or watch through the latest.
+                      _markWatched(
+                        allWatched
+                            ? eps
+                                  .map(EpisodePlan.progressUnwatching)
+                                  .reduce(min)
+                            : eps.map(EpisodePlan.progressWatching).reduce(max),
+                      );
+                      done();
+                    },
+                  ),
+                const SizedBox(width: 4),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
 
   /// Sets tracked progress to [progress] episodes; queued for later when offline and moving forward.
   Future<void> _markWatched(int progress) async {
@@ -722,165 +859,173 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final score = show.score;
     final description = plainText(show.description);
     final height = MediaQuery.sizeOf(context).height;
-    return Scaffold(
-      // Play sits in the thumb zone, always in reach while the episodes scroll.
-      // Floats over the episodes, which fade out under it, like the navigation pill.
-      extendBody: true,
-      bottomNavigationBar: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [scheme.surface.withValues(alpha: 0), scheme.surface],
-            stops: const [0, .45],
+    return PopScope(
+      canPop: picked == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => picked = null);
+      },
+      child: Scaffold(
+        // Play sits in the thumb zone, always in reach while the episodes scroll.
+        // Floats over the episodes, which fade out under it, like the navigation pill.
+        extendBody: true,
+        bottomNavigationBar: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [scheme.surface.withValues(alpha: 0), scheme.surface],
+              stops: const [0, .45],
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(side, 28, side, 12),
+              child: picked == null ? _playAction() : _pickedActions(),
+            ),
           ),
         ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(side, 28, side, 12),
-            child: _playAction(),
-          ),
-        ),
-      ),
-      body: CustomScrollView(
-        slivers: [
-          // Marquee: the cover as full-bleed key art, fading into the page under the title.
-          SliverAppBar(
-            pinned: true,
-            stretch: true,
-            expandedHeight: height * .5,
-            actions: [_moreMenu()],
-            flexibleSpace: FlexibleSpaceBar(
-              stretchModes: const [StretchMode.zoomBackground],
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Artwork(
-                    show.cover,
-                    color: show.color,
-                    alignment: const Alignment(0, -.4),
-                  ),
-                  DecoratedBox(decoration: keyArtFade),
-                  Positioned(
-                    left: side,
-                    right: side,
-                    bottom: 8,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_eyebrow case final eyebrow?) Eyebrow(eyebrow),
-                        const SizedBox(height: 8),
-                        Text(
-                          titleOf(media),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: text.headlineMedium?.copyWith(
-                            fontSize: 32,
-                            height: 1.05,
-                            letterSpacing: -.6,
+        body: CustomScrollView(
+          slivers: [
+            // Marquee: the cover as full-bleed key art, fading into the page under the title.
+            SliverAppBar(
+              pinned: true,
+              stretch: true,
+              expandedHeight: height * .5,
+              actions: [_moreMenu()],
+              flexibleSpace: FlexibleSpaceBar(
+                stretchModes: const [StretchMode.zoomBackground],
+                background: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Artwork(
+                      show.cover,
+                      color: show.color,
+                      alignment: const Alignment(0, -.4),
+                    ),
+                    DecoratedBox(decoration: keyArtFade),
+                    Positioned(
+                      left: side,
+                      right: side,
+                      bottom: 8,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_eyebrow case final eyebrow?) Eyebrow(eyebrow),
+                          const SizedBox(height: 8),
+                          Text(
+                            titleOf(media),
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: text.headlineMedium?.copyWith(
+                              fontSize: 32,
+                              height: 1.05,
+                              letterSpacing: -.6,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: EdgeInsets.symmetric(horizontal: side),
+              sliver: SliverList.list(
+                children: [
+                  const SizedBox(height: 8),
+                  Text(
+                    [
+                      mediaMeta(media, genres: 0),
+                      (media['status'] as String?)
+                          ?.replaceAll('_', ' ')
+                          .toLowerCase(),
+                    ].whereType<String>().join(' · '),
+                    style: text.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
                     ),
                   ),
+                  if (score != null || airing != null) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        if (score != null) Pill.score(score),
+                        if (airing != null)
+                          Pill('Next $airing', icon: Icons.schedule_rounded),
+                      ],
+                    ),
+                  ],
+                  if (Tracker.signedIn) ...[
+                    const SizedBox(height: 24),
+                    _ListEntry(
+                      progress: _progress,
+                      total: total,
+                      status: show.listStatus,
+                      onTap: _editEntry,
+                    ),
+                  ],
+                  if (description.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _about(description),
+                  ],
                 ],
               ),
             ),
-          ),
-          SliverPadding(
-            padding: EdgeInsets.symmetric(horizontal: side),
-            sliver: SliverList.list(
-              children: [
-                const SizedBox(height: 8),
-                Text(
-                  [
-                    mediaMeta(media, genres: 0),
-                    (media['status'] as String?)
-                        ?.replaceAll('_', ' ')
-                        .toLowerCase(),
-                  ].whereType<String>().join(' · '),
-                  style: text.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
+            // One row that scrolls sideways, edge to edge, however many genres there are.
+            if (show.genres.isNotEmpty)
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 56,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.fromLTRB(side, 12, side, 4),
+                    itemCount: show.genres.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, i) => _genre('${show.genres[i]}'),
                   ),
                 ),
-                if (score != null || airing != null) ...[
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      if (score != null) Pill.score(score),
-                      if (airing != null)
-                        Pill('Next $airing', icon: Icons.schedule_rounded),
-                    ],
-                  ),
-                ],
-                if (Tracker.signedIn) ...[
-                  const SizedBox(height: 24),
-                  _ListEntry(
-                    progress: _progress,
-                    total: total,
-                    status: show.listStatus,
-                    onTap: _editEntry,
-                  ),
-                ],
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _about(description),
-                ],
-              ],
+              ),
+            SliverToBoxAdapter(child: _related()),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(side, 24, side, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text('Episodes', style: text.titleLarge),
+                        ),
+                        _audio,
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Flexible(child: _sourceMenu()),
+                        if (source != null) ...[
+                          const SizedBox(width: 8),
+                          _wrongShow(),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-          // One row that scrolls sideways, edge to edge, however many genres there are.
-          if (show.genres.isNotEmpty)
+            _episodeList(),
+            // Clear of the floating play button.
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 56,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: EdgeInsets.fromLTRB(side, 12, side, 4),
-                  itemCount: show.genres.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) => _genre('${show.genres[i]}'),
-                ),
+                height: 112 + MediaQuery.viewPaddingOf(context).bottom,
               ),
             ),
-          SliverToBoxAdapter(child: _related()),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(side, 24, side, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: Text('Episodes', style: text.titleLarge)),
-                      _audio,
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Flexible(child: _sourceMenu()),
-                      if (source != null) ...[
-                        const SizedBox(width: 8),
-                        _wrongShow(),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-          _episodeList(),
-          // Clear of the floating play button.
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 112 + MediaQuery.viewPaddingOf(context).bottom,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1223,7 +1368,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '${isTv ? 'Hold OK on' : 'Long-press'} an episode to mark it watched or manage its download',
+                      isTv
+                          ? 'Hold OK on an episode to mark it watched or manage its download'
+                          : 'Long-press episodes to select them: download, delete or mark watched',
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
@@ -1288,14 +1435,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
   ) {
     final watched = plan.watched(episode);
     final saved = site != null || playable.contains(episode);
+    // Phones pick several to act on at once; TV keeps one episode's actions sheet.
+    final picking = picked != null && !isTv;
     return _EpisodeTile(
       episode,
       watched: watched,
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
-      onLongPress: () =>
-          _episodeActions(episode, watched: watched, site: site, season: list),
-      trailing: site == null
+      selected: picking ? picked!.containsKey(episode.number) : null,
+      onLongPress: isTv
+          ? () => _episodeActions(
+              episode,
+              watched: watched,
+              site: site,
+              season: list,
+            )
+          : () => _togglePick(episode),
+      trailing: picking
+          ? null
+          : site == null
           ? saved
                 ? Padding(
                     padding: const EdgeInsets.all(12),
@@ -1313,6 +1471,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               dub: dub,
             ),
       onTap: () async {
+        if (picking) return _togglePick(episode);
         if (!saved) {
           showError(
             context,
@@ -1727,10 +1886,14 @@ class _EpisodeTile extends StatelessWidget {
     this.resumedPart,
     this.onLongPress,
     this.trailing,
+    this.selected,
   });
 
   final Episode episode;
   final bool watched, upNext;
+
+  /// Picking several: whether this one is picked; null when not picking.
+  final bool? selected;
 
   /// How far into this episode the saved resume point is, 0–1.
   final double? resumedPart;
@@ -1796,57 +1959,79 @@ class _EpisodeTile extends StatelessWidget {
       );
     }
     final overview = episode.overview;
-    return InkWell(
-      onTap: onTap,
-      onLongPress: onLongPress == null
-          ? null
-          : () {
-              HapticFeedback.mediumImpact();
-              onLongPress!();
-            },
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(side, 8, trailing == null ? side : 4, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 128,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(radiusMedium),
-                child: AspectRatio(aspectRatio: 16 / 9, child: _still()),
+    final picked = selected;
+    return Material(
+      color: picked == true
+          ? scheme.secondaryContainer.withValues(alpha: .6)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress == null
+            ? null
+            : () {
+                HapticFeedback.mediumImpact();
+                onLongPress!();
+              },
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            side,
+            8,
+            trailing == null && picked == null ? side : 4,
+            8,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 128,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(radiusMedium),
+                  child: AspectRatio(aspectRatio: 16 / 9, child: _still()),
+                ),
               ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  title,
-                  if (name != null)
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodyMedium?.copyWith(
-                        color: watched
-                            ? scheme.onSurfaceVariant.withValues(alpha: .7)
-                            : scheme.onSurfaceVariant,
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    title,
+                    if (name != null)
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodyMedium?.copyWith(
+                          color: watched
+                              ? scheme.onSurfaceVariant.withValues(alpha: .7)
+                              : scheme.onSurfaceVariant,
+                        ),
                       ),
-                    ),
-                  if (overview != null)
-                    Text(
-                      overview,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant.withValues(alpha: .7),
+                    if (overview != null)
+                      Text(
+                        overview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant.withValues(alpha: .7),
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            ?trailing,
-          ],
+              if (picked != null)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Icon(
+                    picked
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: picked ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                )
+              else
+                ?trailing,
+            ],
+          ),
         ),
       ),
     );
