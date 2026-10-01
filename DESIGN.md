@@ -83,6 +83,18 @@ Use 4dp for small details, 8dp for controls, 12dp for art, 16dp for cards, and 2
 
 Buttons of the same role share height, corner shape, text style, and hover, pressed, focus, and disabled feedback. Custom buttons use the app's outlined and tonal treatments; Material themes use Material 3 component defaults. Cards use semantic container colors and the card radius. Inputs share filled surfaces, a visible focus outline, and inline error text. Selection controls use primary color plus an icon, border, or position cue. Dialogs and sheets use the platform Material transitions and keep actions visible when text is enlarged. Loading, empty, and error states use the shared skeleton, `EmptyState`, and `ErrorState` components.
 
+### Patterns
+
+- **Headers over art:** a pinned app bar may sit over key art. Put a surface-to-transparent scrim behind it (85% at the top) and use `onSurface` for its icons, not the dimmer default, so the logo and buttons stay readable in light and dark themes.
+- **Selection:** long-press starts picking; tapping then toggles. Picked posters and rows share the primary tint (22% on art, 12% on rows) and a primary check. The shared `SelectionBar` shows the count, Done, All and icon actions, with a progress line while a change saves. It sits on the page surface at the top of a list, or in a `Panel` where the main action floats at the bottom.
+- **Filters:** a choice among values is a dropdown chip that opens a picker. An on/off filter is a `SwitchListTile`, never a chip.
+- **Tabs:** `TabBar` under a page's header, with the primary indicator under the label and `labelLarge` text. The new tab's content fades in over 200ms.
+- **Row actions:** every action in a list row keeps its 48dp target. When a row needs two, stack them vertically in the trailing column rather than shrinking them.
+- **Loading:** grids load as poster skeletons, people and thread lists as skeleton rows (a round picture and two lines). A spinner only appears for loading more at the end of a list, or inside the button that started an action.
+- **Forms:** disable a submit button until there's something to submit, show the spinner in it while submitting, put a failure under the field it belongs to, and confirm success with a snackbar.
+- **Discussion:** comments show the avatar, name and age, then the text, with Like and Reply as full-size text buttons. Replies indent 8dp with a 2dp outline-variant rule, up to four levels. Spoilers stay hidden on a `surfaceContainerHighest` background until tapped.
+- **Naming:** name a feature for what the user already has. A phone that has never paired a TV offers to set one up; it says "TV remote" only once a TV is paired.
+
 ## Do's and Don'ts
 
 - Do use `Theme.of(context)` and semantic color roles for new UI.
