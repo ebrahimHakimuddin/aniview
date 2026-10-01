@@ -57,6 +57,55 @@ class MalCatalog implements Catalog {
       media['idMal'] == null ? const [] : MAL.relations(media['idMal']);
 }
 
+/// A list entry being edited: its status and episodes watched move together. Reaching the [total] episodes
+/// completes it; completing it counts them all.
+class EntryDraft {
+  EntryDraft({String? status, this.progress = 0, this.total})
+    : status = status ?? 'CURRENT';
+
+  String status;
+  int progress;
+
+  /// The show's episode count; null while unknown.
+  final int? total;
+
+  bool get canAdvance => total == null || progress < total!;
+
+  void setProgress(int value) {
+    progress = value.clamp(0, total ?? 9999);
+    if (progress == total) status = 'COMPLETED';
+  }
+
+  void setStatus(String value) {
+    status = value;
+    if (value == 'COMPLETED' && total != null) progress = total!;
+  }
+}
+
+/// The statuses of an AniList list entry, in the order they are offered.
+enum ListStatus {
+  current('CURRENT', 'Watching'),
+  planning('PLANNING', 'Planning'),
+  completed('COMPLETED', 'Completed'),
+  paused('PAUSED', 'Paused'),
+  dropped('DROPPED', 'Dropped'),
+  repeating('REPEATING', 'Rewatching');
+
+  const ListStatus(this.value, this.label);
+
+  /// AniList's name for it, which the show maps carry, and what the person reads.
+  final String value, label;
+
+  /// Every status's label, by its value.
+  static final labels = {for (final s in values) s.value: s.label};
+
+  /// The ones a show can be moved to: rewatching is something watching turns into.
+  static final movable = {
+    for (final s in values)
+      if (s != repeating) s.value: s.label,
+  };
+}
+
 /// What the player's automatic sync did with a watched episode.
 enum SyncResult { skipped, saved, queued }
 
@@ -79,7 +128,11 @@ class Tracker {
     return me?['name'] as String? ?? 'AniList user';
   }
 
-  static Future<void> signOut() => AniList.logout();
+  /// Signs out and drops saves still queued, so the next account never sends the last one's.
+  static Future<void> signOut() async {
+    await AniList.logout();
+    await (await SharedPreferences.getInstance()).remove(_pendingKey);
+  }
 
   /// Browsing asks [primary] (AniList) and falls back to [fallback] (MyAnimeList); replaced in tests.
   @visibleForTesting
@@ -139,13 +192,23 @@ class Tracker {
     return (filters.genres.contains('Ecchi') ? found : _safe(found), more);
   }
 
+  static bool _ecchi(Map media) =>
+      (media['genres'] as List? ?? const []).contains('Ecchi');
+
   /// Drops ecchi shows while [Settings.hideNsfw] is on.
   static List _safe(List shows) => !Settings.hideNsfw
       ? shows
       : [
           for (final m in shows)
-            if (!(m['genres'] as List? ?? const []).contains('Ecchi')) m,
+            if (!_ecchi(m)) m,
         ];
+
+  /// This week's episodes of the popular shows airing now (see [AniList.airingPopular]), without the ecchi ones
+  /// while [Settings.hideNsfw] is on.
+  static Future<List<Map>> airingPopular() async => [
+    for (final s in await AniList.airingPopular())
+      if (!Settings.hideNsfw || !_ecchi(s['media'] as Map)) s,
+  ];
 
   /// A show only MyAnimeList knows (no AniList id yet) asks it directly.
   static Future<List<(String, Map)>> relations(Map media) => media['id'] is! int
@@ -167,7 +230,7 @@ class Tracker {
 
   /// Saves progress to AniList, or queues it on-device for [syncPending] when AniList can't take it
   /// (down, or you're offline). Returns false when it was queued. [forwardOnly] (the player's
-  /// automatic sync) never lowers AniList's progress.
+  /// automatic sync) never lowers AniList's progress. A [status] of COMPLETED counts every episode watched.
   static Future<bool> save(
     Map media,
     int progress, {
@@ -175,6 +238,7 @@ class Tracker {
     bool forwardOnly = false,
   }) async {
     status ??= statusFor(media, progress);
+    if (status == 'COMPLETED') progress = media['episodes'] as int? ?? progress;
     final job = {
       'media': media,
       'progress': progress,
@@ -248,6 +312,7 @@ class Tracker {
   static Future<void> removeFromList(Map media) async {
     await resolveIds(media);
     if (media['id'] is int) await AniList.removeFromList(media['id']);
+    media['mediaListEntry'] = null;
   }
 
   static const _pendingKey = 'anilist_pending';
@@ -273,6 +338,8 @@ class Tracker {
     final prefs = await SharedPreferences.getInstance();
     final sent = <String, String>{};
     for (final MapEntry(:key, :value) in _pending(prefs).entries) {
+      // Signed out (or the token just expired): keep the rest for when you sign in again.
+      if (!signedIn) break;
       if (await _push(value)) sent[key] = jsonEncode(value);
     }
     // Re-read: a save queued while this ran must not be overwritten.

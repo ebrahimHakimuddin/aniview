@@ -216,15 +216,6 @@ class _PlayActionState extends State<PlayAction> {
   }
 }
 
-const _listLabels = {
-  'CURRENT': 'Watching',
-  'PLANNING': 'Planning',
-  'COMPLETED': 'Completed',
-  'PAUSED': 'Paused',
-  'DROPPED': 'Dropped',
-  'REPEATING': 'Rewatching',
-};
-
 /// A show: its art and details, the main play action, your AniList entry, and its episodes on the chosen site.
 class DetailsScreen extends StatefulWidget {
   const DetailsScreen(this.media, {super.key, this.autoplay = false});
@@ -517,11 +508,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     onPressed: () {
                       // Tracking is a count: unwatch from the earliest picked, or watch through the latest.
                       _markWatched(
-                        allWatched
-                            ? eps
-                                  .map(EpisodePlan.progressUnwatching)
-                                  .reduce(min)
-                            : eps.map(EpisodePlan.progressWatching).reduce(max),
+                        EpisodePlan.progressAfter(eps, unwatch: allWatched),
                       );
                       done();
                     },
@@ -602,7 +589,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
     try {
       if (result.remove) {
         await Tracker.removeFromList(media);
-        media['mediaListEntry'] = null;
         if (mounted) showSuccess(context, 'Removed from your list');
       } else {
         final synced = await Tracker.save(
@@ -614,7 +600,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           showSuccess(
             context,
             synced
-                ? 'Saved as ${_listLabels[result.status]} · ${result.progress} watched'
+                ? 'Saved as ${ListStatus.labels[result.status]} · ${result.progress} watched'
                 : 'Saved · syncs next time you open the app',
           );
         }
@@ -792,7 +778,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final list = snap.data, site = source;
         final hasEpisodes = list != null && list.isNotEmpty;
         return MoreMenu(title: titleOf(media), [
-          if (tvConnected && !isTv && media['id'] is int)
+          if (tvConnected && !isTv && show.onAniList)
             (
               icon: Icons.cast_rounded,
               label: 'Play on ${TvRemote.name ?? 'TV'}',
@@ -810,9 +796,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             (
               icon: Icons.done_all_rounded,
               label: 'Mark season watched',
-              onTap: () => _markWatched(
-                list.fold(0, (n, e) => e.number > n ? e.number.toInt() : n),
-              ),
+              onTap: () => _markWatched(EpisodePlan.progressAfter(list)),
               destructive: false,
             ),
         ]);
@@ -830,14 +814,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
   }
 
-  bool _newestFirst(WatchRecord? saved) =>
-      newestFirstPicked ??
-      EpisodePlan.newestFirstFor(
-        media,
-        preferred: Settings.newestFirst,
-        progress: _progress,
-        watchedHere: saved != null,
-      );
+  bool _newestFirst(WatchRecord? saved) => EpisodePlan.newestFirstFor(
+    media,
+    preferred: Settings.newestFirst,
+    progress: _progress,
+    watchedHere: saved != null,
+    picked: newestFirstPicked,
+  );
 
   Widget _orderButton(bool newestFirst) => TextButton.icon(
     onPressed: () => setState(() {
@@ -1088,7 +1071,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             // The tabs lead the section (shows AniList knows get its social side); what the episodes come from (site,
             // audio) sits inside the Episodes tab, as it's about them alone.
             SliverToBoxAdapter(
-              child: media['id'] is int
+              child: show.onAniList
                   ? Padding(
                       padding: const EdgeInsets.only(top: 16),
                       child: DefaultTabController(
@@ -1292,7 +1275,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                         : Icons.bookmark_rounded,
                                   ),
                                   label: Text(
-                                    '${_listLabels[show.listStatus] ?? 'Add to list'} · $_progress/${total ?? '?'}',
+                                    '${ListStatus.labels[show.listStatus] ?? 'Add to list'} · $_progress/${total ?? '?'}',
                                   ),
                                 ),
                               _moreMenu(),
@@ -1406,19 +1389,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// [site] is null offline, when only downloaded episodes play. Shown [_pageSize] at a time; the player always
   /// gets them in order.
   Widget _episodeSliver(List<Episode> list, Source? site) {
-    final playable = site != null
-        ? list
-        : [
-            for (final e in list)
-              if (Downloads.instance.toPlay(
-                    media,
-                    e.number,
-                    dub: dub,
-                    online: false,
-                  ) !=
-                  null)
-                e,
-          ];
+    final playable = EpisodePlan.playable(
+      list,
+      online: site != null,
+      downloaded: (e) =>
+          Downloads.instance.toPlay(media, e.number, dub: dub, online: false) !=
+          null,
+    );
     return FutureBuilder(
       future: record,
       builder: (context, saved) {
@@ -1600,15 +1577,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
           );
           return;
         }
+        final start = EpisodePlan.startAt(
+          episode,
+          playable,
+          site: site?.name,
+          downloadedFrom: Downloads.instance
+              .forMedia(media)
+              .firstOrNull
+              ?.source,
+        );
         await _openPlayer(
           context,
           media: media,
           source: site,
-          sourceName:
-              site?.name ??
-              Downloads.instance.forMedia(media).firstOrNull?.source,
+          sourceName: start.sourceName,
           episodes: playable,
-          index: playable.indexOf(episode),
+          index: start.index,
           dub: dub,
         );
         _reloadRecord(); // progress and resume point changed
@@ -1660,7 +1644,7 @@ class _ListEntry extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      _listLabels[status] ?? 'Add to your list',
+                      ListStatus.labels[status] ?? 'Add to your list',
                       style: text.titleSmall,
                     ),
                   ),
@@ -1727,23 +1711,21 @@ class _EntrySheet extends StatefulWidget {
 }
 
 class _EntrySheetState extends State<_EntrySheet> {
-  late String status = widget.status ?? 'CURRENT';
-  late int progress = widget.progress;
-
-  void _setProgress(int value) => setState(() {
-    progress = value.clamp(0, widget.total ?? 9999);
-    if (progress == widget.total) status = 'COMPLETED';
-  });
+  late final draft = EntryDraft(
+    status: widget.status,
+    progress: widget.progress,
+    total: widget.total,
+  );
 
   void _done({bool remove = false}) => Navigator.pop(context, (
-    status: status,
-    progress: progress,
+    status: draft.status,
+    progress: draft.progress,
     remove: remove,
   ));
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.total;
+    final total = draft.total, progress = draft.progress;
     final text = Theme.of(context).textTheme;
     return SafeArea(
       child: Padding(
@@ -1761,14 +1743,11 @@ class _EntrySheetState extends State<_EntrySheet> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final MapEntry(:key, :value) in _listLabels.entries)
+                for (final MapEntry(:key, :value) in ListStatus.labels.entries)
                   ChoiceChip(
                     label: Text(value),
-                    selected: status == key,
-                    onSelected: (_) => setState(() {
-                      status = key;
-                      if (key == 'COMPLETED' && total != null) progress = total;
-                    }),
+                    selected: draft.status == key,
+                    onSelected: (_) => setState(() => draft.setStatus(key)),
                   ),
               ],
             ),
@@ -1782,7 +1761,7 @@ class _EntrySheetState extends State<_EntrySheet> {
                   tooltip: 'One fewer',
                   icon: const Icon(Icons.remove_rounded),
                   onPressed: progress > 0
-                      ? () => _setProgress(progress - 1)
+                      ? () => setState(() => draft.setProgress(progress - 1))
                       : null,
                 ),
                 SizedBox(
@@ -1796,8 +1775,8 @@ class _EntrySheetState extends State<_EntrySheet> {
                 IconButton.filledTonal(
                   tooltip: 'One more',
                   icon: const Icon(Icons.add_rounded),
-                  onPressed: total == null || progress < total
-                      ? () => _setProgress(progress + 1)
+                  onPressed: draft.canAdvance
+                      ? () => setState(() => draft.setProgress(progress + 1))
                       : null,
                 ),
               ],
@@ -2387,22 +2366,11 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
   late final sorted = [...widget.episodes]
     ..sort((a, b) => a.number.compareTo(b.number));
   late final from = TextEditingController(
-    text: epNumber(
-      (sorted.where((e) => e.number > widget.progress).firstOrNull ??
-              sorted.first)
-          .number,
-    ),
+    text: epNumber(EpisodePlan.rangeStart(sorted, widget.progress).number),
   );
   late final to = TextEditingController(text: epNumber(sorted.last.number));
 
-  List<Episode> get picked {
-    final a = num.tryParse(from.text), b = num.tryParse(to.text);
-    if (a == null || b == null) return const [];
-    return [
-      for (final e in sorted)
-        if (e.number >= a && e.number <= b) e,
-    ];
-  }
+  List<Episode> get picked => EpisodePlan.rangeOf(sorted, from.text, to.text);
 
   @override
   void dispose() {

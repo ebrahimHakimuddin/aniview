@@ -26,7 +26,7 @@ class EpisodeNotifications {
           'enabled': Settings.episodeNotifications,
           'ids': {
             for (final m in recent)
-              if (m['id'] is int) m['id'],
+              if (Show(m).onAniList) m['id'],
           }.toList(),
           'token': token,
           'user': me?['id'],

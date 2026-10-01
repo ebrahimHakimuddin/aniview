@@ -329,9 +329,13 @@ class TvRemote {
   static Future<void> play(Map media) async {
     final tv = _tv;
     if (tv == null) throw Exception('No TV is paired');
+    final id = Show(media).anilistId;
+    if (id == null) {
+      throw Exception("This show isn't on AniList, so the TV can't find it");
+    }
     final http.Response res;
     try {
-      res = await post(tv, {'play': media['id'] as int});
+      res = await post(tv, {'play': id});
     } catch (_) {
       connected.value = false;
       throw Exception("Can't reach ${tv['name']}. Is AniView open on it?");

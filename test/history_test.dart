@@ -32,32 +32,36 @@ void main() {
   });
 
   test(
-    'keeps the spot mid-episode and moves on once it counts as watched',
+    'a show saved before its AniList id was known is still found after',
     () async {
-      final episodes = _episodes(3);
-
-      await _play(episodes, 0, const Duration(seconds: 3));
-      expect(await WatchHistory.of(_show), isNull); // too early to count
-
-      await _play(episodes, 0, _min * 10);
-      var record = (await WatchHistory.of(_show))!;
-      expect(record.episode, 1);
-      expect(record.position, _min * 10);
-
-      await _play(episodes, 0, _min * 21); // past 85%
-      record = (await WatchHistory.of(_show))!;
-      expect(record.episode, 2);
-      expect(record.position, Duration.zero);
-
-      await _play(episodes, 2, _min * 23); // finished the last one
-      expect(await WatchHistory.of(_show), isNull);
+      final before = {
+        'id': 'mal:1001',
+        'idMal': 1001,
+        'title': {'userPreferred': 'Show'},
+      };
+      await WatchHistory.played(
+        before,
+        source: 'Site',
+        episodes: _episodes(3),
+        index: 0,
+        position: _min * 10,
+        duration: _min * 24,
+        dub: false,
+      );
+      final after = {...before, 'id': 1}; // ani.zip answered
+      expect((await WatchHistory.of(after))?.episode, 1);
+      await WatchHistory.played(
+        after,
+        source: 'Site',
+        episodes: _episodes(3),
+        index: 0,
+        position: _min * 12,
+        duration: _min * 24,
+        dub: false,
+      );
+      expect(await WatchHistory.all(), hasLength(1)); // replaced, not split
     },
   );
-
-  test('a read right after a save sees it, as when the player pops', () async {
-    _play(_episodes(3), 1, _min * 5).ignore(); // the player doesn't wait
-    expect((await WatchHistory.of(_show))!.episode, 2);
-  });
 
   test('plans pages around the next unwatched episode', () {
     final episodes = _episodes(120);
@@ -148,6 +152,89 @@ void main() {
         preferred: false,
         progress: 3,
         watchedHere: true,
+      ),
+      isFalse,
+    );
+  });
+
+  test('offline, only episodes downloaded in either audio play', () {
+    final episodes = _episodes(4);
+    final dubbed = {2}, subbed = {4};
+    bool downloaded(Episode e) =>
+        dubbed.contains(e.number) || subbed.contains(e.number);
+    final offline = EpisodePlan.playable(
+      episodes,
+      online: false,
+      downloaded: downloaded,
+    );
+    expect(offline.map((e) => e.number), [2, 4]);
+    expect(
+      EpisodePlan.playable(episodes, online: true, downloaded: (_) => false),
+      episodes,
+    );
+
+    final start = EpisodePlan.startAt(
+      episodes[3],
+      offline,
+      downloadedFrom: 'Site',
+    );
+    expect((start.index, start.sourceName), (1, 'Site'));
+    expect(
+      EpisodePlan.startAt(episodes[0], episodes, site: 'Live').sourceName,
+      'Live',
+    );
+  });
+
+  test('tracked progress after picking episodes, .5 episodes included', () {
+    List<Episode> eps(List<num> numbers) => [
+      for (final n in numbers) Episode(n, ref: '$n'),
+    ];
+    final picked = eps([5, 6.5, 7]);
+    expect(EpisodePlan.progressAfter(picked), 7); // through the latest
+    expect(EpisodePlan.progressAfter(eps([6, 6.5])), 6); // 6.5 isn't 7
+    expect(EpisodePlan.progressAfter(picked, unwatch: true), 4); // before 5
+    expect(EpisodePlan.progressAfter(eps([6.5, 8]), unwatch: true), 6);
+    expect(EpisodePlan.progressAfter(eps([1, 2, 12.5])), 12); // season end
+    expect(EpisodePlan.progressAfter(const []), 0);
+  });
+
+  test('a download range starts at the first unwatched episode', () {
+    final episodes = _episodes(12);
+    expect(EpisodePlan.rangeStart(episodes, 4).number, 5);
+    expect(EpisodePlan.rangeStart(episodes, 0).number, 1);
+    expect(EpisodePlan.rangeStart(episodes, 12).number, 1); // all watched
+
+    expect(EpisodePlan.rangeOf(episodes, '3', '5').map((e) => e.number), [
+      3,
+      4,
+      5,
+    ]);
+    expect(EpisodePlan.rangeOf(episodes, '11.5', '99').length, 1);
+    expect(EpisodePlan.rangeOf(episodes, '', '5'), isEmpty);
+    expect(EpisodePlan.rangeOf(episodes, '5', '3'), isEmpty);
+  });
+
+  test('newest first flips rows and the scroll offset, one row of context', () {
+    expect(EpisodePlan.rowFor(0, 100, false), 0);
+    expect(EpisodePlan.rowFor(0, 100, true), 99);
+    expect(EpisodePlan.offsetFor(10, 100, false, 88), 9 * 88);
+    expect(EpisodePlan.offsetFor(10, 100, true, 88), 88 * 88); // row 89
+    expect(EpisodePlan.offsetFor(0, 100, false, 88), 0); // never above the top
+
+    final episodes = _episodes(60);
+    expect(EpisodePlan.indexOfNumber(episodes, ' 7 '), 6);
+    expect(EpisodePlan.indexOfNumber(episodes, '999'), 59); // the last
+    expect(EpisodePlan.indexOfNumber(episodes, 'x'), isNull);
+  });
+
+  test('an order picked on the page beats the preferred one', () {
+    expect(
+      EpisodePlan.newestFirstFor(
+        {'status': 'RELEASING'},
+        preferred: true,
+        progress: 0,
+        watchedHere: false,
+        picked: false,
       ),
       isFalse,
     );

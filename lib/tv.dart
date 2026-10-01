@@ -172,7 +172,7 @@ Future<void> syncWatchNext(List<WatchRecord> history) async {
   try {
     await _tv.invokeMethod('watchNext', [
       for (final (i, r) in history.take(10).indexed)
-        if (r.show.id is int)
+        if (r.show.onAniList)
           {
             'id': r.show.id,
             'title': r.show.title,

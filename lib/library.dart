@@ -44,30 +44,7 @@ class _Headline extends StatelessWidget {
 
 // ───────────────────────────── My list ─────────────────────────────
 
-const _statuses = {
-  'CURRENT': 'Watching',
-  'PLANNING': 'Planning',
-  'COMPLETED': 'Completed',
-  'PAUSED': 'Paused',
-  'DROPPED': 'Dropped',
-};
-
-/// Runs [change] on each of [shows], one at a time (AniList allows 30 requests a minute); returns how many
-/// weren't saved (queued for later, or failed).
-Future<int> _forEach(
-  Iterable<Map> shows,
-  Future<bool> Function(Map media) change,
-) async {
-  var failed = 0;
-  for (final media in shows) {
-    try {
-      if (!await change(media)) failed++;
-    } catch (_) {
-      failed++;
-    }
-  }
-  return failed;
-}
+final _statuses = ListStatus.movable;
 
 /// Moves [media] to list [status] on AniList; completed counts every episode watched.
 Future<bool> _moveTo(Map media, String status) {
@@ -1144,13 +1121,14 @@ int activityStreak(Set<DateTime> active, DateTime today) {
   return streak;
 }
 
-const _statusOrder = {
-  'COMPLETED': 'Completed',
-  'CURRENT': 'Watching',
-  'PLANNING': 'Planning',
-  'PAUSED': 'Paused',
-  'DROPPED': 'Dropped',
-};
+/// The statuses in the stats ring, clockwise from the top.
+const _statusOrder = [
+  ListStatus.completed,
+  ListStatus.current,
+  ListStatus.planning,
+  ListStatus.paused,
+  ListStatus.dropped,
+];
 
 /// Your AniList totals: time spent watching, your list by status as a ring, and the last 20 weeks of activity.
 class StatsView extends StatelessWidget {
@@ -1258,8 +1236,8 @@ class StatsView extends StatelessWidget {
       scheme.surfaceContainerHighest,
     ];
     final slices = [
-      for (final (i, MapEntry(:key, :value)) in _statusOrder.entries.indexed)
-        (value, counts[key] ?? 0, colors[i]),
+      for (final (i, status) in _statusOrder.indexed)
+        (status.label, counts[status.value] ?? 0, colors[i]),
     ];
     final total = slices.fold(0, (n, s) => n + s.$2);
     return Row(

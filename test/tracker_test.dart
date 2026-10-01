@@ -61,6 +61,213 @@ void main() {
     },
   );
 
+  group('with AniList answering', () {
+    final sent = <Map>[];
+    late Map<String, dynamic> remote;
+
+    Future<Map<String, dynamic>> answer(
+      String query,
+      Map<String, dynamic> v,
+    ) async {
+      if (query.contains('mutation(\$m')) {
+        sent.add(v);
+        return {'SaveMediaListEntry': <String, dynamic>{}};
+      }
+      return {
+        'Media': {'mediaListEntry': remote},
+      };
+    }
+
+    setUp(() {
+      sent.clear();
+      remote = {'progress': 0};
+      AniList.token = 'signed in';
+      AniList.transport = answer;
+    });
+    tearDown(() {
+      AniList.transport = null;
+      AniList.token = null;
+    });
+
+    test('saves, and completing counts every episode', () async {
+      SharedPreferences.setMockInitialValues({});
+      final show = _show(1);
+      expect(await Tracker.save(show, 3), isTrue);
+      expect(sent.single, {'m': 1, 's': 'CURRENT', 'p': 3});
+
+      sent.clear();
+      expect(await Tracker.save(show, 3, status: 'COMPLETED'), isTrue);
+      expect(sent.single, {'m': 1, 's': 'COMPLETED', 'p': 12});
+      expect(show['mediaListEntry'], {'progress': 12, 'status': 'COMPLETED'});
+    });
+
+    test('a forward-only save never lowers AniList\'s progress', () async {
+      SharedPreferences.setMockInitialValues({});
+      remote = {'progress': 8};
+      final show = _show(2)..['mediaListEntry'] = null;
+      expect(await Tracker.save(show, 5, forwardOnly: true), isTrue);
+      expect(sent, isEmpty);
+    });
+
+    test('queued saves go out once AniList answers', () async {
+      SharedPreferences.setMockInitialValues({});
+      AniList.transport = (_, _) async => throw Exception('down');
+      expect(await Tracker.save(_show(3), 4), isFalse);
+
+      AniList.transport = answer;
+      expect(await Tracker.syncPending(), 1);
+      expect(sent.single, {'m': 3, 's': 'CURRENT', 'p': 4});
+    });
+
+    test(
+      'queued saves wait while signed out, and sign-out drops them',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        AniList.transport = (_, _) async => throw Exception('down');
+        await Tracker.save(_show(4), 2);
+
+        AniList.token = null; // e.g. the token expired
+        expect(await Tracker.syncPending(), 0);
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('anilist_pending'), contains('"4"'));
+
+        await Tracker.signOut();
+        expect(prefs.getString('anilist_pending'), isNull);
+      },
+    );
+
+    test('removing a show clears its list entry', () async {
+      SharedPreferences.setMockInitialValues({});
+      final show = _show(5);
+      await Tracker.removeFromList(show);
+      expect(show['mediaListEntry'], isNull);
+    });
+  });
+
+  test('an entry draft completes at the last episode and counts them all', () {
+    final draft = EntryDraft(status: 'PLANNING', total: 12);
+    draft.setProgress(5);
+    expect((draft.status, draft.progress), ('PLANNING', 5));
+    draft.setProgress(99); // clamped to the total, which completes it
+    expect((draft.status, draft.progress), ('COMPLETED', 12));
+    expect(draft.canAdvance, isFalse);
+    draft.setProgress(-3);
+    expect(draft.progress, 0);
+
+    draft.setStatus('COMPLETED');
+    expect(draft.progress, 12);
+    draft.setStatus('DROPPED'); // keeps the count
+    expect((draft.status, draft.progress), ('DROPPED', 12));
+  });
+
+  test('an entry draft without a known total never completes by counting', () {
+    final draft = EntryDraft();
+    expect(draft.status, 'CURRENT');
+    draft.setProgress(500);
+    expect((draft.status, draft.progress), ('CURRENT', 500));
+    expect(draft.canAdvance, isTrue);
+    draft.setProgress(20000);
+    expect(draft.progress, 9999);
+    draft.setStatus('COMPLETED'); // nothing to count to
+    expect(draft.progress, 9999);
+  });
+
+  test('the popular schedule drops ecchi shows while NSFW is hidden', () async {
+    final at = DateTime.now().add(const Duration(hours: 2));
+    Map media(int id, List genres) => {
+      'id': id,
+      'genres': genres,
+      'airingSchedule': {
+        'nodes': [
+          {'episode': 1, 'airingAt': at.millisecondsSinceEpoch ~/ 1000},
+        ],
+      },
+    };
+    AniList.transport = (_, _) async => {
+      'Page': {
+        'pageInfo': {'hasNextPage': false},
+        'media': [
+          media(1, ['Action']),
+          media(2, ['Ecchi']),
+        ],
+      },
+    };
+    addTearDown(() => AniList.transport = null);
+
+    SharedPreferences.setMockInitialValues({'hide_nsfw': true});
+    await Settings.load();
+    expect(
+      [for (final s in await Tracker.airingPopular()) s['media']['id']],
+      [1],
+    );
+
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    expect((await Tracker.airingPopular()).length, 2);
+  });
+
+  test('list statuses label AniList values; rewatching is not a move', () {
+    expect(ListStatus.labels['REPEATING'], 'Rewatching');
+    expect(ListStatus.labels.length, 6);
+    expect(ListStatus.movable.keys, [
+      'CURRENT',
+      'PLANNING',
+      'COMPLETED',
+      'PAUSED',
+      'DROPPED',
+    ]);
+    expect(ListStatus.movable['CURRENT'], 'Watching');
+  });
+
+  test(
+    'counts statuses from the list when AniList\'s breakdown is empty',
+    () async {
+      AniList.token = 'signed in';
+      addTearDown(() {
+        AniList.transport = null;
+        AniList.token = null;
+      });
+      AniList.transport = (query, variables) async {
+        if (query.contains('MediaListCollection')) {
+          expect(variables['u'], 7);
+          return {
+            'MediaListCollection': {
+              'lists': [
+                {
+                  'status': 'COMPLETED',
+                  'isCustomList': false,
+                  'entries': [
+                    {'id': 1},
+                    {'id': 2},
+                  ],
+                },
+                {
+                  'status': null,
+                  'isCustomList': true,
+                  'entries': [
+                    {'id': 1},
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          'Viewer': {
+            'id': 7,
+            'statistics': {
+              'anime': {'count': 2, 'statuses': []},
+            },
+          },
+        };
+      };
+      final stats = (await AniList.stats())!;
+      expect(stats['statistics']['anime']['statuses'], [
+        {'status': 'COMPLETED', 'count': 2},
+      ]);
+    },
+  );
+
   group('browsing', () {
     setUp(() async {
       SharedPreferences.setMockInitialValues({'hide_nsfw': true});

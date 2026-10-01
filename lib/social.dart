@@ -596,15 +596,6 @@ class FriendsList extends StatefulWidget {
 class _FriendsListState extends State<FriendsList> {
   late Future<List> entries = AniList.following(widget.media['id']);
 
-  static const _statuses = {
-    'CURRENT': 'Watching',
-    'REPEATING': 'Rewatching',
-    'PLANNING': 'Planning',
-    'COMPLETED': 'Completed',
-    'PAUSED': 'Paused',
-    'DROPPED': 'Dropped',
-  };
-
   @override
   Widget build(BuildContext context) {
     if (!Tracker.signedIn) {
@@ -663,7 +654,7 @@ class _FriendsListState extends State<FriendsList> {
               title: Text(user['name'] as String? ?? 'Someone'),
               subtitle: Text(
                 [
-                  _statuses[status] ?? 'On their list',
+                  ListStatus.labels[status] ?? 'On their list',
                   if (progress > 0 && status != 'COMPLETED') 'EP $progress',
                   _since(e['updatedAt'] as int?),
                 ].where((s) => s.isNotEmpty).join(' · '),

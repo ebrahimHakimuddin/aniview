@@ -19,6 +19,15 @@ String titleOf(Map media) =>
 /// screens need instead of the JSON. A view over the map, not a copy: [Tracker] still updates the map itself.
 extension type const Show(Map raw) {
   Object? get id => raw['id'];
+
+  /// The AniList id, or null while it's unknown (a show from MyAnimeList carries `mal:<id>` until ani.zip answers).
+  int? get anilistId => raw['id'] is int ? raw['id'] : null;
+  bool get onAniList => anilistId != null;
+
+  /// Whether [other] is the same show, by AniList id or, when one side lacks it, MyAnimeList id.
+  bool sameAs(Map other) =>
+      raw['id'] == other['id'] ||
+      (raw['idMal'] != null && raw['idMal'] == other['idMal']);
   String get title => titleOf(raw);
   String? get cover => raw['coverImage']?['extraLarge'];
 
@@ -65,6 +74,26 @@ class SearchFilters {
 
   /// Leaves out shows you're watching or have completed (signed in only).
   final bool unwatched;
+
+  /// These with some changed. A filter that can be unset is given as a function, so `sort: () => null` clears
+  /// it and leaving it out keeps it.
+  SearchFilters copyWith({
+    String? Function()? sort,
+    String? Function()? season,
+    int? Function()? year,
+    String? Function()? format,
+    String? Function()? status,
+    Set<String>? genres,
+    bool? unwatched,
+  }) => SearchFilters(
+    sort: sort == null ? this.sort : sort(),
+    season: season == null ? this.season : season(),
+    year: year == null ? this.year : year(),
+    format: format == null ? this.format : format(),
+    status: status == null ? this.status : status(),
+    genres: genres ?? this.genres,
+    unwatched: unwatched ?? this.unwatched,
+  );
 
   /// How many filters narrow the results; sorting doesn't count.
   int get count =>
@@ -139,10 +168,19 @@ class AniList {
     await (await SharedPreferences.getInstance()).remove('anilist_token');
   }
 
+  /// Answers every query instead of the network; set by tests.
+  @visibleForTesting
+  static Future<Map<String, dynamic>> Function(
+    String query,
+    Map<String, dynamic> variables,
+  )?
+  transport;
+
   static Future<Map<String, dynamic>> query(
     String query, [
     Map<String, dynamic> variables = const {},
   ]) async {
+    if (transport != null) return transport!(query, variables);
     final res = await http.post(
       Uri.parse('https://graphql.anilist.co'),
       headers: {
@@ -187,10 +225,24 @@ class AniList {
   /// you updated your list ({date, amount}); null signed out.
   static Future<Map<String, dynamic>?> stats() async {
     if (token == null) return null;
-    return (await query(
-      'query{Viewer{statistics{anime{count episodesWatched minutesWatched statuses{status count}}} '
+    final viewer = (await query(
+      'query{Viewer{id statistics{anime{count episodesWatched minutesWatched statuses{status count}}} '
       'stats{activityHistory{date amount}}}}',
     ))['Viewer'];
+    final anime = viewer['statistics']?['anime'];
+    // AniList leaves the breakdown empty for some accounts that do have a list; count it from the list itself.
+    if (anime != null && (anime['statuses'] as List? ?? const []).isEmpty) {
+      final lists = (await query(
+        r'query($u:Int){MediaListCollection(userId:$u,type:ANIME){lists{status isCustomList entries{id}}}}',
+        {'u': viewer['id']},
+      ))['MediaListCollection']['lists'];
+      anime['statuses'] = [
+        for (final l in lists)
+          if (l['isCustomList'] != true && l['status'] != null)
+            {'status': l['status'], 'count': (l['entries'] as List).length},
+      ];
+    }
+    return viewer;
   }
 
   static Future<List> trending() async => (await query(

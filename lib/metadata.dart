@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'anilist.dart';
 import 'sources.dart';
 
 class EpisodeInfo {
@@ -10,7 +11,7 @@ class EpisodeInfo {
 
 /// ani.zip's entry for a show, looked up by AniList id when there is one and by MAL id otherwise.
 Future<Map<String, dynamic>> _mappings(Map media) async {
-  final query = media['id'] is int
+  final query = Show(media).onAniList
       ? 'anilist_id=${media['id']}'
       : 'mal_id=${media['idMal']}';
   return jsonDecode(await fetch('https://api.ani.zip/mappings?$query'));

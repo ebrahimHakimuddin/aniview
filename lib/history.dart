@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -46,7 +47,8 @@ class WatchHistory {
         : (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
   }
 
-  static Future<WatchRecord?> of(Map media) => byId(media['id']);
+  static Future<WatchRecord?> of(Map media) async =>
+      (await all()).where((r) => r.show.sameAs(media)).firstOrNull;
 
   static Future<WatchRecord?> byId(Object? id) async =>
       (await all()).where((r) => r.show.id == id).firstOrNull;
@@ -138,7 +140,7 @@ class WatchHistory {
         'dub': dub,
         'at': DateTime.now().millisecondsSinceEpoch,
       },
-      ...(await _read()).where((r) => r['media']['id'] != media['id']),
+      ...(await _read()).where((r) => !Show(r['media']).sameAs(media)),
     ];
     await _write(entries.take(20).toList());
   }
@@ -149,7 +151,7 @@ class WatchHistory {
   }
 
   static Future<void> _remove(Map media) async => _write(
-    (await _read()).where((r) => r['media']['id'] != media['id']).toList(),
+    (await _read()).where((r) => !Show(r['media']).sameAs(media)).toList(),
   );
 
   static Future<void> clear() => _write(const []);
@@ -209,9 +211,52 @@ class EpisodePlan {
     required bool preferred,
     required int progress,
     required bool watchedHere,
+    bool? picked,
   }) =>
+      picked ??
       preferred &&
-      (media['status'] == 'RELEASING' || progress > 0 || watchedHere);
+          (media['status'] == 'RELEASING' || progress > 0 || watchedHere);
+
+  /// The row of the episode at oldest-first index [i] among [length], in the chosen order.
+  static int rowFor(int i, int length, bool newestFirst) =>
+      newestFirst ? length - 1 - i : i;
+
+  /// The scroll offset that puts the episode at oldest-first index [i] one row below the top of a list of
+  /// [extent]-tall rows.
+  static double offsetFor(int i, int length, bool newestFirst, double extent) =>
+      ((rowFor(i, length, newestFirst) - 1) * extent)
+          .clamp(0, double.infinity)
+          .toDouble();
+
+  /// The oldest-first index of the first episode numbered [number] or later (the last when none is); null for
+  /// a [number] that isn't one.
+  static int? indexOfNumber(List<Episode> episodes, String number) {
+    final n = num.tryParse(number.trim());
+    if (n == null) return null;
+    final i = episodes.indexWhere((e) => e.number >= n);
+    return i == -1 ? episodes.length - 1 : i;
+  }
+
+  /// What the list plays: everything from a [online] site, else only the [downloaded] episodes.
+  static List<Episode> playable(
+    List<Episode> episodes, {
+    required bool online,
+    required bool Function(Episode) downloaded,
+  }) => online
+      ? episodes
+      : [
+          for (final e in episodes)
+            if (downloaded(e)) e,
+        ];
+
+  /// Where playing [episode] starts in [playable], and the site it's remembered under: the [site] streaming it,
+  /// else the one [downloadedFrom] holds its download from.
+  static ({int index, String? sourceName}) startAt(
+    Episode episode,
+    List<Episode> playable, {
+    String? site,
+    String? downloadedFrom,
+  }) => (index: playable.indexOf(episode), sourceName: site ?? downloadedFrom);
 
   /// This show's [WatchHistory] entry, if any.
   final WatchRecord? record;
@@ -234,6 +279,27 @@ class EpisodePlan {
   /// The tracked progress that marks [e] watched, and the one that marks it (and those after it) unwatched.
   static int progressWatching(Episode e) => e.number.toInt();
   static int progressUnwatching(Episode e) => e.number.ceil() - 1;
+
+  /// The tracked progress after acting on [picked] episodes (or a whole season): tracking is a count, so
+  /// [unwatch] goes back from the earliest of them, else watches through the latest.
+  static int progressAfter(Iterable<Episode> picked, {bool unwatch = false}) =>
+      unwatch
+      ? picked.map(progressUnwatching).reduce(min)
+      : picked.map(progressWatching).fold(0, max);
+
+  /// The first episode a download range starts at: the first one past [progress], else the first.
+  static Episode rangeStart(List<Episode> sorted, int progress) =>
+      sorted.where((e) => e.number > progress).firstOrNull ?? sorted.first;
+
+  /// The episodes numbered from [from] to [to] (as typed) in [sorted]; none unless both are numbers.
+  static List<Episode> rangeOf(List<Episode> sorted, String from, String to) {
+    final a = num.tryParse(from), b = num.tryParse(to);
+    if (a == null || b == null) return const [];
+    return [
+      for (final e in sorted)
+        if (e.number >= a && e.number <= b) e,
+    ];
+  }
 
   /// How far into [e] its saved resume point is, 0–1; null without one.
   double? resumedPart(Episode e) {

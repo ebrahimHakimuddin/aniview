@@ -1811,15 +1811,14 @@ class _EpisodeListState extends State<_EpisodeList> {
   );
 
   /// Row of episode [i] in the current order.
-  int _row(int i) => newestFirst ? widget.episodes.length - 1 - i : i;
+  int _row(int i) => EpisodePlan.rowFor(i, widget.episodes.length, newestFirst);
 
   double _offsetOf(int i) =>
-      ((_row(i) - 1) * _extent).clamp(0, double.infinity).toDouble();
+      EpisodePlan.offsetFor(i, widget.episodes.length, newestFirst, _extent);
 
   void _jump(String text) {
-    final number = num.tryParse(text.trim());
-    if (number == null) return;
-    final i = widget.episodes.indexWhere((e) => e.number >= number);
+    final i = EpisodePlan.indexOfNumber(widget.episodes, text);
+    if (i == null) return;
     scroll.animateTo(
       _offsetOf(i == -1 ? widget.episodes.length - 1 : i),
       duration: const Duration(milliseconds: 300),
