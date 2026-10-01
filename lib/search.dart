@@ -410,16 +410,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ),
             ),
+          // An on/off choice, so a switch rather than another dropdown chip.
           if (Tracker.signedIn)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: TvRow(
-                child: FilterChip(
-                  label: const Text('Hide watching & completed'),
-                  selected: f.unwatched,
-                  onSelected: (v) => _setFilters(_copy(unwatched: v)),
-                ),
-              ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Hide watching & completed'),
+              value: f.unwatched,
+              onChanged: (v) => _setFilters(_copy(unwatched: v)),
             ),
         ],
       ),
