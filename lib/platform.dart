@@ -27,9 +27,10 @@ class AndroidApp {
   /// Opens [url] in the browser or whichever app handles it.
   static Future<void> open(String url) => _app.invokeMethod('open', url);
 
-  /// Downloads an APK through the system download manager, whose notification opens the installer.
-  static Future<void> downloadApk(String url, {required String title}) =>
-      _app.invokeMethod('download', {'url': url, 'title': title});
+  /// Installs the APK at [path] as an update (Android asks to confirm). False when Android first needs
+  /// "Install unknown apps" allowed: its settings page opens, and the install goes on once you're back.
+  static Future<bool> installApk(String path) async =>
+      await _app.invokeMethod<bool>('install', {'path': path}) ?? false;
 
   /// A persisted Android document tree URI, or null when the picker was cancelled.
   static Future<String?> pickDownloadFolder() =>

@@ -1,7 +1,6 @@
 package com.kidfury.aniview
 
 import android.Manifest
-import android.app.DownloadManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -27,6 +26,26 @@ class MainActivity : FlutterActivity() {
     private var tv: MethodChannel? = null
     private var voiceResult: MethodChannel.Result? = null
     private var folderResult: MethodChannel.Result? = null
+    private var pendingApk: java.io.File? = null
+
+    override fun onResume() {
+        super.onResume()
+        val apk = pendingApk ?: return
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) return
+        pendingApk = null
+        install(apk) { error -> error?.let { android.widget.Toast.makeText(this, it, android.widget.Toast.LENGTH_LONG).show() } }
+    }
+
+    /** Hands [apk] to Android's installer off the main thread; [done] gets the error, or null. */
+    private fun install(apk: java.io.File, done: (String?) -> Unit) = Thread {
+        val error = try {
+            AppUpdate.install(this, apk)
+            null
+        } catch (e: Exception) {
+            e.message ?: "Couldn't install the update"
+        }
+        runOnUiThread { done(error) }
+    }.start()
 
 
     /** A new-episode notification, or a show in the TV launcher's Continue watching row, opened while the app runs. */
@@ -68,17 +87,23 @@ class MainActivity : FlutterActivity() {
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
                     // For the analytics user agent, e.g. "Android 14; Pixel 7".
                     "device" -> result.success("Android ${Build.VERSION.RELEASE}; ${Build.MODEL}")
-                    // DownloadManager shows progress; our completion receiver opens the installer.
-                    "download" -> {
-                        val request = DownloadManager.Request(Uri.parse(call.argument<String>("url")))
-                            .setTitle(call.argument<String>("title"))
-                            .setMimeType("application/vnd.android.package-archive")
-                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-                            .setDestinationInExternalFilesDir(this, android.os.Environment.DIRECTORY_DOWNLOADS,
-                                "aniview-update-${System.currentTimeMillis()}.apk")
-                        val id = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                        getSharedPreferences("app_update", MODE_PRIVATE).edit().putLong("download_id", id).apply()
-                        result.success(id)
+                    // False when Android first needs "Install unknown apps" allowed: its page opens, and the
+                    // install carries on once you're back (see onResume).
+                    "install" -> {
+                        val apk = java.io.File(call.argument<String>("path")!!)
+                        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                            pendingApk = apk
+                            startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:$packageName"),
+                                ),
+                            )
+                            return@setMethodCallHandler result.success(false)
+                        }
+                        install(apk) { error ->
+                            if (error == null) result.success(true) else result.error("install", error, null)
+                        }
                     }
                     "external" -> playExternal(call.arguments as Map<*, *>, result)
                     "gallery" -> Thread {

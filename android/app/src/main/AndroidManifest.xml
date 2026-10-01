@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- Android 14+: updates after the first in-app one install without a prompt (AppUpdate.kt). -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
     <!-- Keeps the new-episode job scheduled across reboots. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <!-- Android TV: the launcher's Continue watching row (WatchNext.kt). -->
@@ -45,9 +47,9 @@
             android:name=".EpisodeJob"
             android:permission="android.permission.BIND_JOB_SERVICE"
             android:exported="false" />
-        <receiver android:name=".UpdateDownloadReceiver" android:exported="true">
+        <receiver android:name=".AppUpdateReceiver" android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
         <!-- Don't delete the meta-data below.

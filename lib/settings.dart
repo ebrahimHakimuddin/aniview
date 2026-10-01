@@ -9,6 +9,7 @@ import 'main.dart' show appGeneration, themeGeneration;
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
@@ -344,42 +345,140 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
       if (!quiet) showSuccess(context, 'You have the latest version');
       return;
     }
+    Future<void> update() async {
+      try {
+        Analytics.event('app_update', {'from': current, 'to': version});
+        if (apk == null) return await AndroidApp.open(release['html_url']);
+        final file = await showDialog<File>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _UpdateDownload(apk['browser_download_url'], version),
+        );
+        if (file == null) return;
+        if (!await AndroidApp.installApk(file.path) && context.mounted) {
+          showSuccess(context, 'Allow AniView to install apps, then come back');
+        }
+      } catch (e) {
+        if (context.mounted) showError(context, e);
+      }
+    }
+
+    // A snackbar's action is out of the remote's reach on TV.
+    if (isTv) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (context) => PanelDialog(
+          title: Text('AniView $version is available'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Later'),
+            ),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      );
+      if (go == true) await update();
+      return;
+    }
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
           showCloseIcon: true,
           content: Text('AniView $version is available'),
-          action: SnackBarAction(
-            label: 'Update',
-            onPressed: () async {
-              try {
-                Analytics.event('app_update', {'from': current, 'to': version});
-                if (apk == null) {
-                  await AndroidApp.open(release['html_url']);
-                } else {
-                  await EpisodeNotifications.requestPermission();
-                  await AndroidApp.downloadApk(
-                    apk['browser_download_url'],
-                    title: 'AniView $version',
-                  );
-                  if (context.mounted) {
-                    showSuccess(
-                      context,
-                      'Downloading update · tap the finished notification to install',
-                    );
-                  }
-                }
-              } catch (e) {
-                if (context.mounted) showError(context, e);
-              }
-            },
-          ),
+          action: SnackBarAction(label: 'Update', onPressed: update),
         ),
       );
   } catch (e) {
     if (!quiet && context.mounted) showError(context, e);
   }
+}
+
+/// Downloads the update with its progress showing; pops with the APK, or null when cancelled.
+class _UpdateDownload extends StatefulWidget {
+  const _UpdateDownload(this.url, this.version);
+
+  final String url, version;
+
+  @override
+  State<_UpdateDownload> createState() => _UpdateDownloadState();
+}
+
+class _UpdateDownloadState extends State<_UpdateDownload> {
+  final client = http.Client();
+  double? progress;
+  Object? error;
+
+  @override
+  void initState() {
+    super.initState();
+    _download();
+  }
+
+  @override
+  void dispose() {
+    client.close(); // cancelling stops the download
+    super.dispose();
+  }
+
+  Future<void> _download() async {
+    try {
+      final res = await client.send(http.Request('GET', Uri.parse(widget.url)));
+      if (res.statusCode != 200) {
+        throw HttpException('Download failed (${res.statusCode})');
+      }
+      final file = File(
+        '${(await getTemporaryDirectory()).path}/aniview-update.apk',
+      );
+      final sink = file.openWrite();
+      var received = 0;
+      try {
+        await for (final chunk in res.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          final total = res.contentLength ?? 0;
+          if (total > 0 && mounted) setState(() => progress = received / total);
+        }
+      } finally {
+        await sink.close();
+      }
+      if (mounted) Navigator.pop(context, file);
+    } catch (e) {
+      if (mounted) setState(() => error = e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PanelDialog(
+    title: Text('Updating to ${widget.version}'),
+    content: error != null
+        ? Text(friendlyError(error!))
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(value: progress),
+              const SizedBox(height: 12),
+              Text(
+                progress == null
+                    ? 'Downloading…'
+                    : 'Downloading · ${(progress! * 100).round()}%',
+              ),
+            ],
+          ),
+    actions: [
+      TextButton(
+        autofocus: true,
+        onPressed: () => Navigator.pop(context),
+        child: Text(error != null ? 'Close' : 'Cancel'),
+      ),
+    ],
+  );
 }
 
 const _qualities = {0: 'Best', 1080: '1080p', 720: '720p', 480: '480p'};
