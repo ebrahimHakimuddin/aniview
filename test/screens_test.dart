@@ -1,3 +1,4 @@
+import 'package:aniview/changelog.dart';
 import 'package:aniview/home.dart';
 import 'package:aniview/ui.dart';
 import 'package:aniview/settings.dart';
@@ -36,7 +37,10 @@ void main() {
   testWidgets('refreshing recent episodes keeps the inbox open', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
+    // Home shows the what's-new dialog on a version's first launch; these tests start past it.
+    SharedPreferences.setMockInitialValues({
+      'changelog_seen': changelogVersion,
+    });
     await Settings.load();
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
 
@@ -53,7 +57,10 @@ void main() {
   testWidgets(
     "TV home: the drawer only takes focus from the page's left edge",
     (tester) async {
-      SharedPreferences.setMockInitialValues({});
+      // Home shows the what's-new dialog on a version's first launch; these tests start past it.
+      SharedPreferences.setMockInitialValues({
+        'changelog_seen': changelogVersion,
+      });
       await Settings.load();
       isTv = true;
       addTearDown(() => isTv = false);

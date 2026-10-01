@@ -153,6 +153,12 @@ class Settings {
   static bool get preferDub => _prefs.getBool('prefer_dub') ?? false;
   static set preferDub(bool v) => _prefs.setBool('prefer_dub', v);
 
+  /// The version whose "What's new" the person has dismissed; null until they have (see [maybeShowWhatsNew]).
+  static String? get changelogSeen => _prefs.getString('changelog_seen');
+  static set changelogSeen(String? v) => v == null
+      ? _prefs.remove('changelog_seen')
+      : _prefs.setString('changelog_seen', v);
+
   /// Site name to select first; empty means the highest ranked site.
   static String get preferredSource =>
       _prefs.getString('preferred_source') ?? '';

@@ -1,3 +1,4 @@
+import 'package:aniview/changelog.dart';
 import 'package:aniview/home.dart';
 import 'package:aniview/main.dart';
 import 'package:aniview/settings.dart';
@@ -8,7 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('light hero labels stay clear over artwork', (tester) async {
-    SharedPreferences.setMockInitialValues({});
+    // Home shows the what's-new dialog on a version's first launch; these tests start past it.
+    SharedPreferences.setMockInitialValues({
+      'changelog_seen': changelogVersion,
+    });
     await Settings.load();
     addTearDown(() => Settings.themeSelection = ThemeSelection.custom);
 
@@ -42,7 +46,10 @@ void main() {
   testWidgets('theme colors change together without a mixed-color frame', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
+    // Home shows the what's-new dialog on a version's first launch; these tests start past it.
+    SharedPreferences.setMockInitialValues({
+      'changelog_seen': changelogVersion,
+    });
     await Settings.load();
     await tester.pumpWidget(const App());
 

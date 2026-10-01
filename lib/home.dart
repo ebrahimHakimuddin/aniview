@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'analytics.dart';
+import 'changelog.dart';
 import 'anilist.dart';
 import 'details.dart';
 import 'downloads.dart';
@@ -192,6 +193,9 @@ class _HomeScreenState extends State<HomeScreen>
       };
     }
     checkForUpdate(context, quiet: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeShowWhatsNew(context);
+    });
   }
 
   /// The remote's search key: voice search on the Search page, from anywhere but the player.
