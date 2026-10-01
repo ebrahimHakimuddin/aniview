@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'sources.dart';
@@ -17,6 +18,8 @@ String friendlyError(Object error) => switch (error) {
   http.ClientException() => 'No connection. Check your internet and try again',
   TimeoutException() => 'The site took too long to respond',
   HttpException(:final message) => 'The site returned an error ($message)',
+  // Its toString() carries the native stack trace; the message is what says what went wrong.
+  PlatformException(:final message) => message ?? 'Something went wrong',
   FormatException() =>
     'The site sent something unexpected. It may have changed its layout',
   _ => '$error'.replaceFirst('Exception: ', ''),

@@ -70,10 +70,11 @@ flutter {
 
 dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
-    // Playback, as CloudStream does it: ExoPlayer with HLS.
+    // Playback, as CloudStream does it: ExoPlayer with HLS and DASH.
     val media3 = "1.8.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3")
     // What Aniyomi extensions are built against and expect the app to provide, at Aniyomi's versions.
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("org.jsoup:jsoup:1.22.2")
