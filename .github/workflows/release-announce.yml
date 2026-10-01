@@ -1,0 +1,50 @@
+name: Announce release
+
+# Posts a published release to Discord. The secret DISCORD_WEBHOOK_URL is the channel's webhook (see plans/001).
+on:
+  release:
+    # `released` fires when a release is published (not for drafts or pre-releases).
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      ping:
+        description: Ping @everyone (leave off for a test post of the latest release)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Empty on a manual run, which announces the latest release instead.
+          TAG: ${{ github.event.release.tag_name }}
+          PING: ${{ github.event_name == 'release' || inputs.ping }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::notice::DISCORD_WEBHOOK_URL isn't set, so nothing was posted"
+            exit 0
+          fi
+          gh release view ${TAG:+"$TAG"} --repo "$REPO" --json tagName,name,body,url > release.json
+          # The notes go in an embed, which never pings; only the message text can mention @everyone.
+          jq -n --slurpfile release release.json --argjson ping "$PING" '
+            $release[0] as $r
+            | {
+                content: ((if $ping then "@everyone " else "" end) + "**AniView " + $r.tagName + "** is out"),
+                allowed_mentions: { parse: (if $ping then ["everyone"] else [] end) },
+                embeds: [{
+                  title: ($r.name // $r.tagName),
+                  url: $r.url,
+                  description: (($r.body // "") | .[0:1500]),
+                  color: 115962
+                }]
+              }' > payload.json
+          curl --fail-with-body --silent --show-error --retry 3 \
+            -H 'Content-Type: application/json' -d @payload.json "$WEBHOOK"
