@@ -419,21 +419,35 @@ class _HomeScreenState extends State<HomeScreen>
         child: IconButton(
           tooltip: 'Recent episode releases',
           onPressed: _showReleases,
+          iconSize: 28,
           icon: const Icon(Icons.notifications_none_rounded),
         ),
       );
     },
   );
 
+  Widget get _downloadsButton => IconButton(
+    tooltip: 'Downloads',
+    iconSize: 28,
+    icon: const Icon(Icons.download_for_offline_outlined),
+    onPressed: () => pushSettled(
+      context,
+      MaterialPageRoute<void>(
+        builder: (context) =>
+            DownloadsScreen(onBrowse: () => Navigator.pop(context)),
+      ),
+    ),
+  );
+
   Widget get _wordmark => Image.asset(
     'assets/icon/aniview_wordmark.png',
-    width: 120,
-    height: 36,
+    width: 132,
+    height: 44,
     fit: BoxFit.contain,
     color: scheme.brightness == Brightness.light ? scheme.onSurface : null,
     colorBlendMode: BlendMode.srcIn,
     semanticLabel: 'AniView',
-    cacheWidth: 360,
+    cacheWidth: 440,
   );
 
   Future<void> _signIn() async {
@@ -935,23 +949,31 @@ class _HomeFeed extends StatelessWidget {
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            if (featured)
-              SliverToBoxAdapter(
-                child: _Featured(
-                  items: snap.data?.take(6).toList() ?? const [],
-                  loading: !snap.hasData && !snap.hasError,
-                  error: snap.error,
-                  onRetry: home._refresh,
-                  wordmark: home._wordmark,
-                  releaseBell: home._releaseBell,
-                ),
-              )
-            else
-              SliverAppBar(
-                floating: true,
-                title: home._wordmark,
-                actions: [home._releaseBell, const SizedBox(width: 16)],
-              ),
+            // Stays put while the page scrolls; over the featured art until it scrolls away.
+            SliverAppBar(
+              pinned: true,
+              titleSpacing: side,
+              title: home._wordmark,
+              actions: [
+                home._downloadsButton,
+                home._releaseBell,
+                const SizedBox(width: 8),
+              ],
+              expandedHeight: featured
+                  ? _Featured.height(context) -
+                        MediaQuery.paddingOf(context).top
+                  : null,
+              flexibleSpace: featured
+                  ? FlexibleSpaceBar(
+                      background: _Featured(
+                        items: snap.data?.take(6).toList() ?? const [],
+                        loading: !snap.hasData && !snap.hasError,
+                        error: snap.error,
+                        onRetry: home._refresh,
+                      ),
+                    )
+                  : null,
+            ),
             SliverList.list(children: rows),
             // Clear of the continue button.
             SliverToBoxAdapter(
@@ -1320,16 +1342,19 @@ class _Featured extends StatefulWidget {
     required this.items,
     required this.loading,
     required this.onRetry,
-    required this.wordmark,
-    required this.releaseBell,
     this.error,
   });
 
   final List items;
   final bool loading;
   final VoidCallback onRetry;
-  final Widget wordmark, releaseBell;
   final Object? error;
+
+  /// Marquee: the key art takes most of the first screen.
+  static double height(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return (size.width * 1.35).clamp(420.0, size.height * .72);
+  }
 
   @override
   State<_Featured> createState() => _FeaturedState();
@@ -1347,11 +1372,8 @@ class _FeaturedState extends State<_Featured> {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    // Marquee: the key art takes most of the first screen.
-    final height = (size.width * 1.35).clamp(420.0, size.height * .72);
     return SizedBox(
-      height: height,
+      height: _Featured.height(context),
       child: Stack(
         children: [
           if (widget.loading)
@@ -1378,14 +1400,6 @@ class _FeaturedState extends State<_Featured> {
                 controller: controller,
               ),
             ),
-          SafeArea(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(side, 8, side, side),
-              child: Row(
-                children: [widget.wordmark, const Spacer(), widget.releaseBell],
-              ),
-            ),
-          ),
           if (!widget.loading && widget.items.length > 1)
             Positioned(
               left: 0,
