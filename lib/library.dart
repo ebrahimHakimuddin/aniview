@@ -82,6 +82,98 @@ Future<bool> _moveTo(Map media, String status) {
 String _notSaved(int failed, int of) =>
     '$failed of $of not saved yet · they sync next time you open the app';
 
+/// A page of posters where holding shows picks them to add to your list together (Home, Search): the posters
+/// under it join in, and while picking, the selection bar covers the top of the page. Just [child] when signed out.
+class PickingScope extends StatefulWidget {
+  const PickingScope({super.key, required this.child, this.onChanged});
+
+  final Widget child;
+
+  /// Shows were added or moved.
+  final VoidCallback? onChanged;
+
+  @override
+  State<PickingScope> createState() => _PickingScopeState();
+}
+
+class _PickingScopeState extends State<PickingScope> {
+  final picking = Picking();
+
+  @override
+  void dispose() {
+    picking.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addTo() async {
+    final to = await pickOne(context, 'Add to', _statuses, 'PLANNING');
+    if (to == null || !mounted) return;
+    final shows = picking.picked!.values.toList();
+    picking.setBusy(true);
+    final failed = await _forEach(shows, (media) => _moveTo(media, to));
+    picking
+      ..setBusy(false)
+      ..clear();
+    if (!mounted) return;
+    failed == 0
+        ? showSuccess(context, 'Added ${shows.length} to ${_statuses[to]}')
+        : showError(context, _notSaved(failed, shows.length));
+    widget.onChanged?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!Tracker.signedIn) return widget.child;
+    return ListenableBuilder(
+      listenable: picking,
+      builder: (context, child) => PopScope(
+        canPop: !picking.active,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && !picking.busy) picking.clear();
+        },
+        child: Stack(
+          children: [
+            child!,
+            if (picking.active)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Material(
+                  color: scheme.surface,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        side - 8,
+                        isTv ? 16 : 4,
+                        side - 8,
+                        0,
+                      ),
+                      child: SelectionBar(
+                        count: picking.picked!.length,
+                        busy: picking.busy,
+                        onDone: picking.clear,
+                        actions: [
+                          IconButton(
+                            tooltip: 'Add to list',
+                            onPressed: picking.busy ? null : _addTo,
+                            icon: const Icon(Icons.playlist_add_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      child: PickingProvider(notifier: picking, child: widget.child),
+    );
+  }
+}
+
 /// Your AniList list, one status at a time, as a grid of posters.
 class MyListScreen extends StatefulWidget {
   const MyListScreen({
@@ -605,7 +697,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) =>
+      PickingScope(onChanged: widget.onChanged, child: _page(context));
+
+  Widget _page(BuildContext context) => Scaffold(
     body: SafeArea(
       bottom: false,
       child: FutureBuilder(
@@ -870,12 +965,18 @@ class _NextUp extends StatelessWidget {
     final media = slot['media'] as Map;
     final show = Show(media);
     final at = _ScheduleScreenState._airs(slot);
+    final picking = Picking.of(context);
+    final pickingNow = picking?.active == true ? picking : null;
+    final picked = pickingNow?.has(media);
     return FocusCard(
       radius: radiusLarge,
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel: '${show.title}, episode ${slot['episode']}, ${_until(at)}',
-      onTap: () => openDetails(context, media, onBack: onChanged),
+      onTap: pickingNow != null
+          ? () => pickingNow.toggle(media)
+          : () => openDetails(context, media, onBack: onChanged),
+      onLongPress: picking == null ? null : () => picking.toggle(media),
       child: SizedBox(
         height: isTv ? 220 : 170,
         child: Stack(
@@ -921,6 +1022,7 @@ class _NextUp extends StatelessWidget {
                 ],
               ),
             ),
+            if (picked != null) ...pickOverlay(picked),
           ],
         ),
       ),
@@ -943,63 +1045,85 @@ class _Slot extends StatelessWidget {
     final show = Show(media);
     final at = _ScheduleScreenState._airs(slot);
     final aired = at.isBefore(DateTime.now());
+    final picking = Picking.of(context);
+    final pickingNow = picking?.active == true ? picking : null;
+    final picked = pickingNow?.has(media);
     return FocusCard(
       radius: nested(8, radiusSmall), // the small still, 8dp in: large
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel:
           '${show.title}, episode ${slot['episode']}, ${_time(context, at)}',
-      onTap: () => openDetails(context, media, onBack: onChanged),
-      child: ColoredBox(
-        color: scheme.surfaceContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(radiusSmall),
-                child: SizedBox(
-                  width: 96,
-                  height: 54,
-                  child: Artwork(
-                    show.cover,
-                    color: show.color,
-                    alignment: const Alignment(0, -.4),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      show.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodyMedium,
-                    ),
-                    Text(
-                      'EP ${slot['episode']}${aired ? ' · aired' : ''}',
-                      style: text.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
+      onTap: pickingNow != null
+          ? () => pickingNow.toggle(media)
+          : () => openDetails(context, media, onBack: onChanged),
+      onLongPress: picking == null ? null : () => picking.toggle(media),
+      child: Stack(
+        children: [
+          ColoredBox(
+            color: scheme.surfaceContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(radiusSmall),
+                    child: SizedBox(
+                      width: 96,
+                      height: 54,
+                      child: Artwork(
+                        show.cover,
+                        color: show.color,
+                        alignment: const Alignment(0, -.4),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(
-                  _time(context, at),
-                  style: text.labelLarge?.copyWith(
-                    color: aired ? scheme.onSurfaceVariant : scheme.primary,
                   ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          show.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.bodyMedium,
+                        ),
+                        Text(
+                          'EP ${slot['episode']}${aired ? ' · aired' : ''}',
+                          style: text.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      _time(context, at),
+                      style: text.labelLarge?.copyWith(
+                        color: aired ? scheme.onSurfaceVariant : scheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Over the leading still, clear of the air time.
+          if (picked != null)
+            Positioned.fill(
+              child: Stack(
+                fit: StackFit.expand,
+                children: pickOverlay(
+                  picked,
+                  radius: nested(8, radiusSmall),
+                  leading: true,
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
     );
   }

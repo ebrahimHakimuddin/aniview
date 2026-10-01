@@ -596,6 +596,87 @@ class SelectionBar extends StatelessWidget {
   );
 }
 
+/// Shows picked on a page of posters for one change to all of them (see library.dart's PickingScope): every
+/// [PosterCard] under the scope picks on hold, and on tap while picking.
+class Picking extends ChangeNotifier {
+  /// By id; null when not picking.
+  Map<Object?, Map>? picked;
+
+  /// The change is saving: picks are held until it's done.
+  bool busy = false;
+
+  bool get active => picked != null;
+
+  bool has(Map media) => picked?.containsKey(media['id']) ?? false;
+
+  void toggle(Map media) {
+    if (busy) return;
+    final ids = picked ??= {};
+    ids.remove(media['id']) ?? (ids[media['id']] = media);
+    if (ids.isEmpty) picked = null;
+    selectionTick();
+    notifyListeners();
+  }
+
+  void clear() {
+    picked = null;
+    notifyListeners();
+  }
+
+  void setBusy(bool value) {
+    busy = value;
+    notifyListeners();
+  }
+
+  /// The picking around [context], if any; the caller rebuilds as picks change.
+  static Picking? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PickingProvider>()?.notifier;
+}
+
+class PickingProvider extends InheritedNotifier<Picking> {
+  const PickingProvider({
+    super.key,
+    required Picking super.notifier,
+    required super.child,
+  });
+}
+
+/// What marks a card while picking several: a tint (and a ring once picked) with a check at the top right, or over the
+/// leading still with [leading]. Goes last in the card's Stack. [radius] is the card's own corner.
+List<Widget> pickOverlay(
+  bool picked, {
+  double radius = radiusLarge,
+  bool leading = false,
+}) => [
+  AnimatedContainer(
+    duration: const Duration(milliseconds: 180),
+    decoration: BoxDecoration(
+      color: picked
+          ? scheme.primary.withValues(alpha: .22)
+          : Colors.black.withValues(alpha: .15),
+      border: picked ? Border.all(color: scheme.primary, width: 3) : null,
+      borderRadius: BorderRadius.circular(radius),
+    ),
+  ),
+  Positioned(
+    top: leading ? 12 : 8,
+    left: leading ? 12 : null,
+    right: leading ? null : 8,
+    child: AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, a) => ScaleTransition(scale: a, child: child),
+      child: Icon(
+        picked
+            ? Icons.check_circle_rounded
+            : Icons.radio_button_unchecked_rounded,
+        key: ValueKey(picked),
+        color: picked ? scheme.primary : Colors.white,
+        shadows: const [Shadow(blurRadius: 6)],
+      ),
+    ),
+  ),
+];
+
 /// A light tick under the finger for a choice made (a tab, a chip); nothing on TV.
 void selectionTick() {
   if (!isTv) HapticFeedback.selectionClick();
@@ -1353,6 +1434,12 @@ class PosterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    // Joins the page's picking, unless whoever placed the card handles picks or holds itself.
+    final picking = this.selected == null && onLongPress == null
+        ? Picking.of(context)
+        : null;
+    final pickingNow = picking?.active == true ? picking : null;
+    final selected = this.selected ?? pickingNow?.has(media);
     final show = Show(media);
     final progress = show.inList ? show.progress : null;
     final total = show.aired;
@@ -1367,8 +1454,13 @@ class PosterCard extends StatelessWidget {
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel: [titleOf(media), ?line].join(', '),
-      onTap: onTap ?? () => openDetails(context, media, onBack: onBack),
-      onLongPress: onLongPress,
+      onTap:
+          onTap ??
+          (pickingNow != null
+              ? () => pickingNow.toggle(media)
+              : () => openDetails(context, media, onBack: onBack)),
+      onLongPress:
+          onLongPress ?? (picking == null ? null : () => picking.toggle(media)),
       onFocus: () {
         _backdropDelay?.cancel();
         _backdropDelay = Timer(
@@ -1433,37 +1525,7 @@ class PosterCard extends StatelessWidget {
                   ),
                 ),
               ),
-            if (selected case final picked?) ...[
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                decoration: BoxDecoration(
-                  color: picked
-                      ? scheme.primary.withValues(alpha: .22)
-                      : Colors.black.withValues(alpha: .15),
-                  border: picked
-                      ? Border.all(color: scheme.primary, width: 3)
-                      : null,
-                  borderRadius: BorderRadius.circular(radiusLarge),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  transitionBuilder: (child, a) =>
-                      ScaleTransition(scale: a, child: child),
-                  child: Icon(
-                    picked
-                        ? Icons.check_circle_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    key: ValueKey(picked),
-                    color: picked ? scheme.primary : Colors.white,
-                    shadows: const [Shadow(blurRadius: 6)],
-                  ),
-                ),
-              ),
-            ],
+            if (selected case final picked?) ...pickOverlay(picked),
           ],
         ),
       ),

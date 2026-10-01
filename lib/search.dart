@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
+import 'library.dart';
 import 'settings.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -452,6 +453,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return PickingScope(child: _page());
+  }
+
+  Widget _page() {
     return Scaffold(
       body: SafeArea(
         bottom: false,

@@ -929,7 +929,12 @@ class _HomeFeed extends StatelessWidget {
   final _HomeScreenState home;
 
   @override
-  Widget build(BuildContext context) => FutureBuilder(
+  Widget build(BuildContext context) => PickingScope(
+    onChanged: () => home._reloadLists(force: true),
+    child: _feed(context),
+  );
+
+  Widget _feed(BuildContext context) => FutureBuilder(
     future: home.trending,
     builder: (context, snap) {
       final offline = snap.hasError && _downloaded.isNotEmpty;
