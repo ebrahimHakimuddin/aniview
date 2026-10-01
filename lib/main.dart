@@ -48,6 +48,7 @@ class App extends StatelessWidget {
     key: key,
     title: 'AniView',
     debugShowCheckedModeBanner: false,
+    showPerformanceOverlay: Settings.perfOverlay,
     theme: buildTheme(),
     // App-specific widgets read [scheme] directly, so every color must switch in the same frame.
     themeAnimationDuration: Duration.zero,

@@ -222,6 +222,11 @@ class Settings {
   static String get layout => _prefs.getString('layout') ?? 'auto';
   static set layout(String v) => _prefs.setString('layout', v);
 
+  /// Beta builds: Flutter's frame graph over the app (top: UI thread, bottom: raster thread; a red bar is a slow frame).
+  static bool get perfOverlay =>
+      isBetaBuild && (_prefs.getBool('perf_overlay') ?? false);
+  static set perfOverlay(bool v) => _prefs.setBool('perf_overlay', v);
+
   static bool get hideNsfw => _prefs.getBool('hide_nsfw') ?? isTv;
   static set hideNsfw(bool v) => _prefs.setBool('hide_nsfw', v);
 
@@ -682,6 +687,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: Text(Settings.themeSelection.label),
               onTap: _pickTheme,
             ),
+            if (isBetaBuild)
+              SwitchListTile(
+                title: const Text('Performance overlay'),
+                subtitle: const Text(
+                  'Frame graph: top is the UI thread, bottom the raster thread. Red bars are slow frames',
+                ),
+                value: Settings.perfOverlay,
+                onChanged: (v) {
+                  setState(() => Settings.perfOverlay = v);
+                  themeGeneration
+                      .value++; // the app rebuilds to show or hide it
+                },
+              ),
           ]),
           _Group('Tracking', [
             SwitchListTile(
