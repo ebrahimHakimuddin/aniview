@@ -81,6 +81,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Fit, fill (crop) or stretch.
   BoxFit fit = Settings.videoFit;
+
+  /// The height picked in the player for this session; 0 for Auto.
+  int quality = 0;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // The phone's media volume as 0–1.
 
@@ -136,6 +139,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     onRemoteSeek = (to) =>
         player.seek(PlaybackSession.clamp(to, player.state.duration));
     _lifecycle;
+    player.setQuality(Settings.streamQuality).ignore();
     ScreenBrightness().application.then((v) => brightness = v).ignore();
     Analytics.screen('/player', title: 'Player');
     _subs = [
@@ -1116,6 +1120,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await player.setRate(r);
   }
 
+  /// The stream's qualities from 480p up. Auto (0) lets the connection pick, under the Settings cap.
+  List<int> get _qualities => [
+    for (final h in player.state.heights)
+      if (h >= 480) h,
+  ];
+
+  String get _qualityLabel => quality == 0 ? 'Auto' : '${quality}p';
+
+  Future<void> _pickQuality() async {
+    final q = await _pick('Quality', {
+      0: 'Auto',
+      for (final h in _qualities) h: '${h}p',
+    }, quality);
+    if (q == null || !mounted) return;
+    setState(() => quality = q);
+    await player.setQuality(q == 0 ? Settings.streamQuality : q, exact: q != 0);
+  }
+
+  Widget? _qualityButton() => _qualities.length < 2
+      ? null
+      : TextButton.icon(
+          style: _onVideo(TextButton.styleFrom(foregroundColor: Colors.white)),
+          onPressed: _pickQuality,
+          icon: const Icon(Icons.high_quality_rounded),
+          label: Text(_qualityLabel),
+        );
+
   Widget _speedButton() => TextButton.icon(
     style: _onVideo(TextButton.styleFrom(foregroundColor: Colors.white)),
     onPressed: _pickSpeed,
@@ -1476,6 +1507,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   'Server · ${current!.label}',
                   _pickServer,
                 ),
+              if (_qualities.length > 1)
+                control(
+                  Icons.high_quality_rounded,
+                  'Quality · $_qualityLabel',
+                  _pickQuality,
+                ),
               control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
               control(_fitIcon, 'Picture · ${pictureFits[fit]}', _cycleFit),
               control(
@@ -1566,6 +1603,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _skipButton(position),
               const Spacer(),
               ?_serverButton(),
+              ?_qualityButton(),
               _speedButton(),
               _fitButton(),
             ],

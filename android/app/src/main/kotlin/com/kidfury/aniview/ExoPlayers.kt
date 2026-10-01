@@ -62,6 +62,9 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 "seek" -> done(result) { entry?.player?.seekTo(call.argument<Number>("ms")!!.toLong()) }
                 "rate" -> done(result) { entry?.player?.setPlaybackSpeed(call.argument<Double>("rate")!!.toFloat()) }
                 "subtitle" -> done(result) { entry?.subtitle(call.argument<String>("track")!!) }
+                "quality" -> done(result) {
+                    entry?.quality(call.argument<Number>("height")!!.toInt(), call.argument<Boolean>("exact") ?: false)
+                }
                 "dispose" -> {
                     entry?.release()
                     players.remove(id)
@@ -175,7 +178,8 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                     )
                 }
 
-                override fun onTracksChanged(tracks: Tracks) = send(mapOf("tracks" to textTracks(tracks)))
+                override fun onTracksChanged(tracks: Tracks) =
+                    send(mapOf("tracks" to textTracks(tracks), "heights" to videoHeights(tracks)))
 
                 override fun onCues(cues: CueGroup) {
                     send(mapOf("cues" to cues.cues.mapNotNull { it.text?.toString() }.joinToString("\n")))
@@ -226,6 +230,25 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
             }
             player.trackSelectionParameters = builder.build()
         }
+
+        /**
+         * Caps the picture at [height] lines (0: no cap). [exact] holds it at that height rather than letting a slow
+         * connection drop lower. Kept across episodes and servers, as it's the player's setting.
+         */
+        fun quality(height: Int, exact: Boolean) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setMaxVideoSize(Int.MAX_VALUE, if (height == 0) Int.MAX_VALUE else height)
+                .setMinVideoSize(0, if (exact) height else 0)
+                .build()
+        }
+
+        /** The stream's video heights, tallest first. */
+        private fun videoHeights(tracks: Tracks) = tracks.groups
+            .filter { it.type == C.TRACK_TYPE_VIDEO }
+            .flatMap { group -> (0 until group.length).filter(group::isTrackSupported).map { group.getTrackFormat(it).height } }
+            .filter { it > 0 }
+            .distinct()
+            .sortedDescending()
 
         private fun textTracks(tracks: Tracks) = tracks.groups.withIndex()
             .filter { it.value.type == C.TRACK_TYPE_TEXT }

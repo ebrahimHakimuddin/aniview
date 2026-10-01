@@ -31,6 +31,9 @@ class ExoPlayerState {
   bool playing = false, buffering = true, completed = false;
   List<SubtitleTrack> subtitles = const [];
 
+  /// The stream's video heights (1080, 720, …), tallest first.
+  List<int> heights = const [];
+
   /// The picture's size once known.
   Size? size;
 }
@@ -91,6 +94,9 @@ class ExoPlayer {
     if (e['width'] case final num width) {
       state.size = Size(width.toDouble(), (e['height'] as num).toDouble());
       stream._size.add(state.size!);
+    }
+    if (e['heights'] case final List heights) {
+      state.heights = heights.cast<int>();
     }
     if (e['tracks'] case final List tracks) {
       state.subtitles = [
@@ -163,6 +169,10 @@ class ExoPlayer {
   }
 
   Future<void> setRate(double rate) => _call('rate', {'rate': rate});
+
+  /// Caps the picture at [height] lines (0: no cap); [exact] keeps it there on a slow connection.
+  Future<void> setQuality(int height, {bool exact = false}) =>
+      _call('quality', {'height': height, 'exact': exact});
 
   Future<void> setSubtitleTrack(SubtitleTrack track) {
     if (track == SubtitleTrack.off) cues.value = '';

@@ -212,6 +212,10 @@ class Settings {
   static bool get newestFirst => _prefs.getBool('newest_first') ?? true;
   static set newestFirst(bool v) => _prefs.setBool('newest_first', v);
 
+  /// Tallest video height to stream; 0 means the best the connection allows.
+  static int get streamQuality => _prefs.getInt('stream_quality') ?? 0;
+  static set streamQuality(int v) => _prefs.setInt('stream_quality', v);
+
   /// Tallest video height to download; 0 means the best available.
   static int get downloadQuality => _prefs.getInt('download_quality') ?? 0;
   static set downloadQuality(int v) => _prefs.setInt('download_quality', v);
@@ -777,6 +781,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Settings.preferredSource,
                   (v) => Settings.preferredSource = v,
                 ),
+              ),
+            ),
+            _Choice(
+              title: 'Streaming quality',
+              subtitle: 'Change it for one episode in the player',
+              value: _qualities[Settings.streamQuality] ?? 'Best',
+              onTap: () => _choose(
+                'Streaming quality',
+                _qualities,
+                Settings.streamQuality,
+                (v) => Settings.streamQuality = v,
               ),
             ),
             SwitchListTile(
