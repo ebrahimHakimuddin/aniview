@@ -42,16 +42,18 @@ Release APKs are signed with `android/app/aniview-release.jks`, configured by `a
 (`storeFile`, `keyAlias`, `storePassword`, `keyPassword`). Both are gitignored: back them up, since updates only
 install over builds signed with the same key.
 
-1. Bump `version:` in `pubspec.yaml` and commit.
+1. Bump `version:` in `pubspec.yaml`, and `changelogVersion` and `changelogHighlights` in `lib/changelog.dart`, and
+   commit. The highlights are Settings → About → What's new, and the dialog shown once on the first launch of a new
+   version, which links to Buy me a coffee and the Discord.
 2. Build and publish:
 
    ```sh
    fvm flutter build apk --release --split-per-abi \
      --dart-define-from-file=dart_defines.env \
      --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"
-   git tag v2.2.1 && git push origin main v2.2.1
-   gh release create v2.2.1 build/app/outputs/flutter-apk/app-*-release.apk \
-     --title v2.2.1 --notes-file /tmp/aniview-v2.2.1-notes.md
+   git tag v2.3.0 && git push origin main v2.3.0
+   gh release create v2.3.0 build/app/outputs/flutter-apk/app-*-release.apk \
+     --title v2.3.0 --notes-file /tmp/aniview-v2.3.0-notes.md
    ```
 
    Prepare the short release notes file before the final command. Publish the three split APKs with their

@@ -6,13 +6,15 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.2.1';
+const changelogVersion = '2.3.0';
 
 const changelogHighlights = [
-  'Updates now download inside the app, with their progress showing.',
-  'Android’s install prompt appears as soon as the download finishes, with no notification to find.',
-  'Updating works on TV too: the offer appears as a dialog you can reach with the remote.',
-  'From Android 12, later updates install without asking again.',
+  'Add more sites with Aniyomi extensions: Settings → Extensions takes an extension repo you add. AniView doesn’t come with one.',
+  'Extensions get through Cloudflare checks on their own, and only ask you to verify when a site needs you.',
+  'Play on TV from a show’s menu on your phone. A remote button appears on Home while your paired TV is connected.',
+  'Hold a show on Home, Search or Schedule to pick several and add them to your list together.',
+  'Search has a random button that picks from your current filters, and Your colors themes follow your phone’s wallpaper.',
+  'DASH streams play, going back is smoother with navigation buttons, and progress bars fill when a show’s episode count isn’t known yet.',
 ];
 
 const coffeeUrl = 'https://www.buymeacoffee.com/kidfury';
