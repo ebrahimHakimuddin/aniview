@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -242,10 +244,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// MAL entries arrive without an AniList id, which history, downloads and sources are keyed by.
   late final Future<void> _ids = Tracker.resolveIds(widget.media);
-  late Future<WatchRecord?> record = _ids.then(
-    (_) => WatchHistory.of(widget.media),
+  late Future<WatchRecord?> record = _held(
+    _ids.then((_) => WatchHistory.of(widget.media)),
   );
-  late final relations = _ids.then((_) => Tracker.relations(widget.media));
+  late final relations = _held(
+    _ids.then((_) => Tracker.relations(widget.media)),
+  );
   late final cachedSeason = _ids.then(
     (_) => Downloads.instance.season(widget.media),
   );
@@ -286,10 +290,39 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// [DetailsScreen.autoplay] has started playing.
   bool _autoplayed = false;
 
+  ModalRoute<Object?>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+  }
+
+  /// [result], held back while this page animates away: a show opened moments ago (a random pick) is often still
+  /// loading when you go back, and rebuilding its episodes then stutters the back animation. A back gesture that's
+  /// cancelled lets it through.
+  Future<T> _held<T>(Future<T> result) async {
+    final value = await result;
+    final animation = _route?.animation;
+    if (animation != null && animation.status == AnimationStatus.reverse) {
+      final settled = Completer<void>();
+      void listener(AnimationStatus status) {
+        if (status != AnimationStatus.reverse && !settled.isCompleted) {
+          settled.complete();
+        }
+      }
+
+      animation.addStatusListener(listener);
+      await settled.future;
+      animation.removeStatusListener(listener);
+    }
+    return value;
+  }
+
   Future<void> _loadSites() async {
     try {
       await _ids;
-      final found = await Sites.all();
+      final found = await _held(Sites.all());
       if (!mounted) return;
       setState(() => sources = found);
       if (Sites.preferred(found) case final preferred?) _select(preferred);
@@ -314,7 +347,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   });
 
   void _reloadRecord() {
-    if (mounted) setState(() => record = WatchHistory.of(media));
+    if (mounted) setState(() => record = _held(WatchHistory.of(media)));
   }
 
   /// Long-press on an episode: watched state and its download.
