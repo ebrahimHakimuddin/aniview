@@ -16,6 +16,7 @@ import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
 import 'social.dart';
+import 'site_listing.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -90,10 +91,11 @@ Future<void> resumeWatching(
     source = await Sites.named(record.source);
     final site = source;
     if (loaded == null && site != null && context.mounted) {
-      episodes = await withCloudflare<List<Episode>>(
-        context,
-        () => loadEpisodes(site, media),
-      );
+      episodes = await SiteListing(
+        site,
+        media,
+        onChallenge: uiChallenge(context),
+      ).episodes();
     }
   } catch (_) {
     if (!downloaded.any((e) => e.number == number)) {
@@ -240,6 +242,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
   List<Source>? sources;
   Object? sitesError;
   Source? source;
+
+  /// [media] on the chosen [source].
+  SiteListing? listing;
   Future<List<Episode>>? episodes;
 
   /// MAL entries arrive without an AniList id, which history, downloads and sources are keyed by.
@@ -335,9 +340,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   void _select(Source s) => setState(() {
     source = s;
     page = null;
-    episodes = withCloudflare(context, () => loadEpisodes(s, media)).then((
-      list,
-    ) {
+    listing = SiteListing(s, media, onChallenge: uiChallenge(context));
+    episodes = _held(listing!.episodes()).then((list) {
       Downloads.instance.saveSeason(
         media,
         list,
@@ -630,7 +634,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       (_) => _MatchSheet(source: current, query: titleOf(media)),
     );
     if (picked == null || !mounted) return;
-    await setMatch(current, media, picked.id);
+    await (listing ?? SiteListing(current, media)).pick(picked.id);
     if (!mounted) return;
     _select(current);
     showSuccess(context, 'Using “${picked.title}” on ${current.name}');

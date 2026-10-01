@@ -14,6 +14,7 @@ import 'history.dart';
 import 'hls_proxy.dart';
 import 'metadata.dart';
 import 'settings.dart';
+import 'site_listing.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -62,10 +63,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     dub: widget.dub,
     site: _sourceName,
     fetch: switch (widget.source) {
-      final source? => (e) => withCloudflare(
-        context,
-        () => source.streams(widget.media, e, dub: widget.dub),
-      ),
+      final source? => (e) => SiteListing(
+        source,
+        widget.media,
+        onChallenge: uiChallenge(context),
+      ).streams(e, dub: widget.dub),
       null => null,
     },
   );

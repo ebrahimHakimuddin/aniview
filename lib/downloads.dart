@@ -10,6 +10,7 @@ import 'anilist.dart';
 import 'hls_proxy.dart';
 import 'metadata.dart';
 import 'settings.dart';
+import 'site_listing.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'platform.dart';
@@ -407,7 +408,11 @@ class Downloads extends ChangeNotifier {
       if (source == null) {
         throw Exception('${d.source} is no longer one of the top sites');
       }
-      final streams = await source.streams(d.media, d.episode, dub: d.dub);
+      // No handler: a download runs with nothing on screen to show a check on.
+      final streams = await SiteListing(
+        source,
+        d.media,
+      ).streams(d.episode, dub: d.dub);
       if (streams.isEmpty) {
         throw Exception('No ${d.dub ? 'dub' : 'sub'} servers for this episode');
       }

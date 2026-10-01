@@ -8,27 +8,41 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'sources.dart';
 
-/// Runs [task]; when a site needs a Cloudflare check the user has to complete (e.g. Turnstile),
-/// shows it in a verification page and retries once it's cleared.
-Future<T> withCloudflare<T>(
-  BuildContext context,
+/// How a person is asked to pass a site's Cloudflare check: true once it's passed. The caller decides what that means
+/// (a verification page, nothing at all in the background), so what runs the task needn't have a screen to show it on.
+typedef ChallengeHandler = Future<bool> Function(CloudflareChallenge challenge);
+
+/// Runs [task]; when a site needs a check the person has to complete (e.g. Turnstile), [onChallenge] gets it passed and
+/// the task is retried. Without a handler, or when it can't be passed, the challenge is thrown.
+Future<T> withChallenge<T>(
+  ChallengeHandler? onChallenge,
   Future<T> Function() task,
 ) async {
   for (var attempt = 0; ; attempt++) {
     try {
       return await task();
     } on CloudflareChallenge catch (challenge) {
-      if (attempt == 3 || !context.mounted) rethrow;
-      final solved = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => _ChallengePage(Uri.parse(challenge.url)),
-        ),
-      );
-      if (solved != true) rethrow;
+      if (attempt == 3 || onChallenge == null) rethrow;
+      if (!await onChallenge(challenge)) rethrow;
     }
   }
 }
+
+/// Shows the check in a full-screen verification page over [context]'s screen.
+ChallengeHandler uiChallenge(BuildContext context) => (challenge) async {
+  if (!context.mounted) return false;
+  final solved = await Navigator.of(context).push<bool>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => _ChallengePage(Uri.parse(challenge.url)),
+    ),
+  );
+  return solved == true;
+};
+
+/// [withChallenge], with the verification page on [context]'s screen.
+Future<T> withCloudflare<T>(BuildContext context, Future<T> Function() task) =>
+    withChallenge(uiChallenge(context), task);
 
 /// Loads [url] in an invisible WebView — Chromium's network stack plus the shared cookie jar, which Cloudflare
 /// accepts — and returns the page HTML, or its text for JSON endpoints. Automatic Cloudflare checks are given

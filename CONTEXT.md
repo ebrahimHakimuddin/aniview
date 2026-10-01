@@ -19,8 +19,15 @@ apart from painting it: **opening** it (its download, else the site's servers, f
 fallback when a server never loads, which subtitles to show, when it counts as watched, when to save the spot, which skip applies,
 when to offer or start the next episode (**up next**), what OK on a TV remote does, and where a held seek lands.
 
-**Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order. A
-**source** is one site's adapter (Anikoto, animepahe, Re:Anime); history and downloads remember it by name.
+**Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
+sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's
+adapter (Anikoto, animepahe, Re:Anime, or an extension's `ExtensionSource`); history and downloads remember it by name.
+
+**Listing** (`lib/site_listing.dart`, `SiteListing`): a show's entry on one site: its **episodes** (the person's pick of
+which entry the show is, else the site's own guess, with titles and artwork from ani.zip) and the **streams** of an
+episode. It also decides who gets a site's Cloudflare check passed: the verification page on a screen (the details page,
+the player), nobody in a download, which fails with the check instead. Distinct from the **Episode plan**, which arranges
+the episodes a listing returns.
 
 **Tracker** (`lib/tracker.dart`): browsing (AniList, with MyAnimeList as a read-only fallback), the AniList
 session, and **tracked progress** saves, queued on-device when AniList can't take them. Each **catalog**
