@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
+import 'details.dart';
 import 'library.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -283,11 +285,6 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   /// Back to recent searches and genres.
-  void _clear() {
-    controller.clear();
-    search.clear();
-  }
-
   SearchFilters _copy({
     Object? sort = _keep,
     Object? season = _keep,
@@ -451,6 +448,36 @@ class _SearchScreenState extends State<SearchScreen> {
     onSelected: (_) => onTap(),
   );
 
+  /// Watch random is picking a show from what's searched.
+  bool _picking = false;
+
+  /// A show at random from the current search and filters: from a random one of the first ten pages, or the first
+  /// when the results end sooner.
+  Future<void> _random() async {
+    setState(() => _picking = true);
+    try {
+      final pick = Random();
+      var (shows, _) = await Tracker.search(
+        query,
+        filters,
+        page: pick.nextInt(10) + 1,
+      );
+      if (shows.isEmpty) (shows, _) = await Tracker.search(query, filters);
+      if (!mounted) return;
+      setState(() => _picking = false);
+      if (shows.isEmpty) return showError(context, 'Nothing to pick from');
+      Analytics.event('watch_random', {'from': 'search'});
+      await openDetails(context, shows[pick.nextInt(shows.length)]);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted && _picking) setState(() => _picking = false);
+    }
+  }
+
+  /// Opened over another page ("See all", a genre), not the Search tab: only that one has a way back.
+  bool get _pushed => widget.filters != null;
+
   @override
   Widget build(BuildContext context) {
     return PickingScope(child: _page());
@@ -463,7 +490,7 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (!Navigator.canPop(context))
+            if (!_pushed)
               Padding(
                 padding: EdgeInsets.fromLTRB(side, isTv ? 24 : 12, side, 4),
                 child: Text(
@@ -473,15 +500,25 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             Padding(
               padding: EdgeInsets.fromLTRB(
-                Navigator.canPop(context) ? 4 : side,
-                isTv && Navigator.canPop(context) ? 24 : 8,
+                _pushed ? 4 : side,
+                isTv && _pushed ? 24 : 8,
                 side - 4,
                 8,
               ),
               child: Row(
                 children: [
-                  if (Navigator.canPop(context)) const BackButton(),
+                  if (_pushed) const BackButton(),
                   Expanded(child: _field()),
+                  IconButton(
+                    tooltip: 'Watch something random from this search',
+                    onPressed: _picking ? null : _random,
+                    icon: _picking
+                        ? const SizedBox.square(
+                            dimension: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          )
+                        : const Icon(Icons.shuffle_rounded),
+                  ),
                   if (filters.count > 0 || filters.sort != null)
                     TextButton(
                       onPressed: () => _setFilters(const SearchFilters()),
@@ -501,34 +538,24 @@ class _SearchScreenState extends State<SearchScreen> {
 
   /// A rounded search field (the M3 search bar). On TV the mic leads: focusing the field opens the on-screen
   /// keyboard over everything, and speaking is quicker than typing with a remote.
-  Widget _field() => ListenableBuilder(
-    listenable: controller,
-    builder: (context, _) => TextField(
-      controller: controller,
-      // Never on its own: opening Search may be for the filters or genres, not typing.
-      autofocus: false,
-      textInputAction: TextInputAction.search,
-      onChanged: search.type,
-      onSubmitted: search.submit,
-      decoration: InputDecoration(
-        hintText: 'Search anime',
-        contentPadding: const EdgeInsets.symmetric(vertical: 16),
-        prefixIcon: isTv
-            ? IconButton(
-                tooltip: 'Search by voice',
-                autofocus: widget.filters == null,
-                onPressed: _listen,
-                icon: const Icon(Icons.mic_rounded),
-              )
-            : const Icon(Icons.search_rounded),
-        suffixIcon: controller.text.isEmpty && !search.searched
-            ? null
-            : IconButton(
-                tooltip: 'Clear',
-                onPressed: _clear,
-                icon: const Icon(Icons.close_rounded),
-              ),
-      ),
+  Widget _field() => TextField(
+    controller: controller,
+    // Never on its own: opening Search may be for the filters or genres, not typing.
+    autofocus: false,
+    textInputAction: TextInputAction.search,
+    onChanged: search.type,
+    onSubmitted: search.submit,
+    decoration: InputDecoration(
+      hintText: 'Search anime',
+      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+      prefixIcon: isTv
+          ? IconButton(
+              tooltip: 'Search by voice',
+              autofocus: widget.filters == null,
+              onPressed: _listen,
+              icon: const Icon(Icons.mic_rounded),
+            )
+          : const Icon(Icons.search_rounded),
     ),
   );
 
