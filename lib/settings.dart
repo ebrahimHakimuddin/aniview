@@ -735,12 +735,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onChanged: (v) => setState(() => Settings.hideNsfw = v),
             ),
           ]),
-          _Group('Remote', [
+          // A phone that has never paired a TV sets one up; "remote" only once there's a TV to control.
+          _Group(isTv ? 'Remote' : 'TV', [
             ListTile(
-              leading: const Icon(Icons.settings_remote_rounded),
-              title: Text(isTv ? 'Phone remote' : 'TV remote'),
+              leading: Icon(
+                isTv || Settings.tvRemotes.isNotEmpty
+                    ? Icons.settings_remote_rounded
+                    : Icons.connected_tv_rounded,
+              ),
+              title: Text(
+                isTv
+                    ? 'Phone remote'
+                    : Settings.tvRemotes.isEmpty
+                    ? 'Set up AniView on a TV'
+                    : 'TV remote',
+              ),
               subtitle: Text(
-                isTv ? 'Control AniView on this TV from your phone' : 'Control AniView on your TV, and sign it in, from this phone',
+                isTv
+                    ? 'Control AniView on this TV from your phone'
+                    : Settings.tvRemotes.isEmpty
+                    ? 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
+                    : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
               ),
               onTap: () async {
                 await Navigator.push(

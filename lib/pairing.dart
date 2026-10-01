@@ -319,7 +319,7 @@ class _TvPairScreenState extends State<TvPairScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'On your phone, on the same Wi-Fi, open AniView and go to\nSettings → TV remote.'
+                'On your phone, on the same Wi-Fi, open AniView and go to\nSettings → TV → Set up AniView on a TV.'
                 '${signedIn ? '' : ' It becomes a remote and signs this TV in.'}',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
@@ -657,7 +657,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     final saved = paired[tv];
     return Scaffold(
       appBar: AppBar(
-        title: Text(saved == null ? 'TV remote' : saved['name'] as String),
+        title: Text(saved == null ? 'Pair a TV' : saved['name'] as String),
         bottom: scanning || pairing
             ? const PreferredSize(
                 preferredSize: Size.fromHeight(2),
