@@ -1606,12 +1606,7 @@ class _ListEntry extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 // Grows to the progress on open and to each new value after.
                 child: TweenAnimationBuilder<double>(
-                  tween: Tween(
-                    begin: 0,
-                    end: total == null || total == 0
-                        ? 0
-                        : (progress / total).clamp(0.0, 1.0).toDouble(),
-                  ),
+                  tween: Tween(begin: 0, end: watchedShare(progress, total)),
                   duration: const Duration(milliseconds: 600),
                   curve: Curves.easeOutCubic,
                   builder: (context, value, child) =>

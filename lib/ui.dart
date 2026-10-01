@@ -1412,7 +1412,7 @@ class PosterCard extends StatelessWidget {
                   ],
                 ),
               ),
-            if (progress != null && total != null && total > 0)
+            if (progress != null && (progress > 0 || (total ?? 0) > 0))
               Positioned(
                 left: 0,
                 right: 0,
@@ -1422,7 +1422,7 @@ class PosterCard extends StatelessWidget {
                   color: Colors.black54,
                   alignment: Alignment.centerLeft,
                   child: FractionallySizedBox(
-                    widthFactor: (progress / total).clamp(0.0, 1.0).toDouble(),
+                    widthFactor: watchedShare(progress, total),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         color: scheme.primary,
@@ -1484,6 +1484,12 @@ class PosterCard extends StatelessWidget {
     );
   }
 }
+
+/// How far through a show [progress] episodes are, for its bar. With no episode count yet (a "?"), any watched
+/// fills it 90%: well along, but not finished.
+double watchedShare(int progress, int? total) => total == null || total == 0
+    ? (progress > 0 ? .9 : 0)
+    : (progress / total).clamp(0.0, 1.0).toDouble();
 
 /// A section title, with an optional action ("See all") at its end on phones.
 class SectionHeader extends StatelessWidget {
