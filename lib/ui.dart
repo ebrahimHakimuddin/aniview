@@ -137,6 +137,16 @@ ThemeData buildTheme() {
         systemNavigationBarIconBrightness: Brightness.light,
       ),
     ),
+    // Tabs under a page's header: the accent marks the chosen one; the label weight stays put so nothing shifts.
+    tabBarTheme: TabBarThemeData(
+      labelColor: scheme.primary,
+      unselectedLabelColor: scheme.onSurfaceVariant,
+      indicatorColor: scheme.primary,
+      indicatorSize: TabBarIndicatorSize.label,
+      dividerColor: hairline,
+      labelStyle: text.labelLarge,
+      unselectedLabelStyle: text.labelLarge,
+    ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: scheme.surfaceContainer,
       indicatorColor: scheme.primaryContainer,
@@ -483,6 +493,64 @@ class FadeIn extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Picking several things (shows, episodes): how many, Done, All, and what to do with them, with a progress line
+/// while the change saves. The same bar wherever things can be picked.
+class SelectionBar extends StatelessWidget {
+  const SelectionBar({
+    super.key,
+    required this.count,
+    required this.onDone,
+    this.onAll,
+    this.actions = const [],
+    this.busy = false,
+  });
+
+  final int count;
+  final VoidCallback onDone;
+
+  /// Picks everything there is; null hides the button.
+  final VoidCallback? onAll;
+
+  /// Icon buttons for what to do with the picked things, disabled by their owner while [busy].
+  final List<Widget> actions;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Row(
+        children: [
+          IconButton(
+            tooltip: 'Done',
+            onPressed: busy ? null : onDone,
+            icon: const Icon(Icons.close_rounded),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              '$count selected',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          if (onAll != null)
+            TextButton(
+              onPressed: busy ? null : onAll,
+              child: const Text('All'),
+            ),
+          ...actions,
+        ],
+      ),
+      SizedBox(
+        height: progressBarHeight,
+        child: busy ? const LinearProgressIndicator() : null,
+      ),
+    ],
+  );
 }
 
 /// A light tick under the finger for a choice made (a tab, a chip); nothing on TV.

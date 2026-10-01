@@ -168,45 +168,22 @@ class _MyListScreenState extends State<MyListScreen> {
   /// Replaces the headline while picking: how many, and what to do with them.
   Widget _selectionBar(List shown) => Padding(
     padding: EdgeInsets.fromLTRB(side - 8, isTv ? 16 : 4, side - 8, 0),
-    child: Column(
-      children: [
-        Row(
-          children: [
-            IconButton(
-              tooltip: 'Done',
-              onPressed: busy ? null : () => setState(() => picked = null),
-              icon: const Icon(Icons.close_rounded),
-            ),
-            Expanded(
-              child: Text(
-                '${picked!.length} selected',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            TextButton(
-              onPressed: busy
-                  ? null
-                  : () => setState(
-                      () => picked = {for (final m in shown) m['id']: m},
-                    ),
-              child: const Text('All'),
-            ),
-            IconButton(
-              tooltip: 'Change status',
-              onPressed: busy ? null : _changeStatus,
-              icon: const Icon(Icons.drive_file_move_outline),
-            ),
-            IconButton(
-              tooltip: 'Remove from list',
-              color: scheme.error,
-              onPressed: busy ? null : _remove,
-              icon: const Icon(Icons.delete_outline_rounded),
-            ),
-          ],
+    child: SelectionBar(
+      count: picked!.length,
+      busy: busy,
+      onDone: () => setState(() => picked = null),
+      onAll: () => setState(() => picked = {for (final m in shown) m['id']: m}),
+      actions: [
+        IconButton(
+          tooltip: 'Change status',
+          onPressed: busy ? null : _changeStatus,
+          icon: const Icon(Icons.drive_file_move_outline),
         ),
-        SizedBox(
-          height: 4,
-          child: busy ? const LinearProgressIndicator() : null,
+        IconButton(
+          tooltip: 'Remove from list',
+          color: scheme.error,
+          onPressed: busy ? null : _remove,
+          icon: const Icon(Icons.delete_outline_rounded),
         ),
       ],
     ),
@@ -445,94 +422,135 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
       if (!didPop && !busy) setState(() => picked = null);
     },
     child: Scaffold(
-      appBar: picked == null
-          ? AppBar(title: const Text('Recently watched'))
+      appBar: picked != null
+          ? null
           : AppBar(
-              leading: IconButton(
-                tooltip: 'Done',
-                onPressed: busy ? null : () => setState(() => picked = null),
-                icon: const Icon(Icons.close_rounded),
-              ),
-              title: Text('${picked!.length} selected'),
-              bottom: busy
-                  ? const PreferredSize(
-                      preferredSize: Size.fromHeight(4),
-                      child: LinearProgressIndicator(),
-                    )
-                  : null,
-              actions: [
-                if (Tracker.signedIn)
-                  IconButton(
-                    tooltip: 'Change status',
-                    onPressed: busy ? null : _changeStatus,
-                    icon: const Icon(Icons.drive_file_move_outline),
-                  ),
-                IconButton(
-                  tooltip: 'Remove from recently watched',
-                  onPressed: busy ? null : _remove,
-                  icon: const Icon(Icons.history_toggle_off_rounded),
-                ),
-              ],
+              title: const Text('Recently watched'),
+              toolbarHeight: isTv ? 72 : 64,
+              titleSpacing: side,
+              titleTextStyle: Theme.of(context).textTheme.headlineMedium,
             ),
-      body: FutureBuilder(
-        future: records,
-        builder: (context, snap) {
-          final list = snap.data ?? const <WatchRecord>[];
-          if (snap.hasData && list.isEmpty) {
-            return const EmptyState(
-              icon: Icons.history_rounded,
-              title: 'Nothing watched yet',
-            );
-          }
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(side, 4, side, 0),
-                  child: Text(
-                    '${isTv ? 'Hold OK on' : 'Hold'} a show to change its status or remove it',
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+      body: SafeArea(
+        top: picked != null,
+        bottom: false,
+        child: FutureBuilder(
+          future: records,
+          builder: (context, snap) {
+            final list = snap.data ?? const <WatchRecord>[];
+            return Column(
+              children: [
+                if (picked != null)
+                  Material(
+                    color: scheme.surface,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(side - 8, 4, side - 8, 0),
+                      child: SelectionBar(
+                        count: picked!.length,
+                        busy: busy,
+                        onDone: () => setState(() => picked = null),
+                        onAll: () => setState(
+                          () => picked = {
+                            for (final r in list) r.media['id']: r.media,
+                          },
+                        ),
+                        actions: [
+                          if (Tracker.signedIn)
+                            IconButton(
+                              tooltip: 'Change status',
+                              onPressed: busy ? null : _changeStatus,
+                              icon: const Icon(Icons.drive_file_move_outline),
+                            ),
+                          IconButton(
+                            tooltip: 'Remove from recently watched',
+                            color: scheme.error,
+                            onPressed: busy ? null : _remove,
+                            icon: const Icon(Icons.history_toggle_off_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+                Expanded(child: _grid(snap, list)),
+              ],
+            );
+          },
+        ),
+      ),
+    ),
+  );
+
+  Widget _grid(AsyncSnapshot<List<WatchRecord>> snap, List<WatchRecord> list) {
+    if (snap.hasError) {
+      return ErrorState(
+        snap.error!,
+        onRetry: () => setState(() => records = WatchHistory.all()),
+      );
+    }
+    if (snap.hasData && list.isEmpty) {
+      return const EmptyState(
+        icon: Icons.history_rounded,
+        title: 'Nothing watched yet',
+        message: 'Shows you start watching show up here.',
+      );
+    }
+    final text = Theme.of(context).textTheme;
+    return CustomScrollView(
+      slivers: [
+        if (picked == null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: side),
+              child: Text(
+                '${isTv ? 'Hold OK on' : 'Hold'} a show to change its status or remove it',
+                style: text.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(
-                  side,
-                  12,
-                  side,
-                  24 + MediaQuery.paddingOf(context).bottom,
-                ),
-                sliver: SliverGrid.builder(
+            ),
+          ),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            side,
+            12,
+            side,
+            24 + MediaQuery.paddingOf(context).bottom,
+          ),
+          sliver: !snap.hasData
+              ? SliverGrid.builder(
+                  gridDelegate: posterGrid,
+                  itemCount: 6,
+                  itemBuilder: (_, _) => const _PosterSkeleton(),
+                )
+              : SliverGrid.builder(
                   gridDelegate: posterGrid,
                   itemCount: list.length,
                   itemBuilder: (context, i) {
                     final r = list[i];
-                    return PosterCard(
-                      r.media,
-                      subtitle:
-                          'EP ${epNumber(r.episode)}'
-                          '${r.position > Duration.zero ? ' · ${formatDuration(r.position)}' : ''}',
-                      autofocus: isTv && i == 0,
-                      onBack: () =>
-                          setState(() => records = WatchHistory.all()),
-                      selected: picked?.containsKey(r.media['id']),
-                      onTap: picked == null
-                          ? null
-                          : busy
-                          ? () {}
-                          : () => _toggle(r.media),
-                      onLongPress: busy ? null : () => _toggle(r.media),
+                    return FadeIn(
+                      index: i,
+                      child: PosterCard(
+                        r.media,
+                        subtitle:
+                            'EP ${epNumber(r.episode)}'
+                            '${r.position > Duration.zero ? ' · ${formatDuration(r.position)}' : ''}',
+                        autofocus: isTv && i == 0,
+                        onBack: () =>
+                            setState(() => records = WatchHistory.all()),
+                        selected: picked?.containsKey(r.media['id']),
+                        onTap: picked == null
+                            ? null
+                            : busy
+                            ? () {}
+                            : () => _toggle(r.media),
+                        onLongPress: busy ? null : () => _toggle(r.media),
+                      ),
                     );
                   },
                 ),
-              ),
-            ],
-          );
-        },
-      ),
-    ),
-  );
+        ),
+      ],
+    );
+  }
 }
 
 class _PosterSkeleton extends StatelessWidget {

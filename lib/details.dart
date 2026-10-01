@@ -406,31 +406,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
           (e) => EpisodePlan.isWatched(e, _progress),
         );
         void done() => setState(() => picked = null);
-        return Material(
-          color: scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(radiusLarge),
-          child: SizedBox(
-            height: buttonHeight + 8,
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Done',
-                  onPressed: done,
-                  icon: const Icon(Icons.close_rounded),
-                ),
-                Expanded(
-                  child: Text(
-                    '${eps.length} selected',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                if (season.length > eps.length)
-                  TextButton(
-                    onPressed: () => setState(
+        return Panel(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+            child: SelectionBar(
+              count: eps.length,
+              onDone: done,
+              onAll: season.length > eps.length
+                  ? () => setState(
                       () => picked = {for (final e in season) e.number: e},
-                    ),
-                    child: const Text('All'),
-                  ),
+                    )
+                  : null,
+              actions: [
                 if (site != null && toDownload.isNotEmpty)
                   IconButton(
                     tooltip: 'Download ${toDownload.length}',
@@ -494,7 +481,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       done();
                     },
                   ),
-                const SizedBox(width: 4),
               ],
             ),
           ),
@@ -1040,11 +1026,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   ),
                 ),
               ),
-            switch (tab) {
-              1 => DiscussionList(media, progress: _progress),
-              2 => FriendsList(media),
-              _ => _episodeList(),
-            },
+            // The new tab's content fades in.
+            TweenAnimationBuilder<double>(
+              key: ValueKey(tab),
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              builder: (context, opacity, sliver) =>
+                  SliverOpacity(opacity: opacity, sliver: sliver),
+              child: switch (tab) {
+                1 => DiscussionList(media, progress: _progress),
+                2 => FriendsList(media),
+                _ => _episodeList(),
+              },
+            ),
             // Clear of the floating play button.
             SliverToBoxAdapter(
               child: SizedBox(
@@ -1969,17 +1964,6 @@ class _EpisodeTile extends StatelessWidget {
             ),
           ),
         ],
-        if (onDiscuss != null)
-          IconButton(
-            tooltip: 'Discussion',
-            onPressed: onDiscuss,
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints.tightFor(width: 36, height: 28),
-            iconSize: 18,
-            color: scheme.onSurfaceVariant,
-            icon: const Icon(Icons.forum_outlined),
-          ),
       ],
     );
     final name = episode.title;
@@ -2012,7 +1996,7 @@ class _EpisodeTile extends StatelessWidget {
     final picked = selected;
     return Material(
       color: picked == true
-          ? scheme.secondaryContainer.withValues(alpha: .6)
+          ? scheme.primary.withValues(alpha: .12) // the picked posters' tint
           : Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -2026,7 +2010,7 @@ class _EpisodeTile extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(
             side,
             8,
-            trailing == null && picked == null ? side : 4,
+            trailing == null && picked == null && onDiscuss == null ? side : 4,
             8,
           ),
           child: Row(
@@ -2079,7 +2063,20 @@ class _EpisodeTile extends StatelessWidget {
                   ),
                 )
               else
-                ?trailing,
+                // Its download, with its discussion under it: full-size targets, beside the episode's name.
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ?trailing,
+                    if (onDiscuss != null)
+                      IconButton(
+                        tooltip: 'Episode discussion',
+                        onPressed: onDiscuss,
+                        color: scheme.onSurfaceVariant,
+                        icon: const Icon(Icons.forum_outlined),
+                      ),
+                  ],
+                ),
             ],
           ),
         ),
