@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -226,6 +227,22 @@ class Tracker {
     return await save(media, episode, forwardOnly: true)
         ? SyncResult.saved
         : SyncResult.queued;
+  }
+
+  /// A show to watch at random: from your Planning list when [Settings.randomFrom] says so and it has any, else
+  /// from the 1000 most popular that you aren't watching and haven't completed. Null when there's none.
+  static Future<Map?> random() async {
+    final pick = Random();
+    if (Settings.randomFrom == 'planning' && signedIn) {
+      final planning = (await lists())['PLANNING'] ?? const [];
+      if (planning.isNotEmpty) return planning[pick.nextInt(planning.length)];
+    }
+    final (shows, _) = await search(
+      '',
+      const SearchFilters(sort: 'POPULARITY_DESC', unwatched: true),
+      page: pick.nextInt(25) + 1,
+    );
+    return shows.isEmpty ? null : shows[pick.nextInt(shows.length)];
   }
 
   static Future<void> removeFromList(Map media) async {

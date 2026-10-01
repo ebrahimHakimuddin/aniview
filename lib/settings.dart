@@ -212,6 +212,10 @@ class Settings {
   static bool get newestFirst => _prefs.getBool('newest_first') ?? true;
   static set newestFirst(bool v) => _prefs.setBool('newest_first', v);
 
+  /// Where Watch random picks from: 'planning' (your Planning list, else everything) or 'everything'.
+  static String get randomFrom => _prefs.getString('random_from') ?? 'planning';
+  static set randomFrom(String v) => _prefs.setString('random_from', v);
+
   /// Tallest video height to stream; 0 means the best the connection allows.
   static int get streamQuality => _prefs.getInt('stream_quality') ?? 0;
   static set streamQuality(int v) => _prefs.setInt('stream_quality', v);
@@ -489,6 +493,8 @@ class _UpdateDownloadState extends State<_UpdateDownload> {
   );
 }
 
+const _randomFrom = {'planning': 'Planning list', 'everything': 'Anything'};
+
 const _holdGestures = {
   'speed': 'Play at 2×',
   'pause': 'Pause until released',
@@ -678,6 +684,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _Group('Home screen', [
+            _Choice(
+              title: 'Watch random picks from',
+              value: _randomFrom[Settings.randomFrom] ?? 'Planning list',
+              onTap: () => _choose(
+                'Watch random picks from',
+                const {
+                  'planning': 'Planning list · anything when it’s empty',
+                  'everything': 'Anything popular you haven’t watched',
+                },
+                Settings.randomFrom,
+                (v) => Settings.randomFrom = v,
+              ),
+            ),
             ListTile(
               title: const Text('Layout'),
               subtitle: Text(

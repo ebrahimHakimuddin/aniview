@@ -426,6 +426,23 @@ class _HomeScreenState extends State<HomeScreen>
     },
   );
 
+  Widget get _randomButton => IconButton(
+    tooltip: 'Watch something random',
+    iconSize: 28,
+    icon: const Icon(Icons.shuffle_rounded),
+    onPressed: () async {
+      try {
+        final show = await Tracker.random();
+        if (!mounted) return;
+        if (show == null) return showError(context, 'Nothing to pick from');
+        Analytics.event('watch_random', {'from': Settings.randomFrom});
+        await openDetails(context, show, onBack: _reloadLists);
+      } catch (e) {
+        if (mounted) showError(context, e);
+      }
+    },
+  );
+
   Widget get _downloadsButton => IconButton(
     tooltip: 'Downloads',
     iconSize: 28,
@@ -955,6 +972,7 @@ class _HomeFeed extends StatelessWidget {
               titleSpacing: side,
               title: home._wordmark,
               actions: [
+                home._randomButton,
                 home._downloadsButton,
                 home._releaseBell,
                 const SizedBox(width: 8),
