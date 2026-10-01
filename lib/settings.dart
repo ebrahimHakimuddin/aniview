@@ -631,7 +631,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           0,
           // TV: a readable column rather than lines across the whole screen.
           isTv ? MediaQuery.sizeOf(context).width * .3 : 0,
-          32,
+          32 + MediaQuery.paddingOf(context).bottom,
         ),
         children: [
           _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
@@ -1224,7 +1224,9 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
     body: ReorderableListView(
       // The handle drags straight away; the rest of the row still scrolls and toggles.
       buildDefaultDragHandles: false,
-      padding: const EdgeInsets.only(bottom: 32),
+      padding: EdgeInsets.only(
+        bottom: 32 + MediaQuery.paddingOf(context).bottom,
+      ),
       onReorderStart: (_) => HapticFeedback.selectionClick(),
       onReorderItem: (from, to) {
         sections.insert(to, sections.removeAt(from));

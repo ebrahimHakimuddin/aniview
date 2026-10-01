@@ -695,7 +695,12 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   }
 
   Widget _pairing() => ListView(
-    padding: const EdgeInsets.all(16),
+    padding: EdgeInsets.fromLTRB(
+      16,
+      16,
+      16,
+      16 + MediaQuery.paddingOf(context).bottom,
+    ),
     children: [
       Text(
         'On the TV, open AniView and choose Sign in, or Settings → Phone remote. Keep both on the same Wi-Fi.'

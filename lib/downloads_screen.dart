@@ -91,7 +91,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         }
         final wanted = _filters[filter]!;
         return ListView(
-          padding: const EdgeInsets.only(bottom: 32),
+          padding: EdgeInsets.only(
+            bottom: 32 + MediaQuery.paddingOf(context).bottom,
+          ),
           children: [
             Padding(
               padding: EdgeInsets.symmetric(horizontal: side),
