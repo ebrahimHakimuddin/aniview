@@ -56,15 +56,21 @@ class SearchFilters {
     this.format,
     this.status,
     this.genres = const {},
+    this.unwatched = false,
   });
 
   final String? sort, season, format, status;
   final int? year;
   final Set<String> genres; // all of them, like AniList's genre_in
 
+  /// Leaves out shows you're watching or have completed (signed in only).
+  final bool unwatched;
+
   /// How many filters narrow the results; sorting doesn't count.
   int get count =>
-      [season, year, format, status].whereType<Object>().length + genres.length;
+      [season, year, format, status].whereType<Object>().length +
+      genres.length +
+      (unwatched ? 1 : 0);
 
   /// For results that couldn't be filtered server-side (MyAnimeList).
   bool matches(Map media) =>
@@ -72,7 +78,13 @@ class SearchFilters {
       (year == null || media['seasonYear'] == year) &&
       (format == null || media['format'] == format) &&
       (status == null || media['status'] == status) &&
-      genres.every((media['genres'] as List).contains);
+      genres.every((media['genres'] as List).contains) &&
+      (!unwatched ||
+          !const {
+            'CURRENT',
+            'REPEATING',
+            'COMPLETED',
+          }.contains(media['mediaListEntry']?['status']));
 }
 
 /// AniList SSO (implicit grant) and the GraphQL calls the app needs.
@@ -211,10 +223,15 @@ class AniList {
     SearchFilters filters = const SearchFilters(),
     int page = 1,
   ]) async {
+    // Fetched once per search, for its later pages too.
+    if (filters.unwatched && (page == 1 || _watched == null)) {
+      _watched = watchedIds();
+    }
+    final watched = filters.unwatched ? await _watched! : const <int>[];
     final data = (await query(
-      r'query($page:Int,$s:String,$sort:[MediaSort],$season:MediaSeason,$year:Int,$format:MediaFormat,$status:MediaStatus,$genres:[String]){'
+      r'query($page:Int,$s:String,$sort:[MediaSort],$season:MediaSeason,$year:Int,$format:MediaFormat,$status:MediaStatus,$genres:[String],$not:[Int]){'
       r'Page(page:$page,perPage:40){pageInfo{hasNextPage} media(search:$s,type:ANIME,isAdult:false,sort:$sort,season:$season,'
-      r'seasonYear:$year,format:$format,status:$status,genre_in:$genres){'
+      r'seasonYear:$year,format:$format,status:$status,genre_in:$genres,id_not_in:$not){'
       '$_media}}}',
       // AniList reads an explicit null as "must be null", so unset filters are left out.
       {
@@ -227,9 +244,27 @@ class AniList {
         'format': filters.format,
         'status': filters.status,
         'genres': filters.genres.isEmpty ? null : filters.genres.toList(),
+        'not': watched.isEmpty ? null : watched,
       }..removeWhere((_, v) => v == null),
     ))['Page'];
     return (data['media'] as List, data['pageInfo']['hasNextPage'] == true);
+  }
+
+  static Future<List<int>>? _watched;
+
+  /// Ids of the shows you're watching, rewatching or have completed; none signed out.
+  static Future<List<int>> watchedIds() async {
+    final me = await viewer();
+    if (me == null) return const [];
+    final data = await query(
+      r'query($u:Int){MediaListCollection(userId:$u,type:ANIME,status_in:[CURRENT,REPEATING,COMPLETED]){'
+      r'lists{entries{mediaId}}}}',
+      {'u': me['id']},
+    );
+    return [
+      for (final list in data['MediaListCollection']['lists'])
+        for (final entry in list['entries']) entry['mediaId'] as int,
+    ];
   }
 
   static Future<Map> media(int id) async => (await query(

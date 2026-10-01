@@ -294,9 +294,11 @@ class _SearchScreenState extends State<SearchScreen> {
     Object? format = _keep,
     Object? status = _keep,
     Set<String>? genres,
+    bool? unwatched,
   }) {
     final f = filters;
     return SearchFilters(
+      unwatched: unwatched ?? f.unwatched,
       sort: sort == _keep ? f.sort : sort as String?,
       season: season == _keep ? f.season : season as String?,
       year: year == _keep ? f.year : year as int?,
@@ -392,6 +394,7 @@ class _SearchScreenState extends State<SearchScreen> {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: side),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (var row = 0; row < 2; row++)
             Padding(
@@ -404,6 +407,17 @@ class _SearchScreenState extends State<SearchScreen> {
                       Expanded(child: chips[i]),
                     ],
                   ],
+                ),
+              ),
+            ),
+          if (Tracker.signedIn)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: TvRow(
+                child: FilterChip(
+                  label: const Text('Hide watching & completed'),
+                  selected: f.unwatched,
+                  onSelected: (v) => _setFilters(_copy(unwatched: v)),
                 ),
               ),
             ),

@@ -63,5 +63,19 @@ void main() {
       const SearchFilters(genres: {'Action', 'Comedy'}).matches(media),
       isFalse,
     ); // every genre must match
+    const unwatched = SearchFilters(unwatched: true);
+    expect(unwatched.matches(media), isTrue); // not on the list
+    for (final (status, kept) in [
+      ('PLANNING', true),
+      ('CURRENT', false),
+      ('REPEATING', false),
+      ('COMPLETED', false),
+    ]) {
+      final listed = {
+        ...media,
+        'mediaListEntry': {'status': status},
+      };
+      expect(unwatched.matches(listed), kept, reason: status);
+    }
   });
 }
