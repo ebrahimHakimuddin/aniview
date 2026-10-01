@@ -85,6 +85,9 @@ void Function(Duration to)? onRemoteSeek;
 /// does nothing while something plays.
 void Function(String? query)? onRemoteSearch;
 
+/// Plays the show with this AniList id, sent from the phone ("Play on TV"). Home sets it.
+void Function(int id)? onRemotePlay;
+
 /// A search typed on the phone remote, for the Search page to run.
 final remoteQuery = ValueNotifier<String?>(null);
 

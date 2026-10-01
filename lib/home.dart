@@ -11,6 +11,7 @@ import 'downloads_screen.dart';
 import 'history.dart';
 import 'library.dart';
 import 'notifications.dart';
+import 'pairing.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
@@ -180,8 +181,10 @@ class _HomeScreenState extends State<HomeScreen>
     _scheduleNotifications();
     EpisodeNotifications.listen(_openFromNotification);
     listenTv(resume: _resumeFromLauncher, search: _voiceSearch);
+    if (!isTv) TvRemote.check();
     if (isTv) {
       onRemoteSearch = _remoteSearch;
+      onRemotePlay = _playFromRemote;
       onLeftEdge = () {
         if (ModalRoute.of(context)?.isCurrent != true) return false;
         _openDrawer();
@@ -211,6 +214,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     onLeftEdge = null;
     onRemoteSearch = null;
+    onRemotePlay = null;
     WidgetsBinding.instance.removeObserver(this);
     _tabCurve.dispose();
     _tabIn.dispose();
@@ -222,7 +226,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _syncPending();
+    if (state != AppLifecycleState.resumed) return;
+    _syncPending();
+    if (!isTv) TvRemote.check();
   }
 
   /// Pushes progress watched while offline once a tracker is reachable again.
@@ -277,6 +283,27 @@ class _HomeScreenState extends State<HomeScreen>
     } catch (e) {
       if (mounted) showError(context, e);
     }
+  }
+
+  /// "Play on TV" from the phone: from where it was left on this TV, else the show's page starting its next
+  /// episode. Whatever's playing gives way to it.
+  Future<void> _playFromRemote(int id) async {
+    Analytics.event('remote_play', {'media_id': id});
+    Navigator.popUntil(context, (route) => route.isFirst);
+    try {
+      final record = await WatchHistory.byId(id);
+      if (!mounted) return;
+      if (record != null) {
+        await resumeWatching(context, record);
+      } else {
+        final media = await AniList.media(id);
+        if (!mounted) return;
+        await openDetails(context, media, onBack: _reloadLists, autoplay: true);
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    _reloadLists();
   }
 
   /// A show picked from the TV launcher's Continue watching row: straight back into the player, or its page
@@ -457,6 +484,24 @@ class _HomeScreenState extends State<HomeScreen>
               if (mounted && _picking) setState(() => _picking = false);
             }
           },
+  );
+
+  /// The phone remote, while the paired TV answers.
+  Widget get _remoteButton => ValueListenableBuilder(
+    valueListenable: TvRemote.connected,
+    builder: (context, connected, _) => !connected
+        ? const SizedBox.shrink()
+        : IconButton(
+            tooltip: 'TV remote',
+            iconSize: 28,
+            icon: const Icon(Icons.settings_remote_outlined),
+            onPressed: () => pushSettled(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const PhoneRemoteScreen(),
+              ),
+            ),
+          ),
   );
 
   Widget get _downloadsButton => IconButton(
@@ -997,6 +1042,7 @@ class _HomeFeed extends StatelessWidget {
               title: home._wordmark,
               actions: [
                 home._randomButton,
+                home._remoteButton,
                 home._downloadsButton,
                 home._releaseBell,
                 const SizedBox(width: 8),

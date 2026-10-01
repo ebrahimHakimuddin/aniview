@@ -9,6 +9,7 @@ import 'cloudflare.dart';
 import 'downloads.dart';
 import 'history.dart';
 import 'playback.dart';
+import 'pairing.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
@@ -23,10 +24,11 @@ Future<void> openDetails(
   BuildContext context,
   Map media, {
   VoidCallback? onBack,
+  bool autoplay = false,
 }) async {
   await pushSettled(
     context,
-    MaterialPageRoute(builder: (_) => DetailsScreen(media)),
+    MaterialPageRoute(builder: (_) => DetailsScreen(media, autoplay: autoplay)),
   );
   onBack?.call();
 }
@@ -221,9 +223,12 @@ const _listLabels = {
 
 /// A show: its art and details, the main play action, your AniList entry, and its episodes on the chosen site.
 class DetailsScreen extends StatefulWidget {
-  const DetailsScreen(this.media, {super.key});
+  const DetailsScreen(this.media, {super.key, this.autoplay = false});
 
   final Map media;
+
+  /// Starts what the play button offers as soon as it's known ("Play on TV" from the phone).
+  final bool autoplay;
 
   @override
   State<DetailsScreen> createState() => _DetailsScreenState();
@@ -277,6 +282,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     Analytics.screen('/details', title: titleOf(media));
     _loadSites();
   }
+
+  /// [DetailsScreen.autoplay] has started playing.
+  bool _autoplayed = false;
 
   Future<void> _loadSites() async {
     try {
@@ -622,7 +630,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
       future: episodes,
       builder: (context, snap) {
         final list = snap.data;
-        return switch (EpisodePlan.nextUp(saved.data, list, _progress)) {
+        final action = switch (EpisodePlan.nextUp(
+          saved.data,
+          list,
+          _progress,
+        )) {
           ResumeSaved(:final record, :final midway) => PlayAction(
             autofocus: isTv,
             title:
@@ -665,6 +677,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     child: Skeleton(height: buttonHeight, radius: radiusMedium),
                   ),
         };
+        if (widget.autoplay && !_autoplayed && action is PlayAction) {
+          _autoplayed = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) action.onPressed();
+          });
+        }
+        return action;
       },
     ),
   );
@@ -726,32 +745,53 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// Download episodes, mark the season watched. (Fixing the site's match sits by the site picker.)
-  Widget _moreMenu() => FutureBuilder(
-    future: episodes,
-    builder: (context, snap) {
-      final list = snap.data, site = source;
-      final hasEpisodes = list != null && list.isNotEmpty;
-      return MoreMenu(title: titleOf(media), [
-        if (hasEpisodes && site != null)
-          (
-            icon: Icons.download_rounded,
-            label: 'Download episodes…',
-            onTap: () => _downloadSeason(site, list, _progress),
-            destructive: false,
-          ),
-        if (hasEpisodes && Tracker.signedIn)
-          (
-            icon: Icons.done_all_rounded,
-            label: 'Mark season watched',
-            onTap: () => _markWatched(
-              list.fold(0, (n, e) => e.number > n ? e.number.toInt() : n),
+  /// Play on the paired TV, download episodes, mark the season watched. (Fixing the site's match sits by the site
+  /// picker.)
+  Widget _moreMenu() => ValueListenableBuilder(
+    valueListenable: TvRemote.connected,
+    builder: (context, tvConnected, _) => FutureBuilder(
+      future: episodes,
+      builder: (context, snap) {
+        final list = snap.data, site = source;
+        final hasEpisodes = list != null && list.isNotEmpty;
+        return MoreMenu(title: titleOf(media), [
+          if (tvConnected && !isTv && media['id'] is int)
+            (
+              icon: Icons.cast_rounded,
+              label: 'Play on ${TvRemote.name ?? 'TV'}',
+              onTap: _playOnTv,
+              destructive: false,
             ),
-            destructive: false,
-          ),
-      ]);
-    },
+          if (hasEpisodes && site != null)
+            (
+              icon: Icons.download_rounded,
+              label: 'Download episodes…',
+              onTap: () => _downloadSeason(site, list, _progress),
+              destructive: false,
+            ),
+          if (hasEpisodes && Tracker.signedIn)
+            (
+              icon: Icons.done_all_rounded,
+              label: 'Mark season watched',
+              onTap: () => _markWatched(
+                list.fold(0, (n, e) => e.number > n ? e.number.toInt() : n),
+              ),
+              destructive: false,
+            ),
+        ]);
+      },
+    ),
   );
+
+  Future<void> _playOnTv() async {
+    try {
+      await TvRemote.play(media);
+      if (!mounted) return;
+      showSuccess(context, 'Playing on ${TvRemote.name ?? 'the TV'}');
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
 
   bool _newestFirst(WatchRecord? saved) =>
       newestFirstPicked ??

@@ -224,6 +224,13 @@ class TvLink {
               }
             case {'k': 'search'}:
               onRemoteSearch?.call(null);
+            case {'play': final int id}:
+              // Answered at once; the show opens on the TV behind it.
+              if (onRemotePlay case final play?) {
+                play(id);
+              } else {
+                response.statusCode = HttpStatus.conflict;
+              }
             case {'k': final String key}:
               if (key != 'back' && !remoteKeys.containsKey(key)) {
                 throw const FormatException();
@@ -253,6 +260,92 @@ class TvLink {
       response.statusCode = HttpStatus.badRequest;
     }
     await response.close();
+  }
+}
+
+/// This phone's side of the link to its paired TV (the first one): whether it answers, and sealed presses to it.
+class TvRemote {
+  /// Whether the paired TV answered the last time it was asked (see [check]).
+  static final connected = ValueNotifier<bool>(false);
+
+  static final _client = http.Client();
+
+  /// When the last press was sealed: the TV refuses one that isn't newer than the one before.
+  static int _sent = 0;
+
+  /// Posts [press] to [saved] (a paired TV), sealed with its key; throws when it can't be reached.
+  static Future<http.Response> post(Map saved, Map<String, Object> press) {
+    final key = base64.decode(saved['key']);
+    _sent = max(DateTime.now().millisecondsSinceEpoch, _sent + 1);
+    return _client
+        .post(
+          Uri.parse('http://${saved['address']}/key'),
+          body: jsonEncode({
+            'id': remoteKeyId(key),
+            'data': base64.encode(
+              seal(key, jsonEncode({...press, 't': _sent})),
+            ),
+          }),
+        )
+        .timeout(const Duration(seconds: 3));
+  }
+
+  static Map? get _tv => Settings.tvRemotes.values.firstOrNull;
+
+  /// The paired TV's name, if there is one.
+  static String? get name => _tv?['name'];
+
+  /// Asks the paired TV whether it's there, looking for it again on the network when it isn't (its address
+  /// changes when the app restarts there), and sets [connected].
+  static Future<void> check() async {
+    if (_tv == null) {
+      connected.value = false;
+      return;
+    }
+    if (await _answers()) return;
+    await for (final found in findTvs()) {
+      final id = found.id;
+      if (id != null && Settings.tvRemotes[id] != null) {
+        Settings.tvRemotes = {
+          ...Settings.tvRemotes,
+          id: {...Settings.tvRemotes[id], 'address': found.address},
+        };
+      }
+    }
+    await _answers();
+  }
+
+  static Future<bool> _answers() async {
+    try {
+      connected.value =
+          (await post(_tv!, const {'q': 'state'})).statusCode == HttpStatus.ok;
+    } catch (_) {
+      connected.value = false;
+    }
+    return connected.value;
+  }
+
+  /// Plays [media] on the paired TV: from where it was left there, else its next episode. Throws with why not.
+  static Future<void> play(Map media) async {
+    final tv = _tv;
+    if (tv == null) throw Exception('No TV is paired');
+    final http.Response res;
+    try {
+      res = await post(tv, {'play': media['id'] as int});
+    } catch (_) {
+      connected.value = false;
+      throw Exception("Can't reach ${tv['name']}. Is AniView open on it?");
+    }
+    switch (res.statusCode) {
+      case HttpStatus.ok:
+        return;
+      case HttpStatus.forbidden:
+        throw Exception('The TV forgot this phone. Pair again');
+      case HttpStatus.conflict:
+        throw Exception('Open AniView\'s home on the TV first');
+      default:
+        throw Exception('The TV couldn\'t play it. Update AniView there');
+    }
   }
 }
 
@@ -489,11 +582,10 @@ class PhoneRemoteScreen extends StatefulWidget {
 class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   final found = <String, FoundTv>{}; // by address
   final manual = TextEditingController(), typed = TextEditingController();
-  final client = http.Client();
+  final client = http.Client(); // pairing requests
   String? tv; // the paired TV's id being controlled
   bool scanning = false, pairing = false;
   String? manualAddressError;
-  int _sent = 0;
 
   /// What the TV said it's playing, from its last answer; null when nothing is.
   Map? playing;
@@ -612,23 +704,12 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     final saved = paired[tv];
     if (saved == null) return;
     if (!quiet) HapticFeedback.selectionClick();
-    final key = base64.decode(saved['key']);
-    _sent = max(DateTime.now().millisecondsSinceEpoch, _sent + 1);
     try {
-      final res = await client
-          .post(
-            Uri.parse('http://${saved['address']}/key'),
-            body: jsonEncode({
-              'id': remoteKeyId(key),
-              'data': base64.encode(
-                seal(key, jsonEncode({...press, 't': _sent})),
-              ),
-            }),
-          )
-          .timeout(const Duration(seconds: 3));
+      final res = await TvRemote.post(saved, press);
       if (!mounted) return;
       switch (res.statusCode) {
         case HttpStatus.ok:
+          TvRemote.connected.value = true;
           final state = jsonDecode(res.body) as Map;
           setState(() => playing = state['playing'] == true ? state : null);
         case HttpStatus.forbidden: // unpaired on the TV
