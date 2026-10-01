@@ -1446,26 +1446,7 @@ class _FeaturedState extends State<_Featured> {
               ),
             ),
           // Behind the pinned header: its logo and buttons stay readable over any art.
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: MediaQuery.paddingOf(context).top + kToolbarHeight + 32,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      scheme.surface.withValues(alpha: .85),
-                      scheme.surface.withValues(alpha: 0),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+          const HeaderScrim(),
           if (!widget.loading && widget.items.length > 1)
             Positioned(
               left: 0,

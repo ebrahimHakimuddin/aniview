@@ -921,6 +921,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       alignment: const Alignment(0, -.4),
                     ),
                     DecoratedBox(decoration: keyArtFade),
+                    // The back and ⋮ buttons stay readable over any art.
+                    const HeaderScrim(),
                     Positioned(
                       left: side,
                       right: side,

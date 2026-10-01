@@ -421,6 +421,37 @@ ThemeData _buildMaterialTheme() {
   );
 }
 
+/// The page's surface behind a pinned header that sits on key art (Home's featured show, a show's page), so its
+/// title and buttons read over any art: held through the toolbar, then fading out below it. Goes at the top of
+/// the art's Stack.
+class HeaderScrim extends StatelessWidget {
+  const HeaderScrim({super.key});
+
+  @override
+  Widget build(BuildContext context) => Positioned(
+    top: 0,
+    left: 0,
+    right: 0,
+    height: MediaQuery.paddingOf(context).top + kToolbarHeight + 56,
+    child: IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0, .6, 1],
+            colors: [
+              scheme.surface.withValues(alpha: .9),
+              scheme.surface.withValues(alpha: .75),
+              scheme.surface.withValues(alpha: 0),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 /// Marquee's key art: full-bleed, darkened a little under the status bar and fading into the page at its foot.
 BoxDecoration get keyArtFade {
   final colors = scheme;
