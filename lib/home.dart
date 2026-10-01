@@ -426,21 +426,37 @@ class _HomeScreenState extends State<HomeScreen>
     },
   );
 
+  /// Watch random is picking a show (a list or search request).
+  bool _picking = false;
+
   Widget get _randomButton => IconButton(
     tooltip: 'Watch something random',
     iconSize: 28,
-    icon: const Icon(Icons.shuffle_rounded),
-    onPressed: () async {
-      try {
-        final show = await Tracker.random();
-        if (!mounted) return;
-        if (show == null) return showError(context, 'Nothing to pick from');
-        Analytics.event('watch_random', {'from': Settings.randomFrom});
-        await openDetails(context, show, onBack: _reloadLists);
-      } catch (e) {
-        if (mounted) showError(context, e);
-      }
-    },
+    icon: _picking
+        ? const SizedBox.square(
+            dimension: 24,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          )
+        : const Icon(Icons.shuffle_rounded),
+    onPressed: _picking
+        ? null
+        : () async {
+            setState(() => _picking = true);
+            try {
+              final show = await Tracker.random();
+              if (!mounted) return;
+              setState(() => _picking = false);
+              if (show == null) {
+                return showError(context, 'Nothing to pick from');
+              }
+              Analytics.event('watch_random', {'from': Settings.randomFrom});
+              await openDetails(context, show, onBack: _reloadLists);
+            } catch (e) {
+              if (mounted) showError(context, e);
+            } finally {
+              if (mounted && _picking) setState(() => _picking = false);
+            }
+          },
   );
 
   Widget get _downloadsButton => IconButton(
@@ -970,6 +986,8 @@ class _HomeFeed extends StatelessWidget {
             SliverAppBar(
               pinned: true,
               titleSpacing: side,
+              // Full-contrast icons: they sit over the featured art until it scrolls away.
+              actionsIconTheme: IconThemeData(color: scheme.onSurface),
               title: home._wordmark,
               actions: [
                 home._randomButton,
@@ -1427,6 +1445,27 @@ class _FeaturedState extends State<_Featured> {
                 controller: controller,
               ),
             ),
+          // Behind the pinned header: its logo and buttons stay readable over any art.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: MediaQuery.paddingOf(context).top + kToolbarHeight + 32,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      scheme.surface.withValues(alpha: .85),
+                      scheme.surface.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (!widget.loading && widget.items.length > 1)
             Positioned(
               left: 0,
