@@ -252,6 +252,81 @@ class AniList {
 
   static Future<List<int>>? _watched;
 
+  // ───────────────────────────── Social ─────────────────────────────
+
+  /// The show's forum threads, most recently replied to first.
+  static Future<List> threads(int mediaId) async => (await query(
+    r'query($id:Int){Page(perPage:50){threads(mediaCategoryId:$id,sort:[REPLIED_AT_DESC]){'
+    r'id title replyCount repliedAt categories{id}}}}',
+    {'id': mediaId},
+  ))['Page']['threads'];
+
+  static final _releaseThreads = <int, Future<List>>{};
+
+  /// The show's episode discussions (AniList's Release Discussion category), newest first; kept for the session.
+  // ponytail: the newest 150, so a long runner's oldest episodes find none; page further if that matters
+  static Future<List> releaseThreads(int mediaId) =>
+      _releaseThreads[mediaId] ??=
+          () async {
+            final all = [];
+            for (var page = 1; page <= 3; page++) {
+              final data = (await query(
+                r'query($id:Int,$page:Int){Page(page:$page,perPage:50){pageInfo{hasNextPage} '
+                r'threads(mediaCategoryId:$id,categoryId:5,sort:[CREATED_AT_DESC]){id title replyCount repliedAt}}}',
+                {'id': mediaId, 'page': page},
+              ))['Page'];
+              all.addAll(data['threads']);
+              if (data['pageInfo']['hasNextPage'] != true) break;
+            }
+            return all;
+          }().catchError((Object e) {
+            _releaseThreads.remove(mediaId); // try again next time
+            throw e;
+          });
+
+  static const _comment =
+      'id comment likeCount isLiked createdAt user{name avatar{medium}} childComments';
+
+  /// One page of a thread's comments, oldest first, each with its replies nested under `childComments`.
+  static Future<(List, bool)> threadComments(int threadId, int page) async {
+    final data = (await query(
+      r'query($id:Int,$page:Int){Page(page:$page,perPage:25){pageInfo{hasNextPage} '
+      r'threadComments(threadId:$id){'
+      '$_comment}}}',
+      {'id': threadId, 'page': page},
+    ))['Page'];
+    return (
+      data['threadComments'] as List,
+      data['pageInfo']['hasNextPage'] == true,
+    );
+  }
+
+  /// Posts [text] to a thread, as a reply to [parent] when given; returns the new comment.
+  static Future<Map> postComment(
+    int threadId,
+    String text, {
+    int? parent,
+  }) async => (await query(
+    r'mutation($thread:Int,$parent:Int,$text:String){'
+    r'SaveThreadComment(threadId:$thread,parentCommentId:$parent,comment:$text){'
+    '$_comment}}',
+    // An explicit null parent is rejected; a top-level comment leaves it out.
+    {'thread': threadId, 'text': text, 'parent': ?parent},
+  ))['SaveThreadComment'];
+
+  /// Likes or unlikes a comment; returns its new {likeCount, isLiked}.
+  static Future<Map> toggleCommentLike(int id) async => (await query(
+    r'mutation($id:Int){ToggleLikeV2(id:$id,type:THREAD_COMMENT){... on ThreadComment{likeCount isLiked}}}',
+    {'id': id},
+  ))['ToggleLikeV2'];
+
+  /// Where the people you follow are with a show: their list entries, most recently updated first.
+  static Future<List> following(int mediaId) async => (await query(
+    r'query($id:Int){Page(perPage:50){mediaList(mediaId:$id,isFollowing:true,sort:UPDATED_TIME_DESC){'
+    r'status progress score(format:POINT_10_DECIMAL) updatedAt user{name avatar{medium}}}}}',
+    {'id': mediaId},
+  ))['Page']['mediaList'];
+
   /// Ids of the shows you're watching, rewatching or have completed; none signed out.
   static Future<List<int>> watchedIds() async {
     final me = await viewer();
