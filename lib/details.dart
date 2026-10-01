@@ -12,6 +12,7 @@ import 'playback.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
+import 'social.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -251,6 +252,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Chosen page of episodes; null follows the page holding the next unwatched one.
   int? page;
   static const _pageSize = 50;
+
+  /// Phones: the tab under the show's details (Episodes, Discussion, Friends).
+  int tab = 0;
 
   /// Phones: episodes picked for a bulk action, by number; null when not picking.
   Map<num, Episode>? picked;
@@ -1017,7 +1021,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             ),
-            _episodeList(),
+            // Shows AniList knows get its social side alongside the episodes.
+            if (media['id'] is int)
+              SliverToBoxAdapter(
+                child: DefaultTabController(
+                  length: 3,
+                  initialIndex: tab,
+                  child: TabBar(
+                    onTap: (i) => setState(() {
+                      tab = i;
+                      picked = null;
+                    }),
+                    tabs: const [
+                      Tab(text: 'Episodes'),
+                      Tab(text: 'Discussion'),
+                      Tab(text: 'Friends'),
+                    ],
+                  ),
+                ),
+              ),
+            switch (tab) {
+              1 => DiscussionList(media, progress: _progress),
+              2 => FriendsList(media),
+              _ => _episodeList(),
+            },
             // Clear of the floating play button.
             SliverToBoxAdapter(
               child: SizedBox(
@@ -1443,6 +1470,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
       selected: picking ? picked!.containsKey(episode.number) : null,
+      onDiscuss: isTv || picking || media['id'] is! int
+          ? null
+          : () => openEpisodeDiscussion(
+              context,
+              media,
+              episode.number,
+              progress: _progress,
+            ),
       onLongPress: isTv
           ? () => _episodeActions(
               episode,
@@ -1887,7 +1922,11 @@ class _EpisodeTile extends StatelessWidget {
     this.onLongPress,
     this.trailing,
     this.selected,
+    this.onDiscuss,
   });
+
+  /// Opens the episode's AniList discussion, from a button by its name.
+  final VoidCallback? onDiscuss;
 
   final Episode episode;
   final bool watched, upNext;
@@ -1930,6 +1969,17 @@ class _EpisodeTile extends StatelessWidget {
             ),
           ),
         ],
+        if (onDiscuss != null)
+          IconButton(
+            tooltip: 'Discussion',
+            onPressed: onDiscuss,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 36, height: 28),
+            iconSize: 18,
+            color: scheme.onSurfaceVariant,
+            icon: const Icon(Icons.forum_outlined),
+          ),
       ],
     );
     final name = episode.title;
