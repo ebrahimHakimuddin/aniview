@@ -125,9 +125,8 @@ Download? _tryParse(Object? json) {
 }
 
 /// Episodes saved on the device. An HLS stream is stored as a local playlist plus its segment, key and subtitle
-/// files, so offline playback works exactly like streaming. Downloads run one at a time while the app is open.
-// ponytail: no foreground service, so Android may pause a download when the app is backgrounded for long;
-// unfinished segments resume on the next launch.
+/// files, so offline playback works exactly like streaming. Downloads run one at a time, in the background too
+/// (a foreground service keeps the app alive while the queue runs); unfinished segments resume on the next launch.
 class Downloads extends ChangeNotifier {
   Downloads._();
   static final instance = Downloads._();
@@ -386,6 +385,8 @@ class Downloads extends ChangeNotifier {
       }
     } finally {
       _running = false;
+      // Lets the app be backgrounded normally again (see DownloadService.kt).
+      _notifications.invokeMethod('idle').catchError((Object _) => null);
     }
   }
 

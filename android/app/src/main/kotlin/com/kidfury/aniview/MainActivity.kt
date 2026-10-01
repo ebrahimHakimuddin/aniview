@@ -291,18 +291,19 @@ class MainActivity : FlutterActivity() {
         externalResult = null
     }
 
-    /** One ongoing notification while an episode downloads, then a dismissable one saying how it ended. */
+    /**
+     * One ongoing notification while an episode downloads, then a dismissable one saying how it ended. The first
+     * progress starts [DownloadService], which keeps the queue going in the background until "idle".
+     */
     private fun showDownload(state: String, title: String, text: String?, percent: Int) {
+        if (state == "idle") return DownloadService.stop(this)
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (state != "progress") manager.cancel(PROGRESS_ID)
         if (state == "cancel") return
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            if (state == "progress" && percent == 0) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
-            }
-            return
+        val allowed = Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (!allowed && state == "progress" && percent == 0) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
         val builder = if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(
@@ -323,8 +324,10 @@ class MainActivity : FlutterActivity() {
                 .setContentText("Downloading · $percent%")
                 .setProgress(100, percent, percent == 0)
                 .setOngoing(true)
-            manager.notify(PROGRESS_ID, builder.build())
-        } else {
+            val notification = builder.build()
+            // The service runs without the notification permission too; it just isn't shown.
+            if (!DownloadService.start(this, notification) && allowed) manager.notify(PROGRESS_ID, notification)
+        } else if (allowed) {
             builder.setSmallIcon(
                 if (state == "done") android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error,
             )
@@ -336,7 +339,7 @@ class MainActivity : FlutterActivity() {
 
     private companion object {
         const val CHANNEL = "downloads"
-        const val PROGRESS_ID = 1
+        const val PROGRESS_ID = DownloadService.PROGRESS_ID
         const val EXTERNAL_REQUEST = 1
         const val VOICE_REQUEST = 2
         const val FOLDER_REQUEST = 3
