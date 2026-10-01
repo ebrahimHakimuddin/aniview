@@ -472,13 +472,14 @@ class _HomeScreenState extends State<HomeScreen>
     ),
   );
 
+  /// The white wordmark on dark themes, the dark blue one on light ones.
   Widget get _wordmark => Image.asset(
-    'assets/icon/aniview_wordmark.png',
+    scheme.brightness == Brightness.light
+        ? 'assets/icon/aniview_wordmark_light.png'
+        : 'assets/icon/aniview_wordmark.png',
     width: 132,
     height: 44,
     fit: BoxFit.contain,
-    color: scheme.brightness == Brightness.light ? scheme.onSurface : null,
-    colorBlendMode: BlendMode.srcIn,
     semanticLabel: 'AniView',
     cacheWidth: 440,
   );
