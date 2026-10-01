@@ -323,7 +323,7 @@ class AniList {
   /// Where the people you follow are with a show: their list entries, most recently updated first.
   static Future<List> following(int mediaId) async => (await query(
     r'query($id:Int){Page(perPage:50){mediaList(mediaId:$id,isFollowing:true,sort:UPDATED_TIME_DESC){'
-    r'status progress score(format:POINT_10_DECIMAL) updatedAt user{name avatar{medium}}}}}',
+    r'status progress score(format:POINT_100) updatedAt user{name avatar{medium}}}}}',
     {'id': mediaId},
   ))['Page']['mediaList'];
 

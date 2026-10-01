@@ -96,6 +96,37 @@ String _since(int? at) {
       : '${d.inDays ~/ 365}y';
 }
 
+/// Rows of placeholders while a list of people or threads loads: a round picture and two lines each.
+class _RowSkeletons extends StatelessWidget {
+  const _RowSkeletons();
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (var i = 0; i < 6; i++)
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: side, vertical: 12),
+          child: const Row(
+            children: [
+              Skeleton(width: 40, height: 40, radius: 20),
+              SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Skeleton(width: 160, height: 14, radius: radiusSmall),
+                    SizedBox(height: 8),
+                    Skeleton(width: 96, height: 12, radius: radiusSmall),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+    ],
+  );
+}
+
 /// A thread title without the "[Spoilers]" tag every episode discussion carries.
 String threadTitle(Map thread) => (thread['title'] as String)
     .replaceFirst(RegExp(r'^\s*\[spoilers?\]\s*', caseSensitive: false), '')
@@ -118,6 +149,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
   int page = 0;
   bool more = true, loading = false, sending = false;
   Object? error;
+
+  /// Why the last post failed, shown under the comment field.
+  String? postError;
 
   /// The comment being replied to; null posts to the thread.
   Map? replyTo;
@@ -161,7 +195,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Future<void> _send() async {
     final text = input.text.trim();
     if (text.isEmpty || sending) return;
-    setState(() => sending = true);
+    setState(() {
+      sending = true;
+      postError = null;
+    });
     try {
       final posted = await AniList.postComment(
         id,
@@ -180,8 +217,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
         input.clear();
       });
       FocusScope.of(context).unfocus();
+      showSuccess(context, 'Comment posted');
     } catch (e) {
-      if (mounted) showError(context, e);
+      if (mounted) setState(() => postError = friendlyError(e));
     } finally {
       if (mounted) setState(() => sending = false);
     }
@@ -201,8 +239,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final signedIn = Tracker.signedIn;
     return Scaffold(
       appBar: AppBar(
-        title: Text(threadTitle(widget.thread), maxLines: 2),
-        titleTextStyle: Theme.of(context).textTheme.titleMedium,
+        title: Text(
+          threadTitle(widget.thread),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        toolbarHeight: 64,
+        titleSpacing: side,
       ),
       body: Column(
         children: [
@@ -234,10 +277,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
       if (!loading) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _load());
       }
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return comments.isEmpty
+          ? const _RowSkeletons()
+          : const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator()),
+            );
     }
     if (comments.isEmpty) {
       return const EmptyState(
@@ -302,7 +347,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
               TextButton.icon(
                 onPressed: signedIn ? () => _like(c) : null,
                 style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
                   foregroundColor: liked
                       ? scheme.primary
                       : scheme.onSurfaceVariant,
@@ -319,7 +363,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 TextButton(
                   onPressed: () => setState(() => replyTo = c),
                   style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
                     foregroundColor: scheme.onSurfaceVariant,
                   ),
                   child: const Text('Reply'),
@@ -337,7 +380,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     child: SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+        padding: EdgeInsets.fromLTRB(side, 8, side - 4, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -352,7 +395,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   ),
                   IconButton(
                     tooltip: 'Cancel reply',
-                    visualDensity: VisualDensity.compact,
                     onPressed: () => setState(() => replyTo = null),
                     icon: const Icon(Icons.close_rounded, size: 18),
                   ),
@@ -366,15 +408,23 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     minLines: 1,
                     maxLines: 4,
                     textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(
-                      hintText: 'Add a comment',
-                      border: InputBorder.none,
+                    onChanged: (_) => setState(() => postError = null),
+                    decoration: InputDecoration(
+                      hintText: replyTo == null
+                          ? 'Add a comment'
+                          : 'Write a reply',
+                      errorText: postError,
+                      errorMaxLines: 3,
                     ),
                   ),
                 ),
+                const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'Post',
-                  onPressed: sending ? null : _send,
+                  // Disabled until there's something to post.
+                  onPressed: sending || input.text.trim().isEmpty
+                      ? null
+                      : _send,
                   icon: sending
                       ? const SizedBox.square(
                           dimension: 20,
@@ -456,7 +506,8 @@ class _CommentTextState extends State<CommentText> {
     final body = Text.rich(TextSpan(children: spans), style: style);
     return !spoilers || revealed
         ? body
-        : GestureDetector(
+        : InkWell(
+            borderRadius: BorderRadius.circular(radiusSmall),
             onTap: () => setState(() => revealed = true),
             child: body,
           );
@@ -494,12 +545,7 @@ class _DiscussionListState extends State<DiscussionList> {
         );
       }
       if (!snap.hasData) {
-        return const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        );
+        return const SliverToBoxAdapter(child: _RowSkeletons());
       }
       final list = snap.data!.cast<Map>();
       if (list.isEmpty) {
@@ -586,12 +632,7 @@ class _FriendsListState extends State<FriendsList> {
           );
         }
         if (!snap.hasData) {
-          return const SliverToBoxAdapter(
-            child: Padding(
-              padding: EdgeInsets.all(32),
-              child: Center(child: CircularProgressIndicator()),
-            ),
-          );
+          return const SliverToBoxAdapter(child: _RowSkeletons());
         }
         final list = snap.data!.cast<Map>();
         if (list.isEmpty) {
@@ -628,20 +669,7 @@ class _FriendsListState extends State<FriendsList> {
                 ].where((s) => s.isNotEmpty).join(' · '),
                 style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
-              trailing: score > 0
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.star_rounded,
-                          size: 18,
-                          color: scheme.primary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text('$score', style: text.titleSmall),
-                      ],
-                    )
-                  : null,
+              trailing: score > 0 ? Pill.score(score.round()) : null,
             );
           },
         );
