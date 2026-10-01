@@ -19,6 +19,7 @@ Future<void> main() async {
     AniList.load(),
     Settings.load(),
     Downloads.instance.load(),
+    loadSystemAccent(),
   ]);
   await detectTv(layout: Settings.layout);
   // Phones find it to pair as a remote and sign it in.

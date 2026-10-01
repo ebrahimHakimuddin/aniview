@@ -35,6 +35,19 @@ enum ThemeSelection {
     Color(0xFF01C4FA),
     Brightness.dark,
   ),
+  // Seeded from the phone's wallpaper accent (see [systemAccent]); the cyan only stands in if it goes missing.
+  dynamicLight(
+    'Your colors · Light',
+    'Material You · from your wallpaper',
+    Color(0xFF01C4FA),
+    Brightness.light,
+  ),
+  dynamicDark(
+    'Your colors · Dark',
+    'Material You · from your wallpaper',
+    Color(0xFF01C4FA),
+    Brightness.dark,
+  ),
   materialLight(
     'Cyan Light',
     'Material 3 · cyan',
@@ -81,6 +94,8 @@ enum ThemeSelection {
   final String label, description;
   final Color seedColor;
   final Brightness brightness;
+
+  bool get dynamic => this == dynamicLight || this == dynamicDark;
 }
 
 /// Rows of the home screen, in their default order.
@@ -540,6 +555,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _pickTheme() async {
+    // Your colors only where Android has a wallpaper palette to give.
+    final themes = [
+      for (final choice in ThemeSelection.values)
+        if (!choice.dynamic || systemAccent != null) choice,
+    ];
     final picked = await showSheet<ThemeSelection>(
       context,
       height: .72,
@@ -550,9 +570,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             sheetTitle(sheet, 'Choose a theme'),
             Expanded(
               child: ListView.builder(
-                itemCount: ThemeSelection.values.length,
+                itemCount: themes.length,
                 itemBuilder: (context, index) {
-                  final choice = ThemeSelection.values[index];
+                  final choice = themes[index];
                   final colors = themeScheme(choice);
                   final selected = choice == Settings.themeSelection;
                   return ScrollIntoViewOnFocus(

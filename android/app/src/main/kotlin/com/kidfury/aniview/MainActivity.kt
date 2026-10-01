@@ -85,6 +85,10 @@ class MainActivity : FlutterActivity() {
                             Configuration.UI_MODE_TYPE_TELEVISION,
                     )
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
+                    // The wallpaper accent Android 12+ themes its own apps from; null before Material You.
+                    "accent" -> result.success(
+                        if (Build.VERSION.SDK_INT >= 31) getColor(android.R.color.system_accent1_500) else null,
+                    )
                     // For the analytics user agent, e.g. "Android 14; Pixel 7".
                     "device" -> result.success("Android ${Build.VERSION.RELEASE}; ${Build.MODEL}")
                     // False when Android first needs "Install unknown apps" allowed: its page opens, and the

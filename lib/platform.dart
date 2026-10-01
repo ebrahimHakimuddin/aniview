@@ -15,6 +15,15 @@ class AndroidApp {
   /// The primary ABI, to pick the matching release APK.
   static Future<String?> abi() => _app.invokeMethod<String>('abi');
 
+  /// The phone's wallpaper accent (ARGB) on Android 12+; null before Material You or off Android.
+  static Future<int?> accent() async {
+    try {
+      return await _app.invokeMethod<int>('accent');
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Running on a TV (leanback UI mode); false off Android.
   static Future<bool> isTv() async {
     try {

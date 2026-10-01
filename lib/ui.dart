@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'anilist.dart';
 import 'details.dart';
+import 'platform.dart';
 import 'settings.dart';
 import 'states.dart';
 import 'tv.dart';
@@ -23,11 +24,22 @@ final _customScheme = ColorScheme.fromSeed(
   dynamicSchemeVariant: DynamicSchemeVariant.fidelity,
 );
 
+/// The phone's wallpaper accent, read once at startup by [loadSystemAccent]; null without Material You.
+Color? systemAccent;
+
+Future<void> loadSystemAccent() async {
+  final argb = await AndroidApp.accent();
+  if (argb != null) systemAccent = Color(argb);
+}
+
+/// Built on first use, after [loadSystemAccent]. Tonal spot, as Android derives its own palette from the wallpaper.
 final _materialSchemes = {
   for (final choice in ThemeSelection.values)
     if (choice != ThemeSelection.custom)
       choice: ColorScheme.fromSeed(
-        seedColor: choice.seedColor,
+        seedColor: choice.dynamic
+            ? systemAccent ?? choice.seedColor
+            : choice.seedColor,
         brightness: choice.brightness,
       ),
 };
