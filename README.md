@@ -49,9 +49,9 @@ install over builds signed with the same key.
    fvm flutter build apk --release --split-per-abi \
      --dart-define-from-file=dart_defines.env \
      --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"
-   git tag v2.2.0 && git push origin main v2.2.0
-   gh release create v2.2.0 build/app/outputs/flutter-apk/app-*-release.apk \
-     --title v2.2.0 --notes-file /tmp/aniview-v2.2.0-notes.md
+   git tag v2.2.1 && git push origin main v2.2.1
+   gh release create v2.2.1 build/app/outputs/flutter-apk/app-*-release.apk \
+     --title v2.2.1 --notes-file /tmp/aniview-v2.2.1-notes.md
    ```
 
    Prepare the short release notes file before the final command. Publish the three split APKs with their
@@ -70,9 +70,10 @@ fvm flutter build apk --release --android-project-arg=aniviewBeta=true \
 
 Its app name is **AniView Beta** and its application id is `com.kidfury.aniview.beta`; the beta build does not offer
 production APK updates.
-The update APK is downloaded through Android's DownloadManager; its progress notification is shown while downloading.
-When it finishes, AniView posts a notification that opens Android's package installer. Android may ask you to
-allow installs from AniView the first time.
+The update APK downloads inside the app with a progress dialog, then goes to a PackageInstaller session, so
+Android's own update prompt appears straight away (on TV the offer itself is a dialog). Android asks once to allow
+installs from AniView. From Android 12, after AniView has installed itself this way, later updates need no prompt.
+The app closes when it's replaced; a notification opens it again.
 
 ## Tracking
 

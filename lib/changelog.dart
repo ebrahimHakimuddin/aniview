@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 import 'states.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.2.0';
+const changelogVersion = '2.2.1';
 
 const changelogHighlights = [
-  'Choose from new light and dark cyan, violet, and forest themes.',
-  'See recent episode releases and switch the schedule between your shows and all shows.',
-  'Choose where new offline episodes are saved.',
-  'Clearer progress, easier My List actions, and improved TV pairing.',
+  'Updates now download inside the app, with their progress showing.',
+  'Android’s install prompt appears as soon as the download finishes, with no notification to find.',
+  'Updating works on TV too: the offer appears as a dialog you can reach with the remote.',
+  'From Android 12, later updates install without asking again.',
 ];
 
 Future<void> showChangelog(BuildContext context) => showSheet<void>(
