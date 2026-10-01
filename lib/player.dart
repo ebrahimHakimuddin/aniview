@@ -692,6 +692,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         key: _scaffold,
         backgroundColor: Colors.black,
         endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
+        onEndDrawerChanged: _onDialog, // paused while the episodes are open
         endDrawer: Drawer(
           width: 400,
           backgroundColor: Colors.transparent,
@@ -1028,22 +1029,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _openEpisodes() {
     if (!isTv) return _scaffold.currentState?.openEndDrawer();
-    showDialog(
-      context: context,
-      builder: (context) => PanelDialog(
-        child: SizedBox(
-          width: 600,
-          height: MediaQuery.sizeOf(context).height * .8,
-          child: _EpisodeList(
-            episodes: widget.episodes,
-            current: index,
-            media: widget.media,
-            dub: widget.dub,
-            online: widget.source != null,
-            onSelect: (i) {
-              Navigator.pop(context);
-              if (i != index) _load(i);
-            },
+    _paused(
+      () => showDialog(
+        context: context,
+        builder: (context) => PanelDialog(
+          child: SizedBox(
+            width: 600,
+            height: MediaQuery.sizeOf(context).height * .8,
+            child: _EpisodeList(
+              episodes: widget.episodes,
+              current: index,
+              media: widget.media,
+              dub: widget.dub,
+              online: widget.source != null,
+              onSelect: (i) {
+                Navigator.pop(context);
+                if (i != index) _load(i);
+              },
+            ),
           ),
         ),
       ),
@@ -1084,9 +1087,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// A choice from a sheet (a panel on TV), with the controls kept up meanwhile.
   Future<T?> _pick<T>(String title, Map<T, String> options, T current) async {
     _hideTimer?.cancel();
-    final picked = await pickOne(context, title, options, current);
+    final picked = await _paused(
+      () => pickOne(context, title, options, current),
+    );
     _scheduleHide();
     return picked;
+  }
+
+  /// Whether the video was playing when a dialog or the episode drawer paused it.
+  bool _openedPlaying = false;
+
+  /// Pauses while [open]'s dialog or sheet is up, and plays on afterwards if it was playing.
+  Future<T> _paused<T>(Future<T> Function() open) async {
+    _onDialog(true);
+    try {
+      return await open();
+    } finally {
+      _onDialog(false);
+    }
+  }
+
+  void _onDialog(bool open) {
+    if (open) {
+      _openedPlaying = player.state.playing;
+      if (_openedPlaying) player.pause();
+    } else if (_openedPlaying && mounted) {
+      _openedPlaying = false;
+      player.play();
+    }
   }
 
   /// The server playing, switchable in place (keeps the position).
