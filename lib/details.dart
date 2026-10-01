@@ -771,6 +771,33 @@ class _DetailsScreenState extends State<DetailsScreen> {
     label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
   );
 
+  /// Phones, atop the Episodes tab: the site and audio the episodes come from, and the fix for a wrong match.
+  Widget _episodeSource() => Padding(
+    padding: EdgeInsets.fromLTRB(side, 16, side, 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: sitesError != null
+                  ? const SizedBox.shrink()
+                  : Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: _sourceMenu(),
+                    ),
+            ),
+            const SizedBox(width: 12),
+            _audio,
+          ],
+        ),
+        // Sites that failed to load say so across the whole width, not squeezed beside the audio.
+        if (sitesError != null) ...[const SizedBox(height: 8), _sourceMenu()],
+        if (source != null) ...[const SizedBox(height: 4), _wrongShow()],
+      ],
+    ),
+  );
+
   /// Next to the site picker on both layouts: the site found the wrong show, pick the right one.
   Widget _wrongShow() => TextButton.icon(
     onPressed: _fixMatch,
@@ -979,53 +1006,33 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             SliverToBoxAdapter(child: _related()),
+            // The tabs lead the section (shows AniList knows get its social side); what the episodes come from (site,
+            // audio) sits inside the Episodes tab, as it's about them alone.
             SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(side, 24, side, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text('Episodes', style: text.titleLarge),
+              child: media['id'] is int
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: DefaultTabController(
+                        length: 3,
+                        initialIndex: tab,
+                        child: TabBar(
+                          onTap: (i) => setState(() {
+                            tab = i;
+                            picked = null;
+                          }),
+                          tabs: const [
+                            Tab(text: 'Episodes'),
+                            Tab(text: 'Discussion'),
+                            Tab(text: 'Friends'),
+                          ],
                         ),
-                        _audio,
-                      ],
+                      ),
+                    )
+                  : Padding(
+                      padding: EdgeInsets.fromLTRB(side, 24, side, 0),
+                      child: Text('Episodes', style: text.titleLarge),
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Flexible(child: _sourceMenu()),
-                        if (source != null) ...[
-                          const SizedBox(width: 8),
-                          _wrongShow(),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
             ),
-            // Shows AniList knows get its social side alongside the episodes.
-            if (media['id'] is int)
-              SliverToBoxAdapter(
-                child: DefaultTabController(
-                  length: 3,
-                  initialIndex: tab,
-                  child: TabBar(
-                    onTap: (i) => setState(() {
-                      tab = i;
-                      picked = null;
-                    }),
-                    tabs: const [
-                      Tab(text: 'Episodes'),
-                      Tab(text: 'Discussion'),
-                      Tab(text: 'Friends'),
-                    ],
-                  ),
-                ),
-              ),
             // The new tab's content fades in.
             TweenAnimationBuilder<double>(
               key: ValueKey(tab),
@@ -1037,7 +1044,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
               child: switch (tab) {
                 1 => DiscussionList(media, progress: _progress),
                 2 => FriendsList(media),
-                _ => _episodeList(),
+                _ => SliverMainAxisGroup(
+                  slivers: [
+                    SliverToBoxAdapter(child: _episodeSource()),
+                    _episodeList(),
+                  ],
+                ),
               },
             ),
             // Clear of the floating play button.
@@ -2063,11 +2075,10 @@ class _EpisodeTile extends StatelessWidget {
                   ),
                 )
               else
-                // Its download, with its discussion under it: full-size targets, beside the episode's name.
-                Column(
+                // Its discussion beside its download, both full-size targets.
+                Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ?trailing,
                     if (onDiscuss != null)
                       IconButton(
                         tooltip: 'Episode discussion',
@@ -2075,6 +2086,7 @@ class _EpisodeTile extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                         icon: const Icon(Icons.forum_outlined),
                       ),
+                    ?trailing,
                   ],
                 ),
             ],

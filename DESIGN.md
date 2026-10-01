@@ -89,7 +89,8 @@ Buttons of the same role share height, corner shape, text style, and hover, pres
 - **Selection:** long-press starts picking; tapping then toggles. Picked posters and rows share the primary tint (22% on art, 12% on rows) and a primary check. The shared `SelectionBar` shows the count, Done, All and icon actions, with a progress line while a change saves. It sits on the page surface at the top of a list, or in a `Panel` where the main action floats at the bottom.
 - **Filters:** a choice among values is a dropdown chip that opens a picker. An on/off filter is a `SwitchListTile`, never a chip.
 - **Tabs:** `TabBar` under a page's header, with the primary indicator under the label and `labelLarge` text. The new tab's content fades in over 200ms.
-- **Row actions:** every action in a list row keeps its 48dp target. When a row needs two, stack them vertically in the trailing column rather than shrinking them.
+- **Row actions:** every action in a list row keeps its 48dp target. When a row needs two, put them side by side at its end rather than shrinking or stacking them.
+- **Sections with tabs:** the tabs lead the section and replace its heading. Controls that apply to one tab only (an episode list's site and audio) sit at the top of that tab, not above the tabs.
 - **Loading:** grids load as poster skeletons, people and thread lists as skeleton rows (a round picture and two lines). A spinner only appears for loading more at the end of a list, or inside the button that started an action.
 - **Forms:** disable a submit button until there's something to submit, show the spinner in it while submitting, put a failure under the field it belongs to, and confirm success with a snackbar.
 - **Discussion:** comments show the avatar, name and age, then the text, with Like and Reply as full-size text buttons. Replies indent 8dp with a 2dp outline-variant rule, up to four levels. Spoilers stay hidden on a `surfaceContainerHighest` background until tapped.
