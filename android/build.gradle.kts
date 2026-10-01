@@ -2,6 +2,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Injekt, for Aniyomi extensions.
+        maven("https://jitpack.io") { content { includeGroup("com.github.mihonapp") } }
     }
 }
 

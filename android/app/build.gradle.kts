@@ -74,4 +74,13 @@ dependencies {
     val media3 = "1.8.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    // What Aniyomi extensions are built against and expect the app to provide, at Aniyomi's versions.
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    implementation("org.jsoup:jsoup:1.22.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json-okio:1.9.0")
+    implementation("com.github.mihonapp:injekt:91edab2317")
+    implementation("androidx.preference:preference-ktx:1.2.1")
+    implementation("app.cash.quickjs:quickjs-android:0.9.2")
 }

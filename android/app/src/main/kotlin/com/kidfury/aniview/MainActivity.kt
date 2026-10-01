@@ -66,6 +66,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ExoPlayers(this, flutterEngine)
+        Extensions(this, flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/downloads")
             .setMethodCallHandler { call, result ->
                 showDownload(

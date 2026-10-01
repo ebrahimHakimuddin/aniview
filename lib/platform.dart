@@ -6,6 +6,7 @@ class AndroidApp {
   static const _app = MethodChannel('aniview/app');
   static const _folder = MethodChannel('aniview/folder');
   static const _volume = MethodChannel('aniview/volume');
+  static const _extensions = MethodChannel('aniview/extensions');
 
   static Future<String?> version() => _app.invokeMethod<String>('version');
 
@@ -23,6 +24,11 @@ class AndroidApp {
       return null;
     }
   }
+
+  /// A call to the installed Aniyomi extensions (Extensions.kt); a failure is a [PlatformException] with the reason, or
+  /// with code 'cloudflare' and the site's address when its check needs passing by hand.
+  static Future<Object?> extensions(String method, [Map? args]) =>
+      _extensions.invokeMethod(method, args);
 
   /// Running on a TV (leanback UI mode); false off Android.
   static Future<bool> isTv() async {

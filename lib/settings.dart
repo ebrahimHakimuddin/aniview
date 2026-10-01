@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'analytics.dart';
 import 'changelog.dart';
 import 'downloads.dart';
+import 'extensions.dart';
 import 'history.dart';
 import 'notifications.dart';
 import 'sources.dart';
@@ -836,6 +837,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   (v) => Settings.preferredSource = v,
                 ),
               ),
+            ),
+            ListTile(
+              title: const Text('Extensions'),
+              subtitle: const Text('More sites, from Aniyomi extension repos'),
+              onTap: () async {
+                await pushSettled(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ExtensionsScreen(),
+                  ),
+                );
+                // Installed extensions join the sources above.
+                if (mounted) setState(() {});
+              },
             ),
             _Choice(
               title: 'Streaming quality',

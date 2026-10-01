@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http2/http2.dart' hide Settings;
 import 'package:pointycastle/export.dart';
@@ -10,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cloudflare.dart';
 import 'metadata.dart';
+import 'platform.dart';
 import 'settings.dart';
 
 const userAgent =
@@ -24,12 +26,36 @@ class Sites {
   @visibleForTesting
   static Future<List<Source>> Function() load = topSources;
 
-  /// The same future until a load fails, so a FutureBuilder can hold on to it.
-  static Future<List<Source>> all() =>
-      _current ??= load().catchError((Object e) {
+  /// The same future until a load fails, so a FutureBuilder can hold on to it. Installed extensions come after
+  /// the top sites.
+  static Future<List<Source>> all() => _current ??=
+      Future(() async {
+        // Extensions load beside the top sites, and never hold them up or take them down: one that fails or stalls is
+        // simply left out for now.
+        final extensions = _extensionSources();
+        return [...await load(), ...await extensions];
+      }).catchError((Object e) {
         _current = null;
         throw e;
       });
+
+  /// Where the installed extensions' sources come from, and how long they get; replaced in tests.
+  @visibleForTesting
+  static Future<List<Source>> Function() loadExtensions =
+      ExtensionSource.installed;
+  @visibleForTesting
+  static Duration extensionsPatience = const Duration(seconds: 15);
+
+  static Future<List<Source>> _extensionSources() async {
+    try {
+      return await loadExtensions().timeout(extensionsPatience);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Picks up extensions installed or removed since the list was loaded.
+  static void reload() => _current = null;
 
   /// The site saved under [name] (history, downloads), if it's still among the top sites.
   static Future<Source?> named(String name) async =>
@@ -644,6 +670,130 @@ class AnimePahe extends Source {
     return resolved.nonNulls.toList();
   }
 }
+
+/// A source from an installed Aniyomi extension, run by the Android side (Extensions.kt).
+class ExtensionSource extends Source {
+  ExtensionSource(this.id, super.name, super.base);
+
+  final String id;
+
+  /// The sources of every installed extension; none off Android.
+  static Future<List<Source>> installed() async => [
+    if (Platform.isAndroid)
+      for (final s in await AndroidApp.extensions('list') as List)
+        ExtensionSource(
+          s['id'],
+          const {'en', 'all', ''}.contains(s['lang'])
+              ? s['name']
+              : '${s['name']} (${(s['lang'] as String).toUpperCase()})',
+          s['baseUrl'] ?? '',
+        ),
+  ];
+
+  Future<List> _call(String method, Map<String, String> args) async {
+    try {
+      return await AndroidApp.extensions(method, {'id': id, ...args}) as List;
+    } on PlatformException catch (e) {
+      // The site's Cloudflare check the extension couldn't pass itself: the app's verification page can.
+      if (e.code != 'cloudflare') rethrow;
+      throw CloudflareChallenge(e.details as String);
+    }
+  }
+
+  @override
+  Future<List<SearchResult>> search(String query) async => [
+    for (final a in await _call('search', {'query': query}))
+      SearchResult(a['url'], a['title'], image: a['thumbnail']),
+  ];
+
+  /// Only a result titled exactly as the show (ignoring case and punctuation): extensions carry no AniList or MAL
+  /// id to check against, and a wrong show is worse than none, which leaves the pick to the user.
+  @override
+  Future<String?> match(Map media) async {
+    String key(String s) =>
+        s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    final titles = _searchTitles(media).map(key).toSet();
+    for (final title in _searchTitles(media)) {
+      for (final result in await search(title)) {
+        if (titles.contains(key(result.title))) return result.id;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    final episodes = [
+      for (final e in await _call('episodes', {'url': id, 'title': ''}))
+        Episode(
+          e['number'] as num,
+          title: e['name'],
+          thumbnail: e['preview'],
+          overview: e['summary'],
+          ref: {'url': e['url'], 'name': e['name']},
+        ),
+    ];
+    // Extensions say what number an episode is, but some say nothing (-1) or the same for all, and numbers are what
+    // picks, downloads and progress go by. Then it's the position that counts: they list newest first.
+    final numbered =
+        episodes.every((e) => e.number >= 0) &&
+        episodes.map((e) => e.number).toSet().length == episodes.length;
+    if (numbered) return episodes..sort((a, b) => a.number.compareTo(b.number));
+    return [
+      for (final (i, e) in episodes.reversed.indexed)
+        Episode(
+          i + 1,
+          title: e.title,
+          thumbnail: e.thumbnail,
+          overview: e.overview,
+          ref: e.ref,
+        ),
+    ];
+  }
+
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    final ref = episode.ref as Map;
+    final streams = [
+      for (final v in await _call('videos', {
+        'url': ref['url'],
+        'name': ref['name'] ?? '',
+      }))
+        VideoStream(
+          v['title'],
+          v['url'],
+          {...?(v['headers'] as Map?)?.cast<String, String>()},
+          subtitles: [
+            for (final t in v['subtitles']) Subtitle(t['lang'], t['url']),
+          ],
+          skips: [
+            for (final t in v['timestamps'])
+              if (_extensionSkips[t['type']] case final type?)
+                SkipTime(
+                  type,
+                  Duration(milliseconds: ((t['start'] as num) * 1000).round()),
+                  Duration(milliseconds: ((t['end'] as num) * 1000).round()),
+                ),
+          ],
+        ),
+    ];
+    // Extensions name sub and dub in the video title, when they serve both.
+    bool isDub(VideoStream s) => s.label.toLowerCase().contains('dub');
+    final picked = streams.where((s) => isDub(s) == dub).toList();
+    return picked.isEmpty ? streams : picked;
+  }
+}
+
+const _extensionSkips = {
+  'Opening': SkipType.intro,
+  'MixedOp': SkipType.intro,
+  'Ending': SkipType.outro,
+  'Recap': SkipType.recap,
+};
 
 /// Expands Dean Edwards' p.a.c.k.e.r `eval(function(p,a,c,k,e,d){...}('...',a,c,'...'.split('|')))` scripts.
 String unpack(String js) {
