@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'analytics.dart';
 import 'anilist.dart';
 import 'details.dart';
+import 'history.dart';
+import 'player.dart';
+import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
 import 'tv.dart';
@@ -48,6 +51,36 @@ const _statuses = {
   'PAUSED': 'Paused',
   'DROPPED': 'Dropped',
 };
+
+/// Runs [change] on each of [shows], one at a time (AniList allows 30 requests a minute); returns how many
+/// weren't saved (queued for later, or failed).
+Future<int> _forEach(
+  Iterable<Map> shows,
+  Future<bool> Function(Map media) change,
+) async {
+  var failed = 0;
+  for (final media in shows) {
+    try {
+      if (!await change(media)) failed++;
+    } catch (_) {
+      failed++;
+    }
+  }
+  return failed;
+}
+
+/// Moves [media] to list [status] on AniList; completed counts every episode watched.
+Future<bool> _moveTo(Map media, String status) {
+  final show = Show(media);
+  return Tracker.save(
+    media,
+    status == 'COMPLETED' ? show.episodes ?? show.progress : show.progress,
+    status: status,
+  );
+}
+
+String _notSaved(int failed, int of) =>
+    '$failed of $of not saved yet · they sync next time you open the app';
 
 /// Your AniList list, one status at a time, as a grid of posters.
 class MyListScreen extends StatefulWidget {
@@ -96,14 +129,7 @@ class _MyListScreenState extends State<MyListScreen> {
   ) async {
     final shows = picked!.values.toList();
     setState(() => busy = true);
-    var failed = 0;
-    for (final media in shows) {
-      try {
-        if (!await change(media)) failed++;
-      } catch (_) {
-        failed++;
-      }
-    }
+    final failed = await _forEach(shows, change);
     if (!mounted) return;
     setState(() {
       busy = false;
@@ -111,24 +137,17 @@ class _MyListScreenState extends State<MyListScreen> {
     });
     failed == 0
         ? showSuccess(context, done)
-        : showError(
-            context,
-            '$failed of ${shows.length} not saved yet · they sync next time you open the app',
-          );
+        : showError(context, _notSaved(failed, shows.length));
     await widget.onRefresh();
   }
 
   Future<void> _changeStatus() async {
     final to = await pickOne(context, 'Move to', _statuses, status);
     if (to == null || !mounted) return;
-    await _bulk((media) {
-      final show = Show(media);
-      return Tracker.save(
-        media,
-        to == 'COMPLETED' ? show.episodes ?? show.progress : show.progress,
-        status: to,
-      );
-    }, 'Moved ${picked!.length} to ${_statuses[to]}');
+    await _bulk(
+      (media) => _moveTo(media, to),
+      'Moved ${picked!.length} to ${_statuses[to]}',
+    );
   }
 
   Future<void> _remove() async {
@@ -350,6 +369,170 @@ class _MyListScreenState extends State<MyListScreen> {
           itemBuilder: builder,
         ),
       );
+}
+
+/// Every show in Recently watched, newest first. Hold shows to change their AniList status or take them off the row.
+class RecentlyWatchedScreen extends StatefulWidget {
+  const RecentlyWatchedScreen({super.key});
+
+  @override
+  State<RecentlyWatchedScreen> createState() => _RecentlyWatchedScreenState();
+}
+
+class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
+  late Future<List<WatchRecord>> records = WatchHistory.all();
+
+  /// Shows picked, by id; null when not picking.
+  Map<Object?, Map>? picked;
+  bool busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/recent', title: 'Recently watched');
+  }
+
+  void _toggle(Map media) {
+    final ids = picked ??= {};
+    ids.containsKey(media['id'])
+        ? ids.remove(media['id'])
+        : ids[media['id']] = media;
+    selectionTick();
+    setState(() {
+      if (ids.isEmpty) picked = null;
+    });
+  }
+
+  Future<void> _changeStatus() async {
+    final to = await pickOne(context, 'Move to', _statuses, 'CURRENT');
+    if (to == null || !mounted) return;
+    final shows = picked!.values.toList();
+    setState(() => busy = true);
+    final failed = await _forEach(shows, (media) => _moveTo(media, to));
+    // Finished or given up on: nothing left to continue.
+    if (to == 'COMPLETED' || to == 'DROPPED') {
+      for (final media in shows) {
+        await WatchHistory.remove(media);
+      }
+    }
+    _done(failed, shows.length, 'Moved ${shows.length} to ${_statuses[to]}');
+  }
+
+  Future<void> _remove() async {
+    final shows = picked!.values.toList();
+    for (final media in shows) {
+      await WatchHistory.remove(media);
+    }
+    _done(0, shows.length, 'Removed ${shows.length} from recently watched');
+  }
+
+  void _done(int failed, int count, String message) {
+    if (!mounted) return;
+    setState(() {
+      busy = false;
+      picked = null;
+      records = WatchHistory.all();
+    });
+    failed == 0
+        ? showSuccess(context, message)
+        : showError(context, _notSaved(failed, count));
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: picked == null,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop && !busy) setState(() => picked = null);
+    },
+    child: Scaffold(
+      appBar: picked == null
+          ? AppBar(title: const Text('Recently watched'))
+          : AppBar(
+              leading: IconButton(
+                tooltip: 'Done',
+                onPressed: busy ? null : () => setState(() => picked = null),
+                icon: const Icon(Icons.close_rounded),
+              ),
+              title: Text('${picked!.length} selected'),
+              bottom: busy
+                  ? const PreferredSize(
+                      preferredSize: Size.fromHeight(4),
+                      child: LinearProgressIndicator(),
+                    )
+                  : null,
+              actions: [
+                if (Tracker.signedIn)
+                  IconButton(
+                    tooltip: 'Change status',
+                    onPressed: busy ? null : _changeStatus,
+                    icon: const Icon(Icons.drive_file_move_outline),
+                  ),
+                IconButton(
+                  tooltip: 'Remove from recently watched',
+                  onPressed: busy ? null : _remove,
+                  icon: const Icon(Icons.history_toggle_off_rounded),
+                ),
+              ],
+            ),
+      body: FutureBuilder(
+        future: records,
+        builder: (context, snap) {
+          final list = snap.data ?? const <WatchRecord>[];
+          if (snap.hasData && list.isEmpty) {
+            return const EmptyState(
+              icon: Icons.history_rounded,
+              title: 'Nothing watched yet',
+            );
+          }
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(side, 4, side, 0),
+                  child: Text(
+                    '${isTv ? 'Hold OK on' : 'Hold'} a show to change its status or remove it',
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  side,
+                  12,
+                  side,
+                  24 + MediaQuery.paddingOf(context).bottom,
+                ),
+                sliver: SliverGrid.builder(
+                  gridDelegate: posterGrid,
+                  itemCount: list.length,
+                  itemBuilder: (context, i) {
+                    final r = list[i];
+                    return PosterCard(
+                      r.media,
+                      subtitle:
+                          'EP ${epNumber(r.episode)}'
+                          '${r.position > Duration.zero ? ' · ${formatDuration(r.position)}' : ''}',
+                      autofocus: isTv && i == 0,
+                      onBack: () =>
+                          setState(() => records = WatchHistory.all()),
+                      selected: picked?.containsKey(r.media['id']),
+                      onTap: picked == null
+                          ? null
+                          : busy
+                          ? () {}
+                          : () => _toggle(r.media),
+                      onLongPress: busy ? null : () => _toggle(r.media),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    ),
+  );
 }
 
 class _PosterSkeleton extends StatelessWidget {

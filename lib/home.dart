@@ -1236,6 +1236,15 @@ class _HomeFeed extends StatelessWidget {
                 '${r.position > Duration.zero ? ' · ${formatDuration(r.position)}' : ''}',
         ],
         onLongPress: (i) => _removeFromHistory(context, records[i]),
+        onSeeAll: () async {
+          await pushSettled(
+            context,
+            MaterialPageRoute<void>(
+              builder: (_) => const RecentlyWatchedScreen(),
+            ),
+          );
+          home._reloadLists();
+        },
       );
     },
   );
