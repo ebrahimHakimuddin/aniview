@@ -174,6 +174,10 @@ class Settings {
   // Off by default: on some TVs mpv's embedded output shows no picture at all.
 
   static double get speed => _prefs.getDouble('speed') ?? 1.0;
+
+  /// What holding the video does: 'speed' (2× while held), 'pause' (paused while held) or 'off'.
+  static String get holdGesture => _prefs.getString('hold_gesture') ?? 'speed';
+  static set holdGesture(String v) => _prefs.setString('hold_gesture', v);
   static set speed(double v) => _prefs.setDouble('speed', v);
 
   /// How the picture fills the screen when an episode starts.
@@ -480,6 +484,12 @@ class _UpdateDownloadState extends State<_UpdateDownload> {
     ],
   );
 }
+
+const _holdGestures = {
+  'speed': 'Play at 2×',
+  'pause': 'Pause until released',
+  'off': 'Do nothing',
+};
 
 const _qualities = {0: 'Best', 1080: '1080p', 720: '720p', 480: '480p'};
 
@@ -814,6 +824,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 value: Settings.swipeGestures,
                 onChanged: (v) => setState(() => Settings.swipeGestures = v),
+              ),
+            if (!isTv)
+              _Choice(
+                title: 'Hold the video to',
+                value: _holdGestures[Settings.holdGesture] ?? 'Play at 2×',
+                onTap: () => _choose(
+                  'Hold the video to',
+                  _holdGestures,
+                  Settings.holdGesture,
+                  (v) => Settings.holdGesture = v,
+                ),
               ),
             _Choice(
               title: isTv ? 'Left / right seeks' : 'Double-tap to seek',

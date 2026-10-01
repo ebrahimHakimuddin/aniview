@@ -23,7 +23,7 @@ import 'platform.dart';
 import 'playback.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
-/// volume (right) swipes, hold for 2×, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
+/// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
 /// intro/outro markers on the seek bar. Downloaded episodes always play from disk.
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -75,6 +75,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? hint;
   IconData? hintIcon;
   bool controls = true, locked = false;
+
+  /// Whether the video was playing when a hold paused it, to play it again on release.
+  bool heldPlaying = false;
 
   /// Fit, fill (crop) or stretch.
   BoxFit fit = Settings.videoFit;
@@ -665,6 +668,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final loading =
         error == null && (current == null || player.state.buffering);
     final swipes = !locked && Settings.swipeGestures;
+    final hold = locked ? 'off' : Settings.holdGesture;
     final upNext = _upNext(position);
 
     // On TV, Back first hides the controls, like Netflix.
@@ -747,10 +751,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ? -Settings.seekSeconds
                           : Settings.seekSeconds,
                     ),
-              onLongPressStart: locked
+              onLongPressStart: hold == 'off'
                   ? null
                   : (_) {
                       HapticFeedback.mediumImpact();
+                      if (hold == 'pause') {
+                        heldPlaying = player.state.playing;
+                        player.pause();
+                        _hint(
+                          'Paused · release to play',
+                          icon: Icons.pause_rounded,
+                          sticky: true,
+                        );
+                        return;
+                      }
                       player.setRate(2);
                       _hint(
                         '2× speed',
@@ -758,10 +772,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         sticky: true,
                       );
                     },
-              onLongPressEnd: locked
+              onLongPressEnd: hold == 'off'
                   ? null
                   : (_) {
-                      player.setRate(rate);
+                      if (hold == 'pause') {
+                        if (heldPlaying) player.play();
+                      } else {
+                        player.setRate(rate);
+                      }
                       _clearHint();
                     },
               onVerticalDragStart: !swipes
