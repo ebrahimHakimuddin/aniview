@@ -7,6 +7,7 @@ import 'anilist.dart';
 import 'details.dart';
 import 'history.dart';
 import 'player.dart';
+import 'selection.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -47,17 +48,13 @@ class _Headline extends StatelessWidget {
 final _statuses = ListStatus.movable;
 
 /// Moves [media] to list [status] on AniList; completed counts every episode watched.
-Future<bool> _moveTo(Map media, String status) {
-  final show = Show(media);
-  return Tracker.save(
-    media,
-    status == 'COMPLETED' ? show.episodes ?? show.progress : show.progress,
-    status: status,
-  );
-}
+Future<bool> _moveTo(Map media, String status) =>
+    Tracker.save(media, Show(media).progress, status: status);
 
-String _notSaved(int failed, int of) =>
-    '$failed of $of not saved yet · they sync next time you open the app';
+/// Tells how a bulk change went: [done] when every one saved, else how many didn't.
+void _report(BuildContext context, BulkResult result, String done) => result.ok
+    ? showSuccess(context, bulkMessage(result, done))
+    : showError(context, bulkMessage(result, done));
 
 /// A page of posters where holding shows picks them to add to your list together (Home, Search): the posters
 /// under it join in, and while picking, the selection bar covers the top of the page. Just [child] when signed out.
@@ -85,16 +82,9 @@ class _PickingScopeState extends State<PickingScope> {
   Future<void> _addTo() async {
     final to = await pickOne(context, 'Add to', _statuses, 'PLANNING');
     if (to == null || !mounted) return;
-    final shows = picking.picked!.values.toList();
-    picking.setBusy(true);
-    final failed = await _forEach(shows, (media) => _moveTo(media, to));
-    picking
-      ..setBusy(false)
-      ..clear();
+    final result = await picking.runBulk((media) => _moveTo(media, to));
     if (!mounted) return;
-    failed == 0
-        ? showSuccess(context, 'Added ${shows.length} to ${_statuses[to]}')
-        : showError(context, _notSaved(failed, shows.length));
+    _report(context, result, 'Added ${result.total} to ${_statuses[to]}');
     widget.onChanged?.call();
   }
 
@@ -128,7 +118,7 @@ class _PickingScopeState extends State<PickingScope> {
                         0,
                       ),
                       child: SelectionBar(
-                        count: picking.picked!.length,
+                        count: picking.count,
                         busy: picking.busy,
                         onDone: picking.clear,
                         actions: [
@@ -176,37 +166,21 @@ class MyListScreen extends StatefulWidget {
 class _MyListScreenState extends State<MyListScreen> {
   String status = 'CURRENT';
 
-  /// Shows picked for a bulk edit, by id; null when not picking.
-  Map<Object?, Map>? picked;
-  bool busy = false;
+  /// Shows picked for a bulk edit.
+  final picking = Picking();
 
   void _toggle(Map media) {
-    final ids = picked ??= {};
-    ids.containsKey(media['id'])
-        ? ids.remove(media['id'])
-        : ids[media['id']] = media;
-    selectionTick();
-    setState(() {
-      if (ids.isEmpty) picked = null;
-    });
+    if (picking.toggle(media)) selectionTick();
   }
 
-  /// Runs [change] on each picked show, one at a time (AniList allows 30 requests a minute), then reloads.
+  /// Runs [change] on each picked show, then reloads.
   Future<void> _bulk(
     Future<bool> Function(Map media) change,
     String done,
   ) async {
-    final shows = picked!.values.toList();
-    setState(() => busy = true);
-    final failed = await _forEach(shows, change);
+    final result = await picking.runBulk(change);
     if (!mounted) return;
-    setState(() {
-      busy = false;
-      picked = null;
-    });
-    failed == 0
-        ? showSuccess(context, done)
-        : showError(context, _notSaved(failed, shows.length));
+    _report(context, result, done);
     await widget.onRefresh();
   }
 
@@ -215,12 +189,12 @@ class _MyListScreenState extends State<MyListScreen> {
     if (to == null || !mounted) return;
     await _bulk(
       (media) => _moveTo(media, to),
-      'Moved ${picked!.length} to ${_statuses[to]}',
+      'Moved ${picking.count} to ${_statuses[to]}',
     );
   }
 
   Future<void> _remove() async {
-    final count = picked!.length;
+    final count = picking.count;
     final ok = await confirmDestructive(
       context,
       title: 'Remove $count from your list?',
@@ -238,20 +212,20 @@ class _MyListScreenState extends State<MyListScreen> {
   Widget _selectionBar(List shown) => Padding(
     padding: EdgeInsets.fromLTRB(side - 8, isTv ? 16 : 4, side - 8, 0),
     child: SelectionBar(
-      count: picked!.length,
-      busy: busy,
-      onDone: () => setState(() => picked = null),
-      onAll: () => setState(() => picked = {for (final m in shown) m['id']: m}),
+      count: picking.count,
+      busy: picking.busy,
+      onDone: picking.clear,
+      onAll: () => picking.selectAll(shown.cast<Map>()),
       actions: [
         IconButton(
           tooltip: 'Change status',
-          onPressed: busy ? null : _changeStatus,
+          onPressed: picking.busy ? null : _changeStatus,
           icon: const Icon(Icons.drive_file_move_outline),
         ),
         IconButton(
           tooltip: 'Remove from list',
           color: scheme.error,
-          onPressed: busy ? null : _remove,
+          onPressed: picking.busy ? null : _remove,
           icon: const Icon(Icons.delete_outline_rounded),
         ),
       ],
@@ -261,7 +235,14 @@ class _MyListScreenState extends State<MyListScreen> {
   @override
   void initState() {
     super.initState();
+    picking.addListener(() => setState(() {}));
     Analytics.screen('/list', title: 'My list');
+  }
+
+  @override
+  void dispose() {
+    picking.dispose();
+    super.dispose();
   }
 
   @override
@@ -295,7 +276,7 @@ class _MyListScreenState extends State<MyListScreen> {
                 final shown = lists[status] ?? const [];
                 return Column(
                   children: [
-                    if (picked != null)
+                    if (picking.active)
                       Material(
                         color: scheme.surface,
                         child: _selectionBar(shown),
@@ -306,7 +287,7 @@ class _MyListScreenState extends State<MyListScreen> {
                         child: CustomScrollView(
                           physics: const AlwaysScrollableScrollPhysics(),
                           slivers: [
-                            if (picked == null)
+                            if (!picking.active)
                               SliverToBoxAdapter(
                                 child: _Headline(
                                   'My list',
@@ -345,17 +326,13 @@ class _MyListScreenState extends State<MyListScreen> {
                                     shown[i],
                                     autofocus: isTv && i == 0,
                                     onBack: widget.onChanged,
-                                    selected: picked?.containsKey(
-                                      shown[i]['id'],
-                                    ),
-                                    onTap: picked == null
-                                        ? null
-                                        : busy
-                                        ? () {}
-                                        : () => _toggle(shown[i]),
-                                    onLongPress: busy
-                                        ? null
-                                        : () => _toggle(shown[i]),
+                                    selected: picking.active
+                                        ? picking.has(shown[i])
+                                        : null,
+                                    onTap: picking.active
+                                        ? () => _toggle(shown[i])
+                                        : null,
+                                    onLongPress: () => _toggle(shown[i]),
                                   ),
                                 ),
                               ),
@@ -392,12 +369,10 @@ class _MyListScreenState extends State<MyListScreen> {
             label: Text(count == null ? value : '$value · $count'),
             selected: key == status,
             onSelected: (_) {
-              if (key == status || busy) return;
+              if (key == status || picking.busy) return;
               selectionTick();
-              setState(() {
-                status = key;
-                picked = null; // picks are made within one list
-              });
+              picking.clear(); // picks are made within one list
+              setState(() => status = key);
             },
           );
         },
@@ -428,70 +403,66 @@ class RecentlyWatchedScreen extends StatefulWidget {
 class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
   late Future<List<WatchRecord>> records = WatchHistory.all();
 
-  /// Shows picked, by id; null when not picking.
-  Map<Object?, Map>? picked;
-  bool busy = false;
+  /// Shows picked.
+  final picking = Picking();
 
   @override
   void initState() {
     super.initState();
+    picking.addListener(() => setState(() {}));
     Analytics.screen('/recent', title: 'Recently watched');
   }
 
+  @override
+  void dispose() {
+    picking.dispose();
+    super.dispose();
+  }
+
   void _toggle(Map media) {
-    final ids = picked ??= {};
-    ids.containsKey(media['id'])
-        ? ids.remove(media['id'])
-        : ids[media['id']] = media;
-    selectionTick();
-    setState(() {
-      if (ids.isEmpty) picked = null;
-    });
+    if (picking.toggle(media)) selectionTick();
   }
 
   Future<void> _changeStatus() async {
     final to = await pickOne(context, 'Move to', _statuses, 'CURRENT');
     if (to == null || !mounted) return;
-    final shows = picked!.values.toList();
-    setState(() => busy = true);
-    final failed = await _forEach(shows, (media) => _moveTo(media, to));
-    // Finished or given up on: nothing left to continue.
-    if (to == 'COMPLETED' || to == 'DROPPED') {
-      for (final media in shows) {
+    final done = 'Moved ${picking.count} to ${_statuses[to]}';
+    final result = await picking.runBulk((media) async {
+      final saved = await _moveTo(media, to);
+      // Finished or given up on: nothing left to continue.
+      if (to == 'COMPLETED' || to == 'DROPPED') {
         await WatchHistory.remove(media);
       }
-    }
-    _done(failed, shows.length, 'Moved ${shows.length} to ${_statuses[to]}');
+      return saved;
+    });
+    _done(result, done);
   }
 
   Future<void> _remove() async {
-    final shows = picked!.values.toList();
-    for (final media in shows) {
-      await WatchHistory.remove(media);
-    }
-    _done(0, shows.length, 'Removed ${shows.length} from recently watched');
+    final done = 'Removed ${picking.count} from recently watched';
+    _done(
+      await picking.runBulk((media) async {
+        await WatchHistory.remove(media);
+        return true;
+      }),
+      done,
+    );
   }
 
-  void _done(int failed, int count, String message) {
+  void _done(BulkResult result, String message) {
     if (!mounted) return;
-    setState(() {
-      busy = false;
-      picked = null;
-      records = WatchHistory.all();
-    });
-    failed == 0
-        ? showSuccess(context, message)
-        : showError(context, _notSaved(failed, count));
+    setState(() => records = WatchHistory.all());
+    _report(context, result, message);
   }
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: picked == null,
+    canPop: !picking.active,
     onPopInvokedWithResult: (didPop, _) {
-      if (!didPop && !busy) setState(() => picked = null);
+      if (!didPop && !picking.busy) picking.clear();
     },
     child: Scaffold(
-      appBar: picked != null
+      appBar: picking.active
           ? null
           : AppBar(
               title: const Text('Recently watched'),
@@ -500,7 +471,7 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
               titleTextStyle: Theme.of(context).textTheme.headlineMedium,
             ),
       body: SafeArea(
-        top: picked != null,
+        top: picking.active,
         bottom: false,
         child: FutureBuilder(
           future: records,
@@ -508,31 +479,28 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
             final list = snap.data ?? const <WatchRecord>[];
             return Column(
               children: [
-                if (picked != null)
+                if (picking.active)
                   Material(
                     color: scheme.surface,
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(side - 8, 4, side - 8, 0),
                       child: SelectionBar(
-                        count: picked!.length,
-                        busy: busy,
-                        onDone: () => setState(() => picked = null),
-                        onAll: () => setState(
-                          () => picked = {
-                            for (final r in list) r.media['id']: r.media,
-                          },
-                        ),
+                        count: picking.count,
+                        busy: picking.busy,
+                        onDone: picking.clear,
+                        onAll: () =>
+                            picking.selectAll([for (final r in list) r.media]),
                         actions: [
                           if (Tracker.signedIn)
                             IconButton(
                               tooltip: 'Change status',
-                              onPressed: busy ? null : _changeStatus,
+                              onPressed: picking.busy ? null : _changeStatus,
                               icon: const Icon(Icons.drive_file_move_outline),
                             ),
                           IconButton(
                             tooltip: 'Remove from recently watched',
                             color: scheme.error,
-                            onPressed: busy ? null : _remove,
+                            onPressed: picking.busy ? null : _remove,
                             icon: const Icon(Icons.history_toggle_off_rounded),
                           ),
                         ],
@@ -565,7 +533,7 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
     final text = Theme.of(context).textTheme;
     return CustomScrollView(
       slivers: [
-        if (picked == null)
+        if (!picking.active)
           SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: side),
@@ -605,13 +573,9 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
                         autofocus: isTv && i == 0,
                         onBack: () =>
                             setState(() => records = WatchHistory.all()),
-                        selected: picked?.containsKey(r.media['id']),
-                        onTap: picked == null
-                            ? null
-                            : busy
-                            ? () {}
-                            : () => _toggle(r.media),
-                        onLongPress: busy ? null : () => _toggle(r.media),
+                        selected: picking.active ? picking.has(r.media) : null,
+                        onTap: picking.active ? () => _toggle(r.media) : null,
+                        onLongPress: () => _toggle(r.media),
                       ),
                     );
                   },
@@ -950,10 +914,8 @@ class _NextUp extends StatelessWidget {
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel: '${show.title}, episode ${slot['episode']}, ${_until(at)}',
-      onTap: pickingNow != null
-          ? () => pickingNow.toggle(media)
-          : () => openDetails(context, media, onBack: onChanged),
-      onLongPress: picking == null ? null : () => picking.toggle(media),
+      onTap: join.onTap,
+      onLongPress: join.onLongPress,
       child: SizedBox(
         height: isTv ? 220 : 170,
         child: Stack(
@@ -1022,19 +984,20 @@ class _Slot extends StatelessWidget {
     final show = Show(media);
     final at = _ScheduleScreenState._airs(slot);
     final aired = at.isBefore(DateTime.now());
-    final picking = Picking.of(context);
-    final pickingNow = picking?.active == true ? picking : null;
-    final picked = pickingNow?.has(media);
+    final join = Picking.join(
+      context,
+      media,
+      open: () => openDetails(context, media, onBack: onChanged),
+    );
+    final picked = join.selected;
     return FocusCard(
       radius: nested(8, radiusSmall), // the small still, 8dp in: large
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel:
           '${show.title}, episode ${slot['episode']}, ${_time(context, at)}',
-      onTap: pickingNow != null
-          ? () => pickingNow.toggle(media)
-          : () => openDetails(context, media, onBack: onChanged),
-      onLongPress: picking == null ? null : () => picking.toggle(media),
+      onTap: join.onTap,
+      onLongPress: join.onLongPress,
       child: Stack(
         children: [
           ColoredBox(

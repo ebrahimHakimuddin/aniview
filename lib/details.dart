@@ -14,6 +14,7 @@ import 'playback.dart';
 import 'pairing.dart';
 import 'player.dart';
 import 'search.dart';
+import 'selection.dart';
 import 'settings.dart';
 import 'social.dart';
 import 'site_listing.dart';
@@ -261,17 +262,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Phones: the tab under the show's details (Episodes, Discussion, Friends).
   int tab = 0;
 
-  /// Phones: episodes picked for a bulk action, by number; null when not picking.
-  Map<num, Episode>? picked;
+  /// Phones: episodes picked for a bulk action, by number.
+  final picked = Selection<num, Episode>((e) => e.number);
 
   void _togglePick(Episode episode) {
-    final eps = picked ??= {};
-    eps.remove(episode.number) ?? (eps[episode.number] = episode);
+    picked.toggle(episode);
     selectionTick();
-    setState(() {
-      Settings.episodeTipSeen = true;
-      if (eps.isEmpty) picked = null;
-    });
+    Settings.episodeTipSeen = true;
   }
 
   Map get media => widget.media;
@@ -280,7 +277,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
   void initState() {
     super.initState();
     Analytics.screen('/details', title: titleOf(media));
+    picked.addListener(() => setState(() {}));
     _loadSites();
+  }
+
+  @override
+  void dispose() {
+    picked.dispose();
+    super.dispose();
   }
 
   /// [DetailsScreen.autoplay] has started playing.
@@ -424,7 +428,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       future: episodes,
       builder: (context, snap) {
         final season = snap.data ?? const <Episode>[];
-        final eps = picked!.values.toList();
+        final eps = picked.items;
         final site = source;
         final entries = [
           for (final e in eps)
@@ -441,7 +445,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final allWatched = eps.every(
           (e) => EpisodePlan.isWatched(e, _progress),
         );
-        void done() => setState(() => picked = null);
+        void done() => picked.clear();
         return Panel(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
@@ -449,9 +453,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               count: eps.length,
               onDone: done,
               onAll: season.length > eps.length
-                  ? () => setState(
-                      () => picked = {for (final e in season) e.number: e},
-                    )
+                  ? () => picked.selectAll(season)
                   : null,
               actions: [
                 if (site != null && toDownload.isNotEmpty)
@@ -930,9 +932,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final description = plainText(show.description);
     final height = MediaQuery.sizeOf(context).height;
     return PopScope(
-      canPop: picked == null,
+      canPop: !picked.active,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) setState(() => picked = null);
+        if (!didPop) picked.clear();
       },
       child: Scaffold(
         // Play sits in the thumb zone, always in reach while the episodes scroll.
@@ -951,7 +953,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             top: false,
             child: Padding(
               padding: EdgeInsets.fromLTRB(side, 28, side, 12),
-              child: picked == null ? _playAction() : _pickedActions(),
+              child: picked.active ? _pickedActions() : _playAction(),
             ),
           ),
         ),
@@ -1073,7 +1075,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         child: TabBar(
                           onTap: (i) => setState(() {
                             tab = i;
-                            picked = null;
+                            picked.clear();
                           }),
                           tabs: const [
                             Tab(text: 'Episodes'),
@@ -1519,14 +1521,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final watched = plan.watched(episode);
     final saved = site != null || playable.contains(episode);
     // Phones pick several to act on at once; TV keeps one episode's actions sheet.
-    final picking = picked != null && !isTv;
+    final picking = picked.active && !isTv;
     return _EpisodeTile(
       episode,
       watched: watched,
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
-      selected: picking ? picked!.containsKey(episode.number) : null,
-      onDiscuss: isTv || picking || media['id'] is! int
+      selected: picking ? picked.has(episode) : null,
+      onDiscuss: isTv || picking || !show.onAniList
           ? null
           : () => openEpisodeDiscussion(
               context,

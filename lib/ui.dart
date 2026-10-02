@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'anilist.dart';
 import 'details.dart';
 import 'platform.dart';
+import 'selection.dart';
 import 'settings.dart';
 import 'states.dart';
 import 'tv.dart';
@@ -606,40 +607,41 @@ class SelectionBar extends StatelessWidget {
 
 /// Shows picked on a page of posters for one change to all of them (see library.dart's PickingScope): every
 /// [PosterCard] under the scope picks on hold, and on tap while picking.
-class Picking extends ChangeNotifier {
-  /// By id; null when not picking.
-  Map<Object?, Map>? picked;
-
-  /// The change is saving: picks are held until it's done.
-  bool busy = false;
-
-  bool get active => picked != null;
-
-  bool has(Map media) => picked?.containsKey(media['id']) ?? false;
-
-  void toggle(Map media) {
-    if (busy) return;
-    final ids = picked ??= {};
-    ids.remove(media['id']) ?? (ids[media['id']] = media);
-    if (ids.isEmpty) picked = null;
-    selectionTick();
-    notifyListeners();
-  }
-
-  void clear() {
-    picked = null;
-    notifyListeners();
-  }
-
-  void setBusy(bool value) {
-    busy = value;
-    notifyListeners();
-  }
+class Picking extends Selection<Object?, Map> {
+  Picking() : super((media) => media['id']);
 
   /// The picking around [context], if any; the caller rebuilds as picks change.
   static Picking? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PickingProvider>()?.notifier;
+
+  /// How a card for [media] joins the picking around [context] (a tick on each pick): hold picks it, and a tap
+  /// picks it while picking, else [open]s it. [optOut] when whoever placed the card handles picks itself.
+  static CardPicking join(
+    BuildContext context,
+    Map media, {
+    required VoidCallback open,
+    bool optOut = false,
+  }) {
+    final picking = optOut ? null : of(context);
+    final now = picking?.active == true ? picking : null;
+    void toggle() {
+      if (picking!.toggle(media)) selectionTick();
+    }
+
+    return (
+      selected: now?.has(media),
+      onTap: now != null ? toggle : open,
+      onLongPress: picking == null ? null : toggle,
+    );
+  }
 }
+
+/// What [Picking.join] hands a card: whether it's picked (null when not picking), and what a tap and a hold do.
+typedef CardPicking = ({
+  bool? selected,
+  VoidCallback onTap,
+  VoidCallback? onLongPress,
+});
 
 class PickingProvider extends InheritedNotifier<Picking> {
   const PickingProvider({
@@ -1443,11 +1445,13 @@ class PosterCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     // Joins the page's picking, unless whoever placed the card handles picks or holds itself.
-    final picking = this.selected == null && onLongPress == null
-        ? Picking.of(context)
-        : null;
-    final pickingNow = picking?.active == true ? picking : null;
-    final selected = this.selected ?? pickingNow?.has(media);
+    final joined = Picking.join(
+      context,
+      media,
+      open: () => openDetails(context, media, onBack: onBack),
+      optOut: this.selected != null || onLongPress != null,
+    );
+    final selected = this.selected ?? joined.selected;
     final show = Show(media);
     final progress = show.inList ? show.progress : null;
     final total = show.aired;
@@ -1462,13 +1466,8 @@ class PosterCard extends StatelessWidget {
       autofocus: autofocus,
       glow: hexColor(show.color),
       semanticLabel: [titleOf(media), ?line].join(', '),
-      onTap:
-          onTap ??
-          (pickingNow != null
-              ? () => pickingNow.toggle(media)
-              : () => openDetails(context, media, onBack: onBack)),
-      onLongPress:
-          onLongPress ?? (picking == null ? null : () => picking.toggle(media)),
+      onTap: onTap ?? joined.onTap,
+      onLongPress: onLongPress ?? joined.onLongPress,
       onFocus: () {
         _backdropDelay?.cancel();
         _backdropDelay = Timer(
