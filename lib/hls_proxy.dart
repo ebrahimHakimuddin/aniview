@@ -49,11 +49,11 @@ class HlsProxy {
   }
 
   /// Serves a file in an Android folder chosen through the system picker.
-  static Future<String> documentFile(String url) async {
-    final parts = url.substring('saf://'.length).split('/');
-    final tree = Uri.decodeComponent(parts[0]);
-    final id = parts[1];
-    final file = parts[2];
+  static Future<String> documentFile(
+    String tree,
+    String id,
+    String file,
+  ) async {
     final port = (await _server).port;
     var index = _documents.indexOf((tree, id));
     if (index == -1) {
@@ -75,7 +75,11 @@ class HlsProxy {
         response.statusCode = HttpStatus.forbidden;
         return await response.close();
       }
-      if (path case ['local', final id, final file]) {
+      if (path case [
+        ('local' || 'document') && final kind,
+        final id,
+        final file,
+      ]) {
         // Playlist entries are relative, so segments and keys resolve to this same folder.
         if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) {
           throw const FormatException();
@@ -86,25 +90,16 @@ class HlsProxy {
             'vnd.apple.mpegurl',
           );
         }
-        final local = File('${_dirs[int.parse(id)]}/$file');
-        if (!await local.exists()) throw const FileSystemException();
-        await response.addStream(local.openRead());
-        return await response.close();
-      }
-      if (path case ['document', final index, final file]) {
-        if (!RegExp(r'^\w[\w.-]*$').hasMatch(file)) {
-          throw const FormatException();
+        if (kind == 'local') {
+          final local = File('${_dirs[int.parse(id)]}/$file');
+          if (!await local.exists()) throw const FileSystemException();
+          await response.addStream(local.openRead());
+        } else {
+          final (tree, folder) = _documents[int.parse(id)];
+          final bytes = await AndroidApp.readDownloadFile(tree, folder, file);
+          if (bytes == null) throw const FileSystemException();
+          response.add(bytes);
         }
-        if (file.endsWith('.m3u8')) {
-          response.headers.contentType = ContentType(
-            'application',
-            'vnd.apple.mpegurl',
-          );
-        }
-        final (tree, id) = _documents[int.parse(index)];
-        final bytes = await AndroidApp.readDownloadFile(tree, id, file);
-        if (bytes == null) throw const FileSystemException();
-        response.add(bytes);
         return await response.close();
       }
       final [id, file] = path;

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,12 +10,12 @@ import 'cloudflare.dart';
 import 'downloads.dart';
 import 'exo.dart';
 import 'history.dart';
-import 'hls_proxy.dart';
 import 'metadata.dart';
 import 'settings.dart';
 import 'site_listing.dart';
 import 'sources.dart';
 import 'states.dart';
+import 'stream_address.dart';
 import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
@@ -334,22 +333,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _startAt = at;
     setState(() => session.playing(stream));
     final resume = at != null && at > Duration.zero ? at : null;
+    final address = await StreamAddress.instance.forPlayer(stream);
     await player.open(
-      // HLS goes through the local proxy (it strips the fake image prefix some hosts put on segments); direct
-      // files (mp4) are fetched with their headers.
-      stream.url.startsWith('saf://')
-          ? await HlsProxy.documentFile(stream.url)
-          : stream.isLocal || !stream.isHls
-          ? stream.url
-          : await HlsProxy.url(stream.url, stream.headers),
-      headers: stream.isHls ? null : stream.headers,
-      hls: stream.isHls,
+      address.url,
+      headers: address.headers,
+      hls: address.hls,
       start: resume,
-      // Loaded with the video, so switching to one later needs no reload.
-      subtitles: [
-        for (final s in stream.subtitles)
-          (url: await _subtitleUrl(stream, s), label: s.label),
-      ],
+      subtitles: address.subtitles,
     );
     // open() returns before the stream has loaded, and picking a subtitle track before that is dropped.
     if (player.state.duration == Duration.zero) {
@@ -371,30 +361,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// position (zero when the app doesn't report it), or null when no app can play it.
   Future<Duration?> _playExternal(VideoStream stream, {Duration? at}) async {
     setState(() => session.current = stream);
-    // Other apps can't send the stream's headers or read app storage, so both go through the local proxy.
-    final dir = stream.isLocal && !stream.url.startsWith('saf://')
-        ? File(stream.url).parent.path
-        : null;
-    Future<String> address(String url) => url.startsWith('saf://')
-        ? HlsProxy.documentFile(url)
-        : dir != null
-        ? HlsProxy.localFile(dir, url.split('/').last)
-        : HlsProxy.url(
-            url,
-            stream.headers,
-            ext: stream.isHls && url == stream.url
-                ? 'm3u8'
-                : Uri.parse(url).path.split('.').last,
-          );
     try {
+      final address = await StreamAddress.instance.forExternalApp(stream);
       final result = await AndroidApp.playExternal(
-        url: stream.isHls ? await address(stream.url) : stream.url,
-        headers: stream.isHls ? null : stream.headers, // MX Player only
+        url: address.url,
+        headers: address.headers, // MX Player only
         title: '${titleOf(widget.media)} · Episode ${epNumber(episode.number)}',
         position: at ?? Duration.zero,
         subtitles: [
-          for (final s in stream.subtitles)
-            {'label': s.label, 'url': await address(s.url)},
+          for (final s in address.subtitles) {'label': s.label, 'url': s.url},
         ],
       );
       final (:position, :duration) = PlaybackSession.externalStop(result);
@@ -416,18 +391,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       'Auto',
     ); // embedded or burned-in subs
   }
-
-  /// Subtitle hosts refuse requests without the stream's Referer, so they go through the proxy.
-  Future<String> _subtitleUrl(VideoStream stream, Subtitle s) async =>
-      s.url.startsWith('saf://')
-      ? HlsProxy.documentFile(s.url)
-      : stream.isLocal
-      ? s.url
-      : HlsProxy.url(
-          s.url,
-          stream.headers,
-          ext: Uri.parse(s.url).path.split('.').last,
-        );
 
   /// A subtitle file loaded with the stream (see [_play]), picked once its track shows up.
   Future<void> _setExternal(VideoStream stream, Subtitle s) async {
