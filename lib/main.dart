@@ -35,8 +35,31 @@ final appGeneration = ValueNotifier(0);
 /// Rebuilds MaterialApp's theme while keeping the current navigation route.
 final themeGeneration = ValueNotifier(0);
 
-class App extends StatelessWidget {
+class App extends StatefulWidget {
   const App({super.key});
+
+  @override
+  State<App> createState() => _AppState();
+}
+
+class _AppState extends State<App> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// The phone switched between light and dark: re-theme when following it.
+  @override
+  void didChangePlatformBrightness() {
+    if (Settings.followSystemTheme) themeGeneration.value++;
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(

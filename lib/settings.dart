@@ -97,6 +97,18 @@ enum ThemeSelection {
   final Brightness brightness;
 
   bool get dynamic => this == dynamicLight || this == dynamicDark;
+
+  /// The same palette in [mode]; the original dark look has no light twin, so cyan stands in for it.
+  ThemeSelection inBrightness(Brightness mode) {
+    final (light, dark) = switch (this) {
+      custom => (materialLight, custom),
+      dynamicLight || dynamicDark => (dynamicLight, dynamicDark),
+      materialLight || materialDark => (materialLight, materialDark),
+      violetLight || violetDark => (violetLight, violetDark),
+      forestLight || forestDark => (forestLight, forestDark),
+    };
+    return mode == Brightness.light ? light : dark;
+  }
 }
 
 /// Rows of the home screen, in their default order.
@@ -149,6 +161,19 @@ class Settings {
       ThemeSelection.custom;
   static set themeSelection(ThemeSelection value) =>
       _prefs.setString('theme_selection', value.name);
+
+  /// Use the chosen theme's light or dark twin to match the phone's own mode.
+  static bool get followSystemTheme =>
+      _loaded && (_prefs.getBool('follow_system_theme') ?? false);
+  static set followSystemTheme(bool v) =>
+      _prefs.setBool('follow_system_theme', v);
+
+  /// The theme in effect: the chosen one, or its twin for the system's mode when following it.
+  static ThemeSelection get activeTheme => followSystemTheme
+      ? themeSelection.inBrightness(
+          WidgetsBinding.instance.platformDispatcher.platformBrightness,
+        )
+      : themeSelection;
 
   static bool get preferDub => _prefs.getBool('prefer_dub') ?? false;
   static set preferDub(bool v) => _prefs.setBool('prefer_dub', v);
@@ -692,6 +717,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('Theme'),
               subtitle: Text(Settings.themeSelection.label),
               onTap: _pickTheme,
+            ),
+            SwitchListTile(
+              title: const Text('Follow system light and dark'),
+              subtitle: const Text(
+                'Uses the light or dark version of this theme to match your phone',
+              ),
+              value: Settings.followSystemTheme,
+              onChanged: (v) {
+                setState(() => Settings.followSystemTheme = v);
+                themeGeneration.value++;
+              },
             ),
             if (isBetaBuild)
               SwitchListTile(

@@ -1,4 +1,7 @@
 import 'package:aniview/settings.dart';
+
+import 'dart:ui' show Brightness;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,5 +24,31 @@ void main() {
     Settings.homeSections = sections.reversed.toList();
     expect(Settings.homeSections.first, (HomeSection.season, true));
     expect(Settings.homeSections.last, (HomeSection.trending, true));
+  });
+
+  testWidgets('follows the phone\'s light and dark mode when asked to', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'theme_selection': 'violetLight'});
+    await Settings.load();
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    expect(Settings.activeTheme, ThemeSelection.violetLight); // off: as chosen
+
+    Settings.followSystemTheme = true;
+    expect(Settings.activeTheme, ThemeSelection.violetDark);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    expect(Settings.activeTheme, ThemeSelection.violetLight);
+
+    // The original dark look has no light twin: cyan stands in.
+    expect(
+      ThemeSelection.custom.inBrightness(Brightness.light),
+      ThemeSelection.materialLight,
+    );
+    expect(
+      ThemeSelection.custom.inBrightness(Brightness.dark),
+      ThemeSelection.custom,
+    );
   });
 }

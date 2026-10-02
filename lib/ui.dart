@@ -66,7 +66,7 @@ ColorScheme themeScheme(ThemeSelection choice) =>
     choice == ThemeSelection.custom ? _customScheme : _materialSchemes[choice]!;
 
 /// Shared semantic colors for both Material widgets and app-specific artwork.
-ColorScheme get scheme => themeScheme(Settings.themeSelection);
+ColorScheme get scheme => themeScheme(Settings.activeTheme);
 
 /// Side margin: 16dp on phones, the TV overscan margin on TV.
 double get side => isTv ? tvMargin : 16;
@@ -116,7 +116,7 @@ TextTheme get typeScale {
 }
 
 ThemeData buildTheme() {
-  if (Settings.themeSelection != ThemeSelection.custom) {
+  if (Settings.activeTheme != ThemeSelection.custom) {
     return _buildMaterialTheme();
   }
   final text = typeScale;
