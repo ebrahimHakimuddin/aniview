@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
-import 'details.dart';
 import 'library.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -19,7 +18,6 @@ Future<void> openSearch(BuildContext context, SearchFilters filters) =>
       MaterialPageRoute(builder: (_) => SearchScreen(filters: filters)),
     );
 
-const _keep = Object(); // an argument left out of [_SearchScreenState._copy]
 const _any = ''; // the "Any" choice in a filter's picker
 
 const _sorts = <String?, String>{
@@ -284,28 +282,6 @@ class _SearchScreenState extends State<SearchScreen> {
     search.filter(picked, controller.text);
   }
 
-  /// Back to recent searches and genres.
-  SearchFilters _copy({
-    Object? sort = _keep,
-    Object? season = _keep,
-    Object? year = _keep,
-    Object? format = _keep,
-    Object? status = _keep,
-    Set<String>? genres,
-    bool? unwatched,
-  }) {
-    final f = filters;
-    return SearchFilters(
-      unwatched: unwatched ?? f.unwatched,
-      sort: sort == _keep ? f.sort : sort as String?,
-      season: season == _keep ? f.season : season as String?,
-      year: year == _keep ? f.year : year as int?,
-      format: format == _keep ? f.format : format as String?,
-      status: status == _keep ? f.status : status as String?,
-      genres: genres ?? f.genres,
-    );
-  }
-
   /// Filters as a row of chips, each opening a short list of its own choices, instead of one long sheet.
   Widget _filterBar() {
     final f = filters;
@@ -327,7 +303,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'Sort by',
           _choices(_sorts),
           f.sort ?? _any,
-          (v) => _copy(sort: v == _any ? null : v),
+          (v) => f.copyWith(sort: () => v == _any ? null : v),
         ),
       ),
       _chip(
@@ -340,7 +316,7 @@ class _SearchScreenState extends State<SearchScreen> {
         () async {
           final picked = await pickMany(context, 'Genres', _genres, f.genres);
           if (picked != null && mounted) {
-            _setFilters(_copy(genres: picked));
+            _setFilters(f.copyWith(genres: picked));
           }
         },
       ),
@@ -351,7 +327,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'Season',
           _choices(_seasons),
           f.season ?? _any,
-          (v) => _copy(season: v == _any ? null : v),
+          (v) => f.copyWith(season: () => v == _any ? null : v),
         ),
       ),
       _chip(
@@ -364,7 +340,7 @@ class _SearchScreenState extends State<SearchScreen> {
             for (var y = DateTime.now().year + 1; y >= 1970; y--) '$y': '$y',
           },
           f.year == null ? _any : '${f.year}',
-          (v) => _copy(year: v == _any ? null : int.parse(v)),
+          (v) => f.copyWith(year: () => v == _any ? null : int.parse(v)),
         ),
       ),
       _chip(
@@ -374,7 +350,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'Format',
           _choices(_formats),
           f.format ?? _any,
-          (v) => _copy(format: v == _any ? null : v),
+          (v) => f.copyWith(format: () => v == _any ? null : v),
         ),
       ),
       _chip(
@@ -384,7 +360,7 @@ class _SearchScreenState extends State<SearchScreen> {
           'Status',
           _choices(_statuses),
           f.status ?? _any,
-          (v) => _copy(status: v == _any ? null : v),
+          (v) => f.copyWith(status: () => v == _any ? null : v),
         ),
       ),
     ];
@@ -414,7 +390,7 @@ class _SearchScreenState extends State<SearchScreen> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Hide watching & completed'),
               value: f.unwatched,
-              onChanged: (v) => _setFilters(_copy(unwatched: v)),
+              onChanged: (v) => _setFilters(f.copyWith(unwatched: v)),
             ),
         ],
       ),
@@ -448,31 +424,17 @@ class _SearchScreenState extends State<SearchScreen> {
     onSelected: (_) => onTap(),
   );
 
-  /// Watch random is picking a show from what's searched.
-  bool _picking = false;
-
   /// A show at random from the current search and filters: from a random one of the first ten pages, or the first
   /// when the results end sooner.
-  Future<void> _random() async {
-    setState(() => _picking = true);
-    try {
-      final pick = Random();
-      var (shows, _) = await Tracker.search(
-        query,
-        filters,
-        page: pick.nextInt(10) + 1,
-      );
-      if (shows.isEmpty) (shows, _) = await Tracker.search(query, filters);
-      if (!mounted) return;
-      setState(() => _picking = false);
-      if (shows.isEmpty) return showError(context, 'Nothing to pick from');
-      Analytics.event('watch_random', {'from': 'search'});
-      await openDetails(context, shows[pick.nextInt(shows.length)]);
-    } catch (e) {
-      if (mounted) showError(context, e);
-    } finally {
-      if (mounted && _picking) setState(() => _picking = false);
-    }
+  Future<Map?> _randomShow() async {
+    final pick = Random();
+    var (shows, _) = await Tracker.search(
+      query,
+      filters,
+      page: pick.nextInt(10) + 1,
+    );
+    if (shows.isEmpty) (shows, _) = await Tracker.search(query, filters);
+    return shows.isEmpty ? null : shows[pick.nextInt(shows.length)];
   }
 
   /// Opened over another page ("See all", a genre), not the Search tab: only that one has a way back.
@@ -509,15 +471,10 @@ class _SearchScreenState extends State<SearchScreen> {
                 children: [
                   if (_pushed) const BackButton(),
                   Expanded(child: _field()),
-                  IconButton(
+                  RandomButton(
                     tooltip: 'Watch something random from this search',
-                    onPressed: _picking ? null : _random,
-                    icon: _picking
-                        ? const SizedBox.square(
-                            dimension: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2.5),
-                          )
-                        : const Icon(Icons.shuffle_rounded),
+                    pick: _randomShow,
+                    from: () => 'search',
                   ),
                   if (filters.count > 0 || filters.sort != null)
                     TextButton(

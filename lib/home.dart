@@ -457,37 +457,12 @@ class _HomeScreenState extends State<HomeScreen>
     },
   );
 
-  /// Watch random is picking a show (a list or search request).
-  bool _picking = false;
-
-  Widget get _randomButton => IconButton(
+  Widget get _randomButton => RandomButton(
     tooltip: 'Watch something random',
     iconSize: 28,
-    icon: _picking
-        ? const SizedBox.square(
-            dimension: 24,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          )
-        : const Icon(Icons.shuffle_rounded),
-    onPressed: _picking
-        ? null
-        : () async {
-            setState(() => _picking = true);
-            try {
-              final show = await Tracker.random();
-              if (!mounted) return;
-              setState(() => _picking = false);
-              if (show == null) {
-                return showError(context, 'Nothing to pick from');
-              }
-              Analytics.event('watch_random', {'from': Settings.randomFrom});
-              await openDetails(context, show, onBack: _reloadLists);
-            } catch (e) {
-              if (mounted) showError(context, e);
-            } finally {
-              if (mounted && _picking) setState(() => _picking = false);
-            }
-          },
+    pick: Tracker.random,
+    from: () => Settings.randomFrom,
+    onBack: _reloadLists,
   );
 
   /// The phone remote, while the paired TV answers.

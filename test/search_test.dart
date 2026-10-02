@@ -64,4 +64,20 @@ void main() {
       expect((search.searched, search.filters.count), (false, 0));
     },
   );
+
+  test('copying filters keeps what is left out and clears what is unset', () {
+    const filters = SearchFilters(
+      sort: 'POPULARITY_DESC',
+      season: 'FALL',
+      year: 2020,
+      genres: {'Action'},
+    );
+    final copy = filters.copyWith(season: () => null, unwatched: true);
+    expect(copy.season, isNull); // unset
+    expect((copy.sort, copy.year), ('POPULARITY_DESC', 2020)); // kept
+    expect(copy.genres, {'Action'});
+    expect(copy.unwatched, isTrue);
+    expect(filters.copyWith(year: () => 2021).year, 2021);
+    expect(filters.copyWith(genres: {}).genres, isEmpty);
+  });
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'analytics.dart';
 import 'anilist.dart';
 import 'details.dart';
 import 'platform.dart';
@@ -1891,3 +1892,60 @@ Future<Set<String>?> pickMany(
     ),
   );
 });
+
+/// The shuffle button: [pick]s a show (null when there's none to pick from) and opens it, spinning meanwhile.
+/// [from] says where the pick came from, for analytics.
+class RandomButton extends StatefulWidget {
+  const RandomButton({
+    super.key,
+    required this.tooltip,
+    required this.pick,
+    required this.from,
+    this.iconSize,
+    this.onBack,
+  });
+
+  final String tooltip;
+  final Future<Map?> Function() pick;
+  final String Function() from;
+  final double? iconSize;
+
+  /// Back from the show's page.
+  final VoidCallback? onBack;
+
+  @override
+  State<RandomButton> createState() => _RandomButtonState();
+}
+
+class _RandomButtonState extends State<RandomButton> {
+  bool _picking = false;
+
+  Future<void> _run() async {
+    setState(() => _picking = true);
+    try {
+      final show = await widget.pick();
+      if (!mounted) return;
+      setState(() => _picking = false);
+      if (show == null) return showError(context, 'Nothing to pick from');
+      Analytics.event('watch_random', {'from': widget.from()});
+      await openDetails(context, show, onBack: widget.onBack);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted && _picking) setState(() => _picking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: widget.tooltip,
+    iconSize: widget.iconSize,
+    icon: _picking
+        ? const SizedBox.square(
+            dimension: 24,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          )
+        : const Icon(Icons.shuffle_rounded),
+    onPressed: _picking ? null : _run,
+  );
+}
