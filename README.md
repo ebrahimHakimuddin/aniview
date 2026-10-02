@@ -51,9 +51,9 @@ install over builds signed with the same key.
    fvm flutter build apk --release --split-per-abi \
      --dart-define-from-file=dart_defines.env \
      --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"
-   git tag v2.3.0 && git push origin main v2.3.0
-   gh release create v2.3.0 build/app/outputs/flutter-apk/app-*-release.apk \
-     --title v2.3.0 --notes-file /tmp/aniview-v2.3.0-notes.md
+   git tag v2.4.0 && git push origin main v2.4.0
+   gh release create v2.4.0 build/app/outputs/flutter-apk/app-*-release.apk \
+     --title v2.4.0 --notes-file /tmp/aniview-v2.4.0-notes.md
    ```
 
    Prepare the short release notes file before the final command. Publish the three split APKs with their
