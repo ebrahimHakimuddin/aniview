@@ -55,13 +55,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
   final player = ExoPlayer();
   final _scaffold = GlobalKey<ScaffoldState>();
-  late final session = PlaybackSession(
-    widget.episodes,
-    widget.index,
+  // The site playing: the one the page chose, until "Try another site" moves it.
+  late Source? _source = widget.source;
+  late String? _siteName = widget.sourceName;
+  late List<Episode> _episodes = widget.episodes;
+  late PlaybackSession session = _newSession(widget.index);
+
+  PlaybackSession _newSession(int index) => PlaybackSession(
+    _episodes,
+    index,
     media: widget.media,
     dub: widget.dub,
     site: _sourceName,
-    fetch: switch (widget.source) {
+    fetch: switch (_source) {
       final source? => (e) => SiteListing(
         source,
         widget.media,
@@ -128,8 +134,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<SkipTime> get skips => session.skips;
   Episode get episode => session.episode;
   bool get hasNext => session.hasNext;
-  String get _sourceName =>
-      widget.sourceName ?? widget.source?.name ?? 'Downloads';
+  String get _sourceName => _siteName ?? _source?.name ?? 'Downloads';
 
   @override
   void initState() {
@@ -329,6 +334,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// When the site has nothing for this episode: pick another site, find the show and the same episode there, and
+  /// play it from there.
+  Future<void> _switchSite() async {
+    final here = _sourceName;
+    final sites = [
+      for (final s in await Sites.all())
+        if (s.name != here) s,
+    ];
+    if (!mounted) return;
+    final picked = await pickOne<Source?>(context, 'Try another site', {
+      for (final s in sites) s: s.name,
+    }, null);
+    if (picked == null || !mounted) return;
+    final number = episode.number;
+    setState(() => error = null);
+    try {
+      final episodes = await SiteListing(
+        picked,
+        widget.media,
+        onChallenge: uiChallenge(context),
+      ).episodes();
+      final at = episodes.indexWhere((e) => e.number == number);
+      if (at < 0) throw Exception('${picked.name} has no Episode $number');
+      if (!mounted) return;
+      _source = picked;
+      _siteName = picked.name;
+      _episodes = episodes;
+      session = _newSession(at);
+      await _load(at);
+    } catch (e) {
+      if (mounted) setState(() => error = e);
+    }
+  }
+
   Future<void> _play(VideoStream stream, {Duration? at}) async {
     _startAt = at;
     setState(() => session.playing(stream));
@@ -469,7 +508,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     WatchHistory.played(
       widget.media,
       source: _sourceName,
-      episodes: widget.episodes,
+      episodes: _episodes,
       index: index,
       position: position,
       duration: duration,
@@ -674,11 +713,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
             color: scheme.surfaceContainerLow,
             child: _EpisodeList(
-              episodes: widget.episodes,
+              episodes: _episodes,
               current: index,
               media: widget.media,
               dub: widget.dub,
-              online: widget.source != null,
+              online: _source != null,
               onSelect: (i) {
                 _scaffold.currentState?.closeEndDrawer();
                 if (i != index) _load(i);
@@ -1010,11 +1049,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             width: 600,
             height: MediaQuery.sizeOf(context).height * .8,
             child: _EpisodeList(
-              episodes: widget.episodes,
+              episodes: _episodes,
               current: index,
               media: widget.media,
               dub: widget.dub,
-              online: widget.source != null,
+              online: _source != null,
               onSelect: (i) {
                 Navigator.pop(context);
                 if (i != index) _load(i);
@@ -1191,7 +1230,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// Episodes, subtitles and handing off to another app.
   List<Widget> _menus() {
     return [
-      if (widget.episodes.length > 1)
+      if (_episodes.length > 1)
         IconButton(
           tooltip: 'Episodes',
           icon: const Icon(Icons.video_library_outlined),
@@ -1488,7 +1527,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 hasNext ? () => _load(index + 1) : null,
               ),
               const SizedBox(width: 24),
-              if (widget.episodes.length > 1)
+              if (_episodes.length > 1)
                 control(
                   Icons.video_library_outlined,
                   'Episodes',
@@ -1726,6 +1765,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     onPressed: () => _load(index),
                     child: Text(challenge ? 'Verify' : 'Try again'),
                   ),
+                  if (_source != null && !challenge)
+                    FilledButton.tonal(
+                      onPressed: _switchSite,
+                      child: const Text('Try another site'),
+                    ),
                   if (hasNext)
                     FilledButton.tonal(
                       onPressed: () => _load(index + 1),
