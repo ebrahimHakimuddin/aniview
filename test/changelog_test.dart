@@ -29,8 +29,9 @@ void main() {
     await tester.tap(find.text('What’s new'));
     await tester.pumpAndSettle();
     expect(find.text('What’s new in $changelogVersion'), findsOneWidget);
-    for (final highlight in changelogHighlights) {
-      expect(find.text(highlight), findsOneWidget);
+    for (final entry in changelogHighlights) {
+      expect(find.text(entry.title), findsOneWidget);
+      expect(find.text(entry.body), findsOneWidget);
     }
   });
 
@@ -92,8 +93,9 @@ void main() {
       await launch(tester);
 
       expect(find.text('What’s new in $changelogVersion'), findsOneWidget);
-      for (final highlight in changelogHighlights) {
-        expect(find.text(highlight), findsOneWidget);
+      for (final entry in changelogHighlights) {
+        expect(find.text(entry.title), findsOneWidget);
+        expect(find.text(entry.body), findsOneWidget);
       }
       expect(find.text('Buy me a coffee'), findsOneWidget);
       expect(find.text('Join Discord'), findsOneWidget);
