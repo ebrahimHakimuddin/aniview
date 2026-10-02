@@ -10,6 +10,7 @@ import 'details.dart';
 import 'downloads.dart';
 import 'downloads_screen.dart';
 import 'history.dart';
+import 'home_feed.dart';
 import 'library.dart';
 import 'notifications.dart';
 import 'pairing.dart';
@@ -67,125 +68,29 @@ class _HomeScreenState extends State<HomeScreen>
     curve: Curves.easeOutCubic,
   );
 
-  late Future<Map<String, dynamic>?> viewer = Tracker.viewer();
-  late Future<Map<String, List>> lists = Tracker.lists();
-  late Future<List> trending = Tracker.trending();
-  late Future<List> season = Tracker.season();
-
-  /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
-  late Future<List<WatchRecord>> history = WatchHistory.all();
-
-  /// A week back and a week ahead of the shows you follow, in one request (AniList allows 30 a minute).
-  late Future<List<Map>> _airing = _loadAiring();
-
-  /// The newest episode out this past week of each show you're watching or watched recently.
-  late Future<List<Map>> released = _released();
-
-  /// The week ahead of the shows you're watching or planning and the ones you watched recently, or signed out,
-  /// of the popular shows airing now; loaded the first time Schedule is shown.
-  Future<List<Map>>? _scheduleLoad;
-  Future<List<Map>> get schedule => _scheduleLoad ??= _schedule();
-
-  /// The popular, all-show schedule for the second Schedule tab.
-  Future<List<Map>>? _allScheduleLoad;
-  Future<List<Map>> get allSchedule =>
-      _allScheduleLoad ??= AniList.airingPopular().then(
-        (all) => [
-          for (final s in all)
-            if (!Settings.hideNsfw ||
-                !Show(s['media'] as Map).genres.contains('Ecchi'))
-              s,
-        ],
-      );
-
-  /// When lists and airing were last fetched; see [_reloadLists].
-  DateTime _fetched = DateTime.now();
-
-  /// Every list, for My list; loaded the first time it's shown.
-  Future<Map<String, List>>? _library;
-  Future<Map<String, List>> get library =>
-      _library ??= Tracker.lists(all: true);
-
-  /// Your AniList totals, for Me; loaded the first time it's shown.
-  Future<Map<String, dynamic>?>? _stats;
-  Future<Map<String, dynamic>?> get stats => _stats ??= AniList.stats();
+  /// The futures the pages read, and when they go stale.
+  final feed = HomeFeed();
 
   int tab = 0;
   final _visited = {0}; // pages are built the first time they're opened
-
-  Future<List<Map>> _loadAiring() async =>
-      AniList.airingAround(await _followed(['CURRENT', 'PLANNING']));
-
-  Future<List<Map>> _released() async => AniList.latestAired(
-    await _airing,
-    (await _followed(['CURRENT'])).toSet(),
-  );
-
-  Future<List<Map>> _schedule() async {
-    if (!Tracker.signedIn) {
-      return allSchedule;
-    }
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return [
-      for (final s in await _airing)
-        if (!DateTime.fromMillisecondsSinceEpoch((s['airingAt'] as int) * 1000)
-            .isBefore(today))
-          s,
-    ];
-  }
-
-  /// Home's watching and planning lists: taken from My list's when that's loaded, instead of asking again.
-  Future<Map<String, List>> _lists() => _library == null
-      ? Tracker.lists()
-      : _library!.then(
-          (l) => {'CURRENT': l['CURRENT']!, 'PLANNING': l['PLANNING']!},
-        );
-
-  /// Fetches the lists and what airs, and everything built on them.
-  void _fetchLists() {
-    _fetched = DateTime.now();
-    if (_library != null) _library = Tracker.lists(all: true);
-    lists = _lists();
-    _airing = _loadAiring();
-    released = _released();
-    if (_scheduleLoad != null) _scheduleLoad = _schedule();
-    if (_allScheduleLoad != null) {
-      _allScheduleLoad = AniList.airingPopular().then(
-        (all) => [
-          for (final s in all)
-            if (!Settings.hideNsfw ||
-                !Show(s['media'] as Map).genres.contains('Ecchi'))
-              s,
-        ],
-      );
-    }
-  }
-
-  Future<List<int>> _followed(List<String> statuses) async {
-    final listed = await lists.then(
-      (l) => [for (final s in statuses) ...?l[s]],
-      onError: (Object _) => const [], // still check the recently watched ones
-    );
-    return [
-      for (final m in [...listed, for (final r in await history) r.media])
-        if (m['id'] is int) m['id'] as int,
-    ];
-  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    feed.addListener(() => setState(() {}));
     Analytics.screen('/', title: 'Home');
     _syncPending();
     _scheduleNotifications();
-    EpisodeNotifications.listen(_openFromNotification);
-    listenTv(resume: _resumeFromLauncher, search: _voiceSearch);
+    EpisodeNotifications.listen((id) => _land(RemoteIntent.notification, id));
+    listenTv(
+      resume: (id) => _land(RemoteIntent.launcher, id),
+      search: _voiceSearch,
+    );
     if (!isTv) TvRemote.check();
     if (isTv) {
       onRemoteSearch = _remoteSearch;
-      onRemotePlay = _playFromRemote;
+      onRemotePlay = (id) => _land(RemoteIntent.remotePlay, id);
       onLeftEdge = () {
         if (ModalRoute.of(context)?.isCurrent != true) return false;
         _openDrawer();
@@ -220,6 +125,7 @@ class _HomeScreenState extends State<HomeScreen>
     onRemoteSearch = null;
     onRemotePlay = null;
     WidgetsBinding.instance.removeObserver(this);
+    feed.dispose();
     _tabCurve.dispose();
     _tabIn.dispose();
     for (final node in [..._drawer, ..._pageFocus]) {
@@ -231,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
+    _reloadLists(checkStale: true); // away a while: the lists may have moved on
     _syncPending();
     if (!isTv) TvRemote.check();
   }
@@ -247,88 +154,52 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// After a show was opened or another tab picked. Watch history is on-device and always re-read; list
-  /// changes made in the app are already in the shared show maps, so AniList is asked again at most once a
-  /// minute unless [force]d (pull to refresh always is).
-  void _reloadLists({bool force = false}) {
+  /// After a show was opened or another tab picked; see [HomeFeed.reload] (pull to refresh always asks again).
+  void _reloadLists({bool force = false, bool checkStale = false}) {
     if (!mounted) return;
-    setState(() {
-      history = WatchHistory.all();
-      if (force ||
-          DateTime.now().difference(_fetched) > const Duration(minutes: 1)) {
-        _fetchLists();
-      }
-    });
+    feed.reload(force: force, checkStale: checkStale);
     _scheduleNotifications();
   }
 
   Future<void> _refresh() async {
-    setState(() {
-      viewer = Tracker.viewer();
-      trending = Tracker.trending();
-      season = Tracker.season();
-      history = WatchHistory.all();
-      _fetchLists();
-      if (_stats != null) _stats = AniList.stats();
-    });
+    final done = feed.refresh();
     _syncPending();
     _scheduleNotifications();
-    try {
-      await Future.wait([lists, trending, season]);
-    } catch (_) {} // each section shows its own error state
+    await done;
   }
 
-  /// Home is the root route, so its context can open a show whenever a notification is tapped.
-  Future<void> _openFromNotification(int id) async {
-    Analytics.event('notification_open', {'media_id': id});
+  /// Opens a show as [intent] asks (see [decide]). Home is the root route, so its context can do it whenever
+  /// one arrives; whatever's playing gives way to it.
+  Future<void> _land(RemoteIntent intent, int id) async {
+    Analytics.event(intent.event, {'media_id': id});
     try {
-      final media = await AniList.media(id);
-      if (mounted) await openDetails(context, media, onBack: _reloadLists);
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-  }
-
-  /// "Play on TV" from the phone: from where it was left on this TV, else the show's page starting its next
-  /// episode. Whatever's playing gives way to it.
-  Future<void> _playFromRemote(int id) async {
-    Analytics.event('remote_play', {'media_id': id});
-    Navigator.popUntil(context, (route) => route.isFirst);
-    try {
-      final record = await WatchHistory.byId(id);
+      final record = intent == RemoteIntent.notification
+          ? null
+          : await WatchHistory.byId(id);
       if (!mounted) return;
-      if (record != null) {
-        await resumeWatching(context, record);
+      final go = decide(intent, record);
+      if (go.popToRoot) Navigator.popUntil(context, (route) => route.isFirst);
+      if (go.resume case final resume?) {
+        await resumeWatching(context, resume);
       } else {
         final media = await AniList.media(id);
         if (!mounted) return;
-        await openDetails(context, media, onBack: _reloadLists, autoplay: true);
+        await openDetails(
+          context,
+          media,
+          onBack: _reloadLists,
+          autoplay: go.autoplay,
+        );
       }
     } catch (e) {
       if (mounted) showError(context, e);
     }
-    _reloadLists();
-  }
-
-  /// A show picked from the TV launcher's Continue watching row: straight back into the player, or its page
-  /// when that can't happen (history cleared since, or the episode isn't reachable).
-  Future<void> _resumeFromLauncher(int id) async {
-    Analytics.event('watch_next_open', {'media_id': id});
-    final record = await WatchHistory.byId(id);
-    if (!mounted) return;
-    if (record == null) return _openFromNotification(id);
-    Navigator.popUntil(context, (route) => route.isFirst);
-    try {
-      await resumeWatching(context, record);
-    } catch (e) {
-      if (mounted) showError(context, e);
-    }
-    _reloadLists();
+    if (intent != RemoteIntent.notification) _reloadLists();
   }
 
   /// Keeps the background new-episode check current with recently watched shows and the AniList sign-in.
   Future<void> _scheduleNotifications() async {
-    final recent = await history;
+    final recent = await feed.history;
     syncWatchNext(recent);
     if (Settings.episodeNotifications &&
         (Tracker.signedIn || recent.isNotEmpty)) {
@@ -342,7 +213,7 @@ class _HomeScreenState extends State<HomeScreen>
       () => Settings.releaseSeenAt =
           DateTime.now().millisecondsSinceEpoch ~/ 1000,
     );
-    var inbox = released;
+    var inbox = feed.released;
     await showSheet<void>(
       context,
       height: .65,
@@ -365,12 +236,9 @@ class _HomeScreenState extends State<HomeScreen>
                       IconButton(
                         tooltip: 'Refresh',
                         onPressed: () {
-                          setState(() {
-                            history = WatchHistory.all();
-                            _fetchLists();
-                          });
+                          feed.reload(force: true);
                           refreshSheet(() {
-                            inbox = released;
+                            inbox = feed.released;
                           });
                         },
                         icon: const Icon(Icons.refresh_rounded),
@@ -389,11 +257,8 @@ class _HomeScreenState extends State<HomeScreen>
                         return ErrorState(
                           snap.error!,
                           onRetry: () {
-                            setState(() {
-                              history = WatchHistory.all();
-                              _fetchLists();
-                            });
-                            refreshSheet(() => inbox = released);
+                            feed.reload(force: true);
+                            refreshSheet(() => inbox = feed.released);
                           },
                         );
                       }
@@ -439,7 +304,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget get _releaseBell => FutureBuilder(
-    future: released,
+    future: feed.released,
     builder: (context, snap) {
       final unseen = (snap.data ?? const <Map>[])
           .where((e) => (e['airingAt'] as int) > Settings.releaseSeenAt)
@@ -527,7 +392,7 @@ class _HomeScreenState extends State<HomeScreen>
     FocusManager.instance.primaryFocus
         ?.unfocus(); // a search box keeps its keyboard up otherwise
     if (const [_Page.home, _Page.schedule, _Page.list].contains(_pages[i])) {
-      _reloadLists();
+      _reloadLists(checkStale: true);
     }
     setState(() {
       tab = i;
@@ -537,21 +402,35 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _page(int i) => switch (_pages[i]) {
-    _Page.home => _HomeFeed(this),
+    _Page.home => _HomeFeed(
+      feed,
+      actions: [_randomButton, _remoteButton, _downloadsButton, _releaseBell],
+      wordmark: _wordmark,
+      onRefresh: _refresh,
+      onReload: _reloadLists,
+      onSignIn: _signIn,
+      onFind: () => _select(_searchTab),
+    ),
     _Page.schedule => ScheduleScreen(
-      schedule: schedule,
-      allSchedule: allSchedule,
+      schedule: feed.schedule,
+      allSchedule: feed.allSchedule,
       onRefresh: _refresh,
       onChanged: _reloadLists,
     ),
     _Page.search => const SearchScreen(),
     _Page.list => MyListScreen(
-      lists: library,
+      lists: feed.library,
       onRefresh: _refresh,
       onChanged: _reloadLists,
       onSignIn: _signIn,
     ),
-    _Page.me => _MeScreen(this),
+    _Page.me => _MeScreen(
+      feed,
+      onRefresh: _refresh,
+      onReload: _reloadLists,
+      onSignIn: _signIn,
+      onHome: () => _select(0),
+    ),
   };
 
   /// The pages, built once visited; only the shown one takes focus or runs animations.
@@ -746,7 +625,7 @@ class _HomeScreenState extends State<HomeScreen>
               skipTraversal: true,
               onKeyEvent: _drawerKey,
               child: FutureBuilder(
-                future: viewer,
+                future: feed.viewer,
                 builder: (context, snap) => _TvDrawer(
                   open: _drawerOpen,
                   selected: tab,
@@ -948,26 +827,41 @@ class _TvDrawer extends StatelessWidget {
 /// Home's rows. On phones a featured carousel leads; on TV the focused show fills an immersive backdrop above the
 /// rows (the Google TV immersive list).
 class _HomeFeed extends StatelessWidget {
-  const _HomeFeed(this.home);
+  const _HomeFeed(
+    this.feed, {
+    required this.actions,
+    required this.wordmark,
+    required this.onRefresh,
+    required this.onReload,
+    required this.onSignIn,
+    required this.onFind,
+  });
 
-  final _HomeScreenState home;
+  final HomeFeed feed;
+
+  /// Phones: the buttons beside the wordmark in the app bar.
+  final List<Widget> actions;
+  final Widget wordmark;
+  final Future<void> Function() onRefresh;
+  final void Function({bool force}) onReload;
+  final VoidCallback onSignIn, onFind;
 
   @override
   Widget build(BuildContext context) => PickingScope(
-    onChanged: () => home._reloadLists(force: true),
+    onChanged: () => onReload(force: true),
     child: _feed(context),
   );
 
   Widget _feed(BuildContext context) => FutureBuilder(
-    future: home.trending,
+    future: feed.trending,
     builder: (context, snap) {
       final offline = snap.hasError && _downloaded.isNotEmpty;
       final rows = <Widget>[
         // Offline: go straight to what can play.
         if (offline) ...[
-          _OfflineBanner(onRetry: home._refresh),
+          _OfflineBanner(onRetry: onRefresh),
           _recentlyWatched(),
-          MediaRow('Downloaded', _downloaded, onBack: home._reloadLists),
+          MediaRow('Downloaded', _downloaded, onBack: onReload),
         ] else
           for (final (section, shown) in Settings.homeSections)
             if (shown && !(isTv && section == HomeSection.featured))
@@ -988,7 +882,7 @@ class _HomeFeed extends StatelessWidget {
     final page = context;
     return Scaffold(
       floatingActionButton: FutureBuilder(
-        future: home.history,
+        future: feed.history,
         builder: (context, snap) {
           final record = snap.data?.firstOrNull;
           if (record == null) return const SizedBox.shrink();
@@ -1000,14 +894,14 @@ class _HomeFeed extends StatelessWidget {
               subtitle: record.show.title,
               onPressed: () async {
                 await resumeWatching(context, record);
-                home._reloadLists();
+                onReload();
               },
             ),
           );
         },
       ),
       body: RefreshIndicator(
-        onRefresh: home._refresh,
+        onRefresh: onRefresh,
         edgeOffset: MediaQuery.paddingOf(context).top,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -1018,14 +912,8 @@ class _HomeFeed extends StatelessWidget {
               titleSpacing: side,
               // Full-contrast icons: they sit over the featured art until it scrolls away.
               actionsIconTheme: IconThemeData(color: scheme.onSurface),
-              title: home._wordmark,
-              actions: [
-                home._randomButton,
-                home._remoteButton,
-                home._downloadsButton,
-                home._releaseBell,
-                const SizedBox(width: 8),
-              ],
+              title: wordmark,
+              actions: [...actions, const SizedBox(width: 8)],
               expandedHeight: featured
                   ? _Featured.height(context) -
                         MediaQuery.paddingOf(context).top
@@ -1036,12 +924,15 @@ class _HomeFeed extends StatelessWidget {
                         items: snap.data?.take(6).toList() ?? const [],
                         loading: !snap.hasData && !snap.hasError,
                         error: snap.error,
-                        onRetry: home._refresh,
+                        onRetry: onRefresh,
                       ),
                     )
                   : null,
             ),
-            SliverList.list(children: rows),
+            // Lazy, but a row stays built once it has been: rebuilt on the way back up, it started over as a skeleton
+            // or nothing and jumped to its real height a frame later, so scrolling up kept shifting. (A Column of
+            // every row builds and repaints every poster on each rebuild, which stalled the back animation.)
+            SliverList.list(children: [for (final r in rows) _KeepAlive(r)]),
             // Clear of the continue button.
             SliverToBoxAdapter(
               child: SizedBox(
@@ -1099,7 +990,7 @@ class _HomeFeed extends StatelessWidget {
                       ErrorState(
                         snap.error!,
                         compact: true,
-                        onRetry: home._refresh,
+                        onRetry: onRefresh,
                       ),
                     ...rows,
                   ],
@@ -1118,14 +1009,6 @@ class _HomeFeed extends StatelessWidget {
       if (d.status == DownloadStatus.done) d.media['id']: d.media,
   }.values.toList();
 
-  /// Whether [section] is the first row, which takes focus on TV.
-  bool _first(HomeSection section) =>
-      Settings.homeSections
-          .where((s) => s.$2 && s.$1 != HomeSection.featured)
-          .firstOrNull
-          ?.$1 ==
-      section;
-
   Widget _section(
     BuildContext context,
     HomeSection section,
@@ -1135,11 +1018,11 @@ class _HomeFeed extends StatelessWidget {
       HomeSection.airing,
       true,
     ));
-    final first = isTv && _first(section);
+    final first = isTv && firstRow(Settings.homeSections) == section;
     return switch (section) {
       HomeSection.featured => const SizedBox.shrink(), // the carousel
       HomeSection.newEpisodes => FutureBuilder(
-        future: home.released,
+        future: feed.released,
         builder: (context, snap) {
           final aired = snap.data ?? const [];
           if (aired.isEmpty) return const SizedBox.shrink();
@@ -1147,7 +1030,7 @@ class _HomeFeed extends StatelessWidget {
             section.label,
             [for (final a in aired) a['media']],
             autofocus: first,
-            onBack: home._reloadLists,
+            onBack: onReload,
             subtitles: [
               for (final a in aired)
                 'EP ${a['episode']} · ${_ago(a['airingAt'] as int)}',
@@ -1156,31 +1039,33 @@ class _HomeFeed extends StatelessWidget {
         },
       ),
       HomeSection.airing when Tracker.signedIn => FutureBuilder(
-        future: home.lists,
+        future: feed.lists,
         builder: (context, snap) {
           if (!snap.hasData && !snap.hasError) {
             return RowSkeleton(title: section.label);
           }
-          final airing = (snap.data?['CURRENT'] ?? const [])
-              .where(_airingNow)
-              .toList();
+          final airing = homeRows(
+            snap.data ?? const {},
+            splitAiring: showAiring,
+            season: AniList.currentSeason,
+          ).airing;
           return airing.isEmpty
               ? const SizedBox.shrink()
               : MediaRow(
                   section.label,
                   airing,
                   autofocus: first,
-                  onBack: home._reloadLists,
+                  onBack: onReload,
                 );
         },
       ),
       HomeSection.watching when !Tracker.signedIn => _SignInCard(
-        onTap: home._signIn,
+        onTap: onSignIn,
         autofocus: first,
       ),
       HomeSection.watching ||
       HomeSection.planning when Tracker.signedIn => FutureBuilder(
-        future: home.lists,
+        future: feed.lists,
         builder: (context, snap) {
           if (!snap.hasData && !snap.hasError) {
             return RowSkeleton(title: section.label);
@@ -1192,50 +1077,46 @@ class _HomeFeed extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SectionHeader('Your list'),
-                      ErrorState(
-                        snap.error!,
-                        compact: true,
-                        onRetry: home._reloadLists,
-                      ),
+                      ErrorState(snap.error!, compact: true, onRetry: onReload),
                     ],
                   );
           }
-          final watching = snap.data!['CURRENT'] ?? const [];
-          final planning = snap.data!['PLANNING'] ?? const [];
+          final rows = homeRows(
+            snap.data!,
+            splitAiring: showAiring,
+            season: AniList.currentSeason,
+          );
           if (section == HomeSection.planning) {
-            return planning.isEmpty
+            return rows.planning.isEmpty
                 ? const SizedBox.shrink()
                 : MediaRow(
                     section.label,
-                    planning,
+                    rows.planning,
                     autofocus: first,
-                    onBack: home._reloadLists,
+                    onBack: onReload,
                   );
           }
-          if (watching.isEmpty && planning.isEmpty) {
+          if (rows.empty) {
             return EmptyState(
               compact: true,
               icon: Icons.video_library_outlined,
               title: 'Your list is empty',
               message: 'Shows you watch or plan to watch show up here.',
               action: FilledButton.tonalIcon(
-                onPressed: () => home._select(home._searchTab),
+                onPressed: onFind,
                 icon: const Icon(Icons.search_rounded),
                 label: const Text('Find a show'),
               ),
             );
           }
           // Airing ones have their own row when it's shown.
-          final current = showAiring
-              ? watching.where((m) => !_airingNow(m)).toList()
-              : watching;
-          return current.isEmpty
+          return rows.watching.isEmpty
               ? const SizedBox.shrink()
               : MediaRow(
                   section.label,
-                  current,
+                  rows.watching,
                   autofocus: first,
-                  onBack: home._reloadLists,
+                  onBack: onReload,
                 );
         },
       ),
@@ -1246,7 +1127,7 @@ class _HomeFeed extends StatelessWidget {
           final (name, year) = AniList.currentSeason;
           return 'This season · ${name[0]}${name.substring(1).toLowerCase()} $year';
         }(),
-        home.season,
+        feed.season,
         autofocus: first,
         seeAll: SearchFilters(
           season: AniList.currentSeason.$1,
@@ -1257,7 +1138,7 @@ class _HomeFeed extends StatelessWidget {
       HomeSection.trending => _row(
         context,
         section.label,
-        home.trending,
+        feed.trending,
         autofocus: first,
         // The carousel (or on TV the backdrop's error) already shows it.
         showError:
@@ -1270,7 +1151,7 @@ class _HomeFeed extends StatelessWidget {
   }
 
   Widget _recentlyWatched({bool autofocus = false}) => FutureBuilder(
-    future: home.history,
+    future: feed.history,
     builder: (context, snap) {
       final records = snap.data ?? const [];
       if (records.isEmpty) return const SizedBox.shrink();
@@ -1278,7 +1159,7 @@ class _HomeFeed extends StatelessWidget {
         'Recently watched',
         [for (final record in records) record.media],
         autofocus: autofocus,
-        onBack: home._reloadLists,
+        onBack: onReload,
         subtitles: [
           for (final r in records)
             'EP ${epNumber(r.episode)}'
@@ -1292,7 +1173,7 @@ class _HomeFeed extends StatelessWidget {
               builder: (_) => const RecentlyWatchedScreen(),
             ),
           );
-          home._reloadLists();
+          onReload();
         },
       );
     },
@@ -1323,7 +1204,7 @@ class _HomeFeed extends StatelessWidget {
     );
     if (remove != true) return;
     await WatchHistory.remove(record.media);
-    home._reloadLists();
+    onReload();
   }
 
   Widget _row(
@@ -1346,11 +1227,7 @@ class _HomeFeed extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SectionHeader(title),
-                  ErrorState(
-                    snap.error!,
-                    compact: true,
-                    onRetry: home._refresh,
-                  ),
+                  ErrorState(snap.error!, compact: true, onRetry: onRefresh),
                 ],
               );
       }
@@ -1359,7 +1236,7 @@ class _HomeFeed extends StatelessWidget {
         title,
         snap.data!,
         autofocus: autofocus,
-        onBack: home._reloadLists,
+        onBack: onReload,
         onSeeAll: seeAll == null ? null : () => openSearch(context, seeAll),
       );
     },
@@ -1376,13 +1253,6 @@ String _ago(int airingAt) {
     1 => 'yesterday',
     _ => '${days}d ago',
   };
-}
-
-/// Airing now: still releasing, or from the current season.
-bool _airingNow(dynamic media) {
-  final (season, year) = AniList.currentSeason;
-  return media['status'] == 'RELEASING' ||
-      (media['season'] == season && media['seasonYear'] == year);
 }
 
 class _OfflineBanner extends StatelessWidget {
@@ -1783,9 +1653,18 @@ class _SignInCard extends StatelessWidget {
 
 /// Phones: your AniList account and stats, and the way to Downloads and Settings.
 class _MeScreen extends StatelessWidget {
-  const _MeScreen(this.home);
+  const _MeScreen(
+    this.feed, {
+    required this.onRefresh,
+    required this.onReload,
+    required this.onSignIn,
+    required this.onHome,
+  });
 
-  final _HomeScreenState home;
+  final HomeFeed feed;
+  final Future<void> Function() onRefresh;
+  final void Function({bool force}) onReload;
+  final VoidCallback onSignIn, onHome;
 
   @override
   Widget build(BuildContext context) {
@@ -1795,7 +1674,7 @@ class _MeScreen extends StatelessWidget {
     final downloads = DownloadsScreen(
       onBrowse: () {
         Navigator.pop(context);
-        home._select(0);
+        onHome();
       },
     );
     return Scaffold(
@@ -1809,7 +1688,7 @@ class _MeScreen extends StatelessWidget {
             Padding(
               padding: EdgeInsets.fromLTRB(side, 12, side - 8, 8),
               child: FutureBuilder(
-                future: home.viewer,
+                future: feed.viewer,
                 builder: (context, snap) {
                   final me = snap.data;
                   final avatar = me?['avatar']?['large'] as String?;
@@ -1859,7 +1738,7 @@ class _MeScreen extends StatelessWidget {
                         // Settings may have changed the sign-in or the home sections.
                         onPressed: () =>
                             open(const SettingsScreen())
-                                .then((_) => home._refresh()),
+                                .then((_) => onRefresh()),
                       ),
                     ],
                   );
@@ -1869,7 +1748,7 @@ class _MeScreen extends StatelessWidget {
             const SizedBox(height: 16),
             // Signed out there are no stats to show: say what signing in brings, where they'd be.
             if (Tracker.signedIn)
-              StatsView(home.stats, onRetry: home._refresh)
+              StatsView(feed.stats, onRetry: onRefresh)
             else
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: side),
@@ -1897,7 +1776,7 @@ class _MeScreen extends StatelessWidget {
                         const SizedBox(height: 16),
                         FilledButton(
                           autofocus: isTv,
-                          onPressed: home._signIn,
+                          onPressed: onSignIn,
                           child: const Text('Sign in with AniList'),
                         ),
                       ],
@@ -1941,7 +1820,7 @@ class _MeScreen extends StatelessWidget {
                   subtitles: [
                     for (final d in shown) 'EP ${epNumber(d.number)}',
                   ],
-                  onBack: home._reloadLists,
+                  onBack: onReload,
                   onSeeAll: () => open(downloads),
                 );
               },
@@ -1950,5 +1829,27 @@ class _MeScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Keeps [child] built after it scrolls out of a lazy list.
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive(this.child);
+
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }

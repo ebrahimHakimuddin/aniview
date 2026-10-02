@@ -46,3 +46,11 @@ find it by broadcast, **pair** with it only while a pairing screen is open on th
 compares). Pairing makes the phone a **phone remote**, whose key presses are sealed with the pairing key and
 refused when replayed, and signs the TV in to the phone's AniList account when the TV has none. Each answer tells
 the phone what's **now playing**, for its playback controls; its typing searches on the TV (never mid-episode).
+
+**Selection** (`lib/selection.dart`, `Selection`): things picked on a page (shows, episodes) by key for one change to all of
+them: toggle, All, clear, held while a bulk change runs (`runBulk`, one request at a time, reporting a `BulkResult`).
+`Picking` (`lib/ui.dart`) is a selection of shows; posters under a `PickingScope` join it.
+
+**Home feed** (`lib/home_feed.dart`, `HomeFeed`): the futures behind Home, Schedule, My list and Me, built when first read and
+replaced when stale (AniList asked again at most once a minute; watch history always re-read), over a `HomeSource`. Also the
+pure rules on what they hold: a schedule day, the home list rows, and what a remote **intent** does (`decide`).

@@ -6,6 +6,7 @@ import 'analytics.dart';
 import 'anilist.dart';
 import 'details.dart';
 import 'history.dart';
+import 'home_feed.dart';
 import 'player.dart';
 import 'selection.dart';
 import 'sources.dart';
@@ -629,14 +630,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     Analytics.screen('/schedule', title: 'Schedule');
   }
 
-  static DateTime _airs(Map s) =>
-      DateTime.fromMillisecondsSinceEpoch((s['airingAt'] as int) * 1000);
-
-  static DateTime get _today {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day);
-  }
-
   @override
   Widget build(BuildContext context) =>
       PickingScope(onChanged: widget.onChanged, child: _page(context));
@@ -650,14 +643,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             : widget.schedule,
         builder: (context, snap) {
           final all = snap.data ?? const <Map>[];
-          final date = _today.add(Duration(days: day));
-          final shown = [
-            for (final s in all)
-              if (DateUtils.isSameDay(_airs(s), date)) s,
-          ];
-          final next = day == 0
-              ? shown.where((s) => _airs(s).isAfter(DateTime.now())).firstOrNull
-              : null;
+          final (:shown, :next, :rest) = scheduleDay(all, DateTime.now(), day);
           return RefreshIndicator(
             onRefresh: widget.onRefresh,
             child: CustomScrollView(
@@ -714,7 +700,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     ),
                   )
                 else
-                  _episodesOf(shown, next),
+                  _episodesOf(rest, next),
               ],
             ),
           );
@@ -725,11 +711,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   /// The day's episodes: the next one up as a wide card, the rest as rows; two columns of them on TV, where one
   /// would stretch a still and a time across the whole screen.
-  Widget _episodesOf(List<Map> shown, Map? next) {
-    final rest = [
-      for (final s in shown)
-        if (s != next) s,
-    ];
+  Widget _episodesOf(List<Map> rest, Map? next) {
     Widget slot(BuildContext context, int i) => FadeIn(
       key: ValueKey((day, i)),
       index: i + (next == null ? 0 : 1),
@@ -829,7 +811,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   Widget _day(int i, TextTheme text, Duration motion) {
-    final date = _today.add(Duration(days: i));
+    final date = scheduleDate(DateTime.now(), i);
     final on = i == day;
     final color = on ? scheme.onPrimaryContainer : scheme.onSurfaceVariant;
     return Semantics(
@@ -905,10 +887,13 @@ class _NextUp extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final media = slot['media'] as Map;
     final show = Show(media);
-    final at = _ScheduleScreenState._airs(slot);
-    final picking = Picking.of(context);
-    final pickingNow = picking?.active == true ? picking : null;
-    final picked = pickingNow?.has(media);
+    final at = airsAt(slot);
+    final join = Picking.join(
+      context,
+      media,
+      open: () => openDetails(context, media, onBack: onChanged),
+    );
+    final picked = join.selected;
     return FocusCard(
       radius: radiusLarge,
       autofocus: autofocus,
@@ -982,7 +967,7 @@ class _Slot extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final media = slot['media'] as Map;
     final show = Show(media);
-    final at = _ScheduleScreenState._airs(slot);
+    final at = airsAt(slot);
     final aired = at.isBefore(DateTime.now());
     final join = Picking.join(
       context,
