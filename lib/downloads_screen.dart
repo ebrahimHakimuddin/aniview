@@ -4,6 +4,7 @@ import 'analytics.dart';
 import 'anilist.dart';
 import 'details.dart';
 import 'downloads.dart';
+import 'downloads_view.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tv.dart';
@@ -21,12 +22,6 @@ class DownloadsScreen extends StatefulWidget {
 }
 
 class _DownloadsScreenState extends State<DownloadsScreen> {
-  static const _filters = <String, Set<DownloadStatus>>{
-    'All': {...DownloadStatus.values},
-    'In progress': {DownloadStatus.queued, DownloadStatus.downloading},
-    'Failed': {DownloadStatus.failed},
-    'Done': {DownloadStatus.done},
-  };
   String filter = 'All';
 
   /// Shows whose expanded state the user flipped from the default.
@@ -38,21 +33,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     Analytics.screen('/downloads', title: 'Downloads');
   }
 
-  Future<void> _deleteShow(List<Download> group) async {
-    final ok = await confirmDestructive(
-      context,
-      title: 'Delete ${group.length} downloads?',
-      message:
-          '${titleOf(group.first.media)} · '
-          '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))} will be freed on this device.',
-      action: 'Delete',
-    );
-    if (!ok) return;
-    for (final d in [...group]) {
-      await Downloads.instance.remove(d);
-    }
-    if (mounted) showSuccess(context, 'Downloads deleted');
-  }
+  Future<void> _deleteShow(List<Download> group) => confirmDeleteDownloads(
+    context,
+    [...group],
+    show: titleOf(group.first.media),
+  );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -81,15 +66,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   ),
           );
         }
-        final shows = <Object?, List<Download>>{};
-        for (final d in items) {
-          shows.putIfAbsent(d.media['id'], () => []).add(d);
-        }
-        // The last failed or active download finished: fall back to everything.
-        if (!items.any((d) => _filters[filter]!.contains(d.status))) {
-          filter = 'All';
-        }
-        final wanted = _filters[filter]!;
+        final view = DownloadsView(items, filter: filter, toggled: toggled);
+        filter = view.filter;
         return ListView(
           padding: EdgeInsets.only(
             bottom: 32 + MediaQuery.paddingOf(context).bottom,
@@ -109,76 +87,55 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 scrollDirection: Axis.horizontal,
                 padding: EdgeInsets.fromLTRB(side, 12, side, 4),
                 children: [
-                  for (final MapEntry(key: name, value: statuses)
-                      in _filters.entries)
-                    if (name == 'All' ||
-                        items.any((d) => statuses.contains(d.status)))
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ChoiceChip(
-                          label: Text(
-                            '$name · ${items.where((d) => statuses.contains(d.status)).length}',
-                          ),
-                          selected: filter == name,
-                          onSelected: (_) => setState(() => filter = name),
-                        ),
+                  for (final (name, count) in view.chips)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text('$name · $count'),
+                        selected: filter == name,
+                        onSelected: (_) => setState(() => filter = name),
                       ),
+                    ),
                 ],
               ),
             ),
-            for (final MapEntry(key: id, value: group) in shows.entries)
-              if (group.any((d) => wanted.contains(d.status)))
-                _show(id, group, single: shows.length == 1),
+            for (final show in view.shows) _show(show),
           ],
         );
       },
     ),
   );
 
-  Widget _show(Object? id, List<Download> group, {required bool single}) {
-    final wanted = _filters[filter]!;
-    // Open by default when there's something to act on, a single show, or a filter narrowing things down.
-    final open =
-        (filter != 'All' ||
-            single ||
-            group.any((d) => d.status != DownloadStatus.done)) !=
-        toggled.contains(id);
-    return Column(
-      children: [
-        _ShowHeader(
-          group,
-          expanded: open,
-          onToggle: () => setState(
-            () => toggled.contains(id) ? toggled.remove(id) : toggled.add(id),
-          ),
-          onDelete: () => _deleteShow(group),
+  Widget _show(ShowDownloads show) => Column(
+    children: [
+      _ShowHeader(
+        show,
+        onToggle: () => setState(
+          () => toggled.contains(show.id)
+              ? toggled.remove(show.id)
+              : toggled.add(show.id),
         ),
-        if (open)
-          for (final d in [
-            for (final d in group)
-              if (wanted.contains(d.status)) d,
-          ]..sort((a, b) => a.number.compareTo(b.number)))
-            _DownloadTile(d, group),
-      ],
-    );
-  }
+        onDelete: () => _deleteShow(show.all),
+      ),
+      if (show.open)
+        for (final d in show.shown) _DownloadTile(d, show.all),
+    ],
+  );
 }
 
 class _ShowHeader extends StatelessWidget {
   const _ShowHeader(
-    this.group, {
-    required this.expanded,
+    this.show, {
     required this.onToggle,
     required this.onDelete,
   });
 
-  final List<Download> group;
-  final bool expanded;
+  final ShowDownloads show;
   final VoidCallback onToggle, onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final media = group.first.media;
+    final media = show.media;
     return ListTile(
       contentPadding: EdgeInsets.fromLTRB(side, 8, side - 12, 0),
       onTap: onToggle,
@@ -196,15 +153,12 @@ class _ShowHeader extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.titleMedium,
       ),
-      subtitle: Text(
-        '${group.length} ${group.length == 1 ? 'episode' : 'episodes'} · '
-        '${formatBytes(group.fold(0, (sum, d) => sum + d.bytes))}',
-      ),
+      subtitle: Text(show.summary),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+            show.open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
             color: scheme.onSurfaceVariant,
           ),
           MoreMenu(title: titleOf(media), [
@@ -240,14 +194,6 @@ class _DownloadTile extends StatelessWidget {
     final active =
         d.status == DownloadStatus.downloading ||
         d.status == DownloadStatus.queued;
-    final status = switch (d.status) {
-      DownloadStatus.queued => 'Waiting to download',
-      DownloadStatus.downloading =>
-        '${(d.progress * 100).round()}% · ${formatBytes(d.bytes)}',
-      DownloadStatus.done =>
-        '${formatBytes(d.bytes)} · ${d.dub ? 'Dub' : 'Sub'} · ${d.source}',
-      DownloadStatus.failed => d.error ?? 'Download failed',
-    };
     return ListTile(
       contentPadding: EdgeInsets.fromLTRB(side, 0, side - 12, 0),
       onTap: d.status == DownloadStatus.done
@@ -282,7 +228,7 @@ class _DownloadTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            status,
+            DownloadsView.statusText(d),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: failed ? TextStyle(color: scheme.error) : null,

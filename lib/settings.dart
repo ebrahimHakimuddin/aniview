@@ -264,7 +264,7 @@ class Settings {
   static int get releaseSeenAt => _prefs.getInt('release_seen_at') ?? 0;
   static set releaseSeenAt(int v) => _prefs.setInt('release_seen_at', v);
 
-  /// Android document tree picked for new offline episodes. Empty uses app storage.
+  /// Android document tree picked for new offline episodes, used only while saving to the gallery is on. Empty uses app storage.
   static String get downloadFolder => _prefs.getString('download_folder') ?? '';
   static set downloadFolder(String v) => _prefs.setString('download_folder', v);
 
@@ -1021,29 +1021,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _Group('Storage', [
-            ListTile(
-              leading: const Icon(Icons.folder_open_rounded),
-              title: const Text('Download folder'),
-              subtitle: Text(Settings.downloadFolderLabel),
-              trailing: Settings.downloadFolder.isEmpty
-                  ? const Icon(Icons.chevron_right_rounded)
-                  : IconButton(
-                      tooltip: 'Use app storage for new downloads',
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () =>
-                          setState(() => Settings.downloadFolder = ''),
-                    ),
-              onTap: () async {
-                try {
-                  final folder = await AndroidApp.pickDownloadFolder();
-                  if (folder != null && mounted) {
-                    setState(() => Settings.downloadFolder = folder);
-                  }
-                } catch (e) {
-                  if (mounted) showError(this.context, e);
-                }
-              },
-            ),
             _Choice(
               title: 'Download quality',
               subtitle: 'Lower quality takes less space',
@@ -1063,6 +1040,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: Settings.saveToGallery,
               onChanged: (v) => setState(() => Settings.saveToGallery = v),
             ),
+            if (Settings.saveToGallery)
+              ListTile(
+                leading: const Icon(Icons.folder_open_rounded),
+                title: const Text('Download folder'),
+                subtitle: Text(Settings.downloadFolderLabel),
+                trailing: Settings.downloadFolder.isEmpty
+                    ? const Icon(Icons.chevron_right_rounded)
+                    : IconButton(
+                        tooltip: 'Use app storage for new downloads',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () =>
+                            setState(() => Settings.downloadFolder = ''),
+                      ),
+                onTap: () async {
+                  try {
+                    final folder = await AndroidApp.pickDownloadFolder();
+                    if (folder != null && mounted) {
+                      setState(() => Settings.downloadFolder = folder);
+                    }
+                  } catch (e) {
+                    if (mounted) showError(this.context, e);
+                  }
+                },
+              ),
             ListenableBuilder(
               listenable: Downloads.instance,
               builder: (context, _) => DestructiveTile(

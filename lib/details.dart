@@ -432,7 +432,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ];
         final toDownload = [
           for (final (e, d) in entries)
-            if (d == null || d.status == DownloadStatus.failed) e,
+            if (DownloadQueue.needsDownload(d)) e,
         ];
         final downloaded = [
           for (final (_, d) in entries)
@@ -479,20 +479,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     color: scheme.error,
                     icon: const Icon(Icons.delete_outline_rounded),
                     onPressed: () async {
-                      final ok = await confirmDestructive(
-                        context,
-                        title: 'Delete ${downloaded.length} downloads?',
-                        message:
-                            '${formatBytes(downloaded.fold(0, (n, d) => n + d.bytes))} will be freed on this device.',
-                        action: 'Delete',
-                      );
-                      if (!ok) return;
-                      for (final d in downloaded) {
-                        await Downloads.instance.remove(d);
+                      if (await confirmDeleteDownloads(context, downloaded) &&
+                          mounted) {
+                        done();
                       }
-                      if (!mounted) return;
-                      showSuccess(this.context, 'Downloads deleted');
-                      done();
                     },
                   ),
                 if (Tracker.signedIn)
@@ -549,10 +539,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
       builder: (_) => _DownloadRangeDialog(list, progress: progress, dub: dub),
     );
     if (picked == null || !mounted) return;
-    final count = picked.where((e) {
-      final d = Downloads.instance.entry(media, e.number, dub);
-      return d == null || d.status == DownloadStatus.failed;
-    }).length;
+    final count = picked
+        .where(
+          (e) => DownloadQueue.needsDownload(
+            Downloads.instance.entry(media, e.number, dub),
+          ),
+        )
+        .length;
     Downloads.instance.enqueue(
       media,
       site.name,
@@ -2431,16 +2424,34 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
   }
 }
 
-Future<void> confirmDeleteDownload(BuildContext context, Download d) async {
+Future<void> confirmDeleteDownload(BuildContext context, Download d) =>
+    confirmDeleteDownloads(context, [d]);
+
+/// Asks, then deletes [downloads] (one episode, a pick, or a show named by [show]); true when they were deleted.
+Future<bool> confirmDeleteDownloads(
+  BuildContext context,
+  List<Download> downloads, {
+  String? show,
+}) async {
+  final one = downloads.length == 1;
+  final freed = formatBytes(downloads.fold(0, (n, d) => n + d.bytes));
   final ok = await confirmDestructive(
     context,
-    title: 'Delete Episode ${epNumber(d.number)}?',
-    message: '${formatBytes(d.bytes)} will be freed on this device.',
+    title: one
+        ? 'Delete Episode ${epNumber(downloads.single.number)}?'
+        : 'Delete ${downloads.length} downloads?',
+    message:
+        '${show == null ? '' : '$show · '}$freed will be freed on this device.',
     action: 'Delete',
   );
-  if (!ok) return;
-  await Downloads.instance.remove(d);
-  if (context.mounted) showSuccess(context, 'Download deleted');
+  if (!ok) return false;
+  for (final d in downloads) {
+    await Downloads.instance.remove(d);
+  }
+  if (context.mounted) {
+    showSuccess(context, one ? 'Download deleted' : 'Downloads deleted');
+  }
+  return true;
 }
 
 /// Plays the finished downloads of [download]'s show and audio, from [download].

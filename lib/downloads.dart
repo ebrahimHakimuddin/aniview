@@ -13,6 +13,7 @@ import 'settings.dart';
 import 'site_listing.dart';
 import 'sources.dart';
 import 'states.dart';
+import 'stream_address.dart';
 import 'platform.dart';
 
 enum DownloadStatus { queued, downloading, done, failed }
@@ -125,6 +126,134 @@ Download? _tryParse(Object? json) {
   }
 }
 
+/// The queue's state machine, in memory: what's waiting, what's running, what failed, and what a removal during a
+/// run cancels. [Downloads] drives it and does the actual fetching.
+class DownloadQueue {
+  /// [saved] is the list from the previous run; what was downloading when the app closed is queued again.
+  DownloadQueue([Iterable<Download> saved = const []]) {
+    items.addAll(saved);
+    for (final d in items.where(
+      (d) => d.status == DownloadStatus.downloading,
+    )) {
+      d.status = DownloadStatus.queued;
+    }
+  }
+
+  final List<Download> items = [];
+
+  /// The download being fetched.
+  Download? active;
+
+  /// The active download was removed: its work stops, and it isn't marked failed.
+  bool get cancelled => active != null && !items.contains(active);
+
+  /// Whether this episode (its [entry], if any) still needs queueing: never queued, or failed last time.
+  static bool needsDownload(Download? d) =>
+      d == null || d.status == DownloadStatus.failed;
+
+  /// The download entry (in any state) for this episode and audio.
+  Download? entry(Map media, num number, bool dub) => items
+      .where(
+        (d) =>
+            d.media['id'] == media['id'] && d.number == number && d.dub == dub,
+      )
+      .firstOrNull;
+
+  /// Queues [episodes], skipping ones already queued or saved and retrying failed ones.
+  void enqueue(
+    Map media,
+    String source,
+    Iterable<Episode> episodes, {
+    required bool dub,
+  }) {
+    for (final episode in episodes) {
+      if (entry(media, episode.number, dub) case final existing?) {
+        retry(existing);
+        continue;
+      }
+      items.add(
+        Download(
+          media: media,
+          source: source,
+          number: episode.number,
+          dub: dub,
+          ref: episode.ref,
+          title: episode.title,
+          thumbnail: episode.thumbnail,
+        ),
+      );
+    }
+  }
+
+  void retry(Download d) {
+    if (!needsDownload(d)) return;
+    d
+      ..status = DownloadStatus.queued
+      ..error = null;
+  }
+
+  /// The next to fetch: the earliest queued.
+  Download? get nextQueued =>
+      items.where((d) => d.status == DownloadStatus.queued).firstOrNull;
+
+  void markStarted(Download d) {
+    active = d;
+    d
+      ..status = DownloadStatus.downloading
+      ..progress = 0
+      ..bytes = 0
+      ..error = null;
+  }
+
+  void markDone(Download d) => d.status = DownloadStatus.done;
+
+  void markFailed(Download d, String error) {
+    if (!items.contains(d)) return; // removed while downloading
+    d
+      ..status = DownloadStatus.failed
+      ..error = error;
+  }
+
+  /// The active download has stopped, however it ended.
+  void finish() => active = null;
+
+  /// Drops [d]; true when it was the active one, whose fetch must stop.
+  bool remove(Download d) {
+    items.remove(d);
+    return identical(active, d);
+  }
+
+  /// Drops everything; true when a fetch was running and must stop.
+  bool clear() {
+    items.clear();
+    return active != null;
+  }
+}
+
+/// The index of downloads on disk (`index.json` in [root]).
+class DownloadStore {
+  DownloadStore(this.root);
+  final Directory root;
+
+  File get _index => File('${root.path}/index.json');
+
+  Future<List<Download>> read() async {
+    if (!await _index.exists()) return [];
+    try {
+      return readIndex(await _index.readAsString());
+    } catch (_) {
+      return []; // unreadable index: start fresh rather than crash on launch
+    }
+  }
+
+  /// Written aside and swapped in, so a failed write or closing the app mid-write leaves the old index.
+  Future<void> write(String json) async {
+    final temp = File('${_index.path}.tmp');
+    await temp.writeAsString(json, flush: true);
+    await temp.rename(_index.path);
+  }
+}
+
 /// Episodes saved on the device. An HLS stream is stored as a local playlist plus its segment, key and subtitle
 /// files, so offline playback works exactly like streaming. Downloads run one at a time, in the background too
 /// (a foreground service keeps the app alive while the queue runs); unfinished segments resume on the next launch.
@@ -132,11 +261,12 @@ class Downloads extends ChangeNotifier {
   Downloads._();
   static final instance = Downloads._();
 
-  final List<Download> items = [];
+  var _queue = DownloadQueue();
+  List<Download> get items => _queue.items;
   late Directory _root;
-  Download? _active;
+  late DownloadStore _store;
   Completer<void>? _activeDone;
-  bool _running = false, _cancel = false;
+  bool _running = false;
   Future<void> _saving = Future.value();
   static const _notifications = MethodChannel('aniview/downloads');
 
@@ -148,19 +278,8 @@ class Downloads extends ChangeNotifier {
       '${(await getApplicationDocumentsDirectory()).path}/downloads',
     );
     await _root.create(recursive: true);
-    final index = File('${_root.path}/index.json');
-    if (await index.exists()) {
-      try {
-        items.addAll(readIndex(await index.readAsString()));
-      } catch (
-        _
-      ) {} // unreadable index: start fresh rather than crash on launch
-    }
-    for (final d in items.where(
-      (d) => d.status == DownloadStatus.downloading,
-    )) {
-      d.status = DownloadStatus.queued; // interrupted when the app closed
-    }
+    _store = DownloadStore(_root);
+    _queue = DownloadQueue(await _store.read());
     _pump();
   }
 
@@ -189,12 +308,8 @@ class Downloads extends ChangeNotifier {
   }) => find(media, number, dub: online ? dub : null);
 
   /// The download entry (in any state) for this episode and audio.
-  Download? entry(Map media, num number, bool dub) => items
-      .where(
-        (d) =>
-            d.media['id'] == media['id'] && d.number == number && d.dub == dub,
-      )
-      .firstOrNull;
+  Download? entry(Map media, num number, bool dub) =>
+      _queue.entry(media, number, dub);
 
   /// Finished downloads of a show, one per episode, in order.
   List<Download> forMedia(Map media) {
@@ -209,15 +324,15 @@ class Downloads extends ChangeNotifier {
   }
 
   VideoStream streamFor(Download d) {
-    final dir = d.storageUri == null
-        ? _dir(d).path
-        : 'saf://${Uri.encodeComponent(d.storageUri!)}/${d.id}';
+    final DownloadLocation where = d.storageUri == null
+        ? LocalFolder(_dir(d).path)
+        : DocumentFolder(d.storageUri!, d.id);
     return VideoStream(
       'Downloaded',
-      '$dir/index.m3u8',
+      where.urlOf('index.m3u8'),
       const {},
       subtitles: [
-        for (final s in d.subtitles) Subtitle(s.label, '$dir/${s.url}'),
+        for (final s in d.subtitles) Subtitle(s.label, where.urlOf(s.url)),
       ],
       skips: d.skips,
     );
@@ -232,39 +347,16 @@ class Downloads extends ChangeNotifier {
     required bool dub,
     required List<Episode> season,
   }) {
-    for (final episode in episodes) {
-      if (entry(media, episode.number, dub) case final existing?) {
-        _retry(existing);
-        continue;
-      }
-      items.add(
-        Download(
-          media: media,
-          source: source,
-          number: episode.number,
-          dub: dub,
-          ref: episode.ref,
-          title: episode.title,
-          thumbnail: episode.thumbnail,
-        ),
-      );
-    }
+    _queue.enqueue(media, source, episodes, dub: dub);
     _notify(save: true);
     _pump();
     saveSeason(media, season);
   }
 
   void retry(Download d) {
-    _retry(d);
+    _queue.retry(d);
     _notify(save: true);
     _pump();
-  }
-
-  void _retry(Download d) {
-    if (d.status != DownloadStatus.failed) return;
-    d
-      ..status = DownloadStatus.queued
-      ..error = null;
   }
 
   File _seasonFile(Map media) =>
@@ -295,9 +387,7 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<void> remove(Download d) async {
-    final activeDone = identical(_active, d) ? _activeDone?.future : null;
-    if (activeDone != null) _cancel = true;
-    items.remove(d);
+    final activeDone = _queue.remove(d) ? _activeDone?.future : null;
     _notify(save: true);
     await activeDone;
     try {
@@ -313,10 +403,8 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<void> removeAll() async {
-    final activeDone = _activeDone?.future;
-    if (activeDone != null) _cancel = true;
     final removed = [...items];
-    items.clear();
+    final activeDone = _queue.clear() ? _activeDone?.future : null;
     _notify(save: true);
     await activeDone;
     for (final d in removed) {
@@ -333,7 +421,7 @@ class Downloads extends ChangeNotifier {
 
   /// System notification for the running download, throttled because Android drops rapid updates.
   void _notifyProgress() {
-    final d = _active;
+    final d = _queue.active;
     if (d == null) return;
     final percent = (d.progress * 100).floor();
     final now = DateTime.now();
@@ -365,10 +453,7 @@ class Downloads extends ChangeNotifier {
     final json = jsonEncode([for (final d in items) d.toJson()]);
     _saving = _saving.then((_) async {
       try {
-        // Written aside and swapped in, so closing the app mid-write can't cut the index short.
-        final temp = File('${_root.path}/index.json.tmp');
-        await temp.writeAsString(json, flush: true);
-        await temp.rename('${_root.path}/index.json');
+        await _store.write(json);
       } catch (_) {}
     });
   }
@@ -378,9 +463,7 @@ class Downloads extends ChangeNotifier {
     _running = true;
     try {
       while (true) {
-        final next = items
-            .where((d) => d.status == DownloadStatus.queued)
-            .firstOrNull;
+        final next = _queue.nextQueued;
         if (next == null) break;
         await _download(next);
       }
@@ -394,25 +477,15 @@ class Downloads extends ChangeNotifier {
   Future<void> _download(Download d) async {
     final done = _activeDone = Completer<void>();
     String? note; // shown in the finished notification
-    _active = d;
-    _cancel = false;
     _notifiedPercent = -1;
-    d
-      ..status = DownloadStatus.downloading
-      ..progress = 0
-      ..bytes = 0
-      ..error = null;
+    _queue.markStarted(d);
     _notify(save: true);
     try {
-      final source = await Sites.named(d.source);
-      if (source == null) {
-        throw Exception('${d.source} is no longer one of the top sites');
-      }
       // No handler: a download runs with nothing on screen to show a check on.
-      final streams = await SiteListing(
-        source,
-        d.media,
-      ).streams(d.episode, dub: d.dub);
+      final listing =
+          await SiteListing.of(d.source, d.media) ??
+          (throw Exception('${d.source} is no longer one of the top sites'));
+      final streams = await listing.streams(d.episode, dub: d.dub);
       if (streams.isEmpty) {
         throw Exception('No ${d.dub ? 'dub' : 'sub'} servers for this episode');
       }
@@ -427,7 +500,8 @@ class Downloads extends ChangeNotifier {
       d
         ..skips = community.isNotEmpty ? community : stream.skips
         ..progress = 1;
-      if (Settings.downloadFolder.isNotEmpty) {
+      // The folder is part of saving to the gallery; without it, episodes stay in app storage.
+      if (Settings.saveToGallery && Settings.downloadFolder.isNotEmpty) {
         await AndroidApp.exportDownloadFolder(
           Settings.downloadFolder,
           d.id,
@@ -435,21 +509,22 @@ class Downloads extends ChangeNotifier {
         );
         d.storageUri = Settings.downloadFolder;
       }
-      d.status = DownloadStatus.done;
+      _queue.markDone(d);
       if (Settings.saveToGallery) note = await _saveToGallery(d, dir);
       if (d.storageUri != null) await dir.delete(recursive: true);
     } catch (e) {
-      if (_cancel) return; // removed while downloading
-      d
-        ..status = DownloadStatus.failed
-        ..error = e is CloudflareChallenge
+      _queue.markFailed(
+        d,
+        e is CloudflareChallenge
             ? '${d.source} needs a quick verification: play any episode from it once, then retry'
-            : friendlyError(e);
+            : friendlyError(e),
+      );
     } finally {
-      _post(_cancel ? 'cancel' : d.status.name, d, {'text': d.error ?? note});
-      _active = null;
+      final cancelled = _queue.cancelled;
+      _post(cancelled ? 'cancel' : d.status.name, d, {'text': d.error ?? note});
+      _queue.finish();
       _activeDone = null;
-      if (!_cancel) _notify(save: true);
+      if (!cancelled) _notify(save: true);
       done.complete();
     }
   }
@@ -492,7 +567,7 @@ class Downloads extends ChangeNotifier {
       try {
         while (!stop && queue.moveNext()) {
           final MapEntry(key: name, value: remote) = queue.current;
-          if (_cancel) throw _Cancelled();
+          if (_queue.cancelled) throw _Cancelled();
           final file = File('${dir.path}/$name');
           if (!await file.exists()) {
             final bytes = await _fetchWithRetry('$remote', stream.headers);
