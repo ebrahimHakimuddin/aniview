@@ -732,7 +732,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             IgnorePointer(
               child: AnimatedOpacity(
                 opacity: controls && !locked ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
+                duration: motionMs(context, 200),
                 child: const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -881,7 +881,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 excluding: !controls,
                 child: AnimatedOpacity(
                   opacity: controls ? 1 : 0,
-                  duration: const Duration(milliseconds: 200),
+                  duration: motionMs(context, 200),
                   child: Focus(
                     focusNode: _controlsNode,
                     child: locked
@@ -1448,10 +1448,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 // Thin until it's the thing being moved.
                 return AnimatedScale(
                   scale: focused ? 1 : .98,
-                  duration: const Duration(milliseconds: 150),
+                  duration: motionMs(context, 150),
                   child: AnimatedOpacity(
                     opacity: focused ? 1 : .85,
-                    duration: const Duration(milliseconds: 150),
+                    duration: motionMs(context, 150),
                     child: ExcludeFocus(child: _seekBar(shown, duration)),
                   ),
                 );
@@ -1467,7 +1467,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: ValueListenableBuilder(
                     valueListenable: _tvLabel,
                     builder: (context, label, _) => AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 150),
+                      duration: motionMs(context, 150),
                       child: Text(
                         label,
                         key: ValueKey(label),
@@ -1827,8 +1827,8 @@ class _EpisodeListState extends State<_EpisodeList> {
     final i = EpisodePlan.indexOfNumber(widget.episodes, text);
     if (i == null) return;
     scroll.animateTo(
-      _offsetOf(i == -1 ? widget.episodes.length - 1 : i),
-      duration: const Duration(milliseconds: 300),
+      _offsetOf(i),
+      duration: motionMs(context, 300),
       curve: Curves.easeOutCubic,
     );
   }
@@ -1999,7 +1999,17 @@ class _FastForwardState extends State<_FastForward>
   late final wave = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 900),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      wave.value = 0;
+    } else if (!wave.isAnimating) {
+      wave.repeat();
+    }
+  }
 
   @override
   void dispose() {
@@ -2111,10 +2121,10 @@ class _TvControlState extends State<_TvControl> {
           },
           child: AnimatedScale(
             scale: focused ? 1.1 : 1,
-            duration: const Duration(milliseconds: 150),
+            duration: motionMs(context, 150),
             curve: Curves.easeOutCubic,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
+              duration: motionMs(context, 150),
               width: size,
               height: size,
               decoration: BoxDecoration(

@@ -661,6 +661,7 @@ List<Widget> pickOverlay(
 }) => [
   AnimatedContainer(
     duration: const Duration(milliseconds: 180),
+    curve: Curves.easeOutCubic,
     decoration: BoxDecoration(
       color: picked
           ? scheme.primary.withValues(alpha: .22)
@@ -675,6 +676,7 @@ List<Widget> pickOverlay(
     right: leading ? null : 8,
     child: AnimatedSwitcher(
       duration: const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
       transitionBuilder: (child, a) => ScaleTransition(scale: a, child: child),
       child: Icon(
         picked
@@ -751,7 +753,7 @@ class FloatingNav extends StatelessWidget {
                           onSelect(i);
                         },
                         child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 220),
+                          duration: motionMs(context, 220),
                           curve: Curves.easeOutCubic,
                           height: 48,
                           // 48dp squares, the selected one widening for its label.
@@ -766,19 +768,20 @@ class FloatingNav extends StatelessWidget {
                           ),
                           // The label slides out of the icon; the icon fills in with a small pop.
                           child: AnimatedSize(
-                            duration: const Duration(milliseconds: 220),
+                            duration: motionMs(context, 220),
                             curve: Curves.easeOutCubic,
                             child: Row(
                               children: [
                                 AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 220),
+                                  duration: motionMs(context, 220),
+                                  switchInCurve: Curves.easeOutCubic,
                                   transitionBuilder: (child, a) =>
                                       ScaleTransition(
                                         scale: Tween(begin: .6, end: 1.0)
                                             .animate(
                                               CurvedAnimation(
                                                 parent: a,
-                                                curve: Curves.easeOutBack,
+                                                curve: Curves.easeOutCubic,
                                               ),
                                             ),
                                         child: FadeTransition(
@@ -819,6 +822,12 @@ class FloatingNav extends StatelessWidget {
     ),
   );
 }
+
+/// [ms] as a [Duration], or none with animations turned off in the system settings.
+Duration motionMs(BuildContext context, int ms) =>
+    MediaQuery.disableAnimationsOf(context)
+    ? Duration.zero
+    : Duration(milliseconds: ms);
 
 /// Pushes [route] and completes once it has finished animating away, so whatever the caller reloads on return
 /// (lists, a refresh) doesn't rebuild the page underneath while the back animation is still running.
@@ -1221,7 +1230,7 @@ class Artwork extends StatelessWidget {
                     ? child
                     : AnimatedOpacity(
                         opacity: frame == null ? 0 : 1,
-                        duration: const Duration(milliseconds: 250),
+                        duration: motionMs(context, 250),
                         child: child,
                       ),
                 errorBuilder: (_, _, _) => const SizedBox(),
@@ -1283,7 +1292,7 @@ class _FocusCardState extends State<FocusCard> {
         duration: Duration(milliseconds: pressed ? 90 : 180),
         curve: Curves.easeOutCubic,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
+          duration: motionMs(context, 180),
           decoration: BoxDecoration(
             borderRadius: radius,
             boxShadow: focused
@@ -1826,7 +1835,7 @@ class ScrollIntoViewOnFocus extends StatelessWidget {
         Scrollable.ensureVisible(
           context,
           alignment: .5,
-          duration: const Duration(milliseconds: 200),
+          duration: motionMs(context, 200),
           curve: Curves.easeOutCubic,
         );
       }

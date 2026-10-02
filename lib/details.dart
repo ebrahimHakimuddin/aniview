@@ -158,7 +158,8 @@ class _PlayActionState extends State<PlayAction> {
   @override
   Widget build(BuildContext context) {
     final icon = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
+      duration: motionMs(context, 180),
+      switchInCurve: Curves.easeOutCubic,
       transitionBuilder: (child, a) => ScaleTransition(
         scale: a,
         child: FadeTransition(opacity: a, child: child),
@@ -1092,7 +1093,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             TweenAnimationBuilder<double>(
               key: ValueKey(tab),
               tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 200),
+              duration: motionMs(context, 200),
               curve: Curves.easeOut,
               builder: (context, opacity, sliver) =>
                   SliverOpacity(opacity: opacity, sliver: sliver),
@@ -1661,7 +1662,7 @@ class _ListEntry extends StatelessWidget {
                 // Grows to the progress on open and to each new value after.
                 child: TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0, end: watchedShare(progress, total)),
-                  duration: const Duration(milliseconds: 600),
+                  duration: motionMs(context, 400),
                   curve: Curves.easeOutCubic,
                   builder: (context, value, child) =>
                       FractionallySizedBox(widthFactor: value, child: child),
@@ -2033,7 +2034,7 @@ class _EpisodeTile extends StatelessWidget {
               onTap: onTap,
               onLongPress: onLongPress,
               semanticLabel: 'Episode ${epNumber(episode.number)}',
-              child: AspectRatio(aspectRatio: 16 / 9, child: _still()),
+              child: AspectRatio(aspectRatio: 16 / 9, child: _still(context)),
             ),
             const SizedBox(height: 8),
             title,
@@ -2076,7 +2077,10 @@ class _EpisodeTile extends StatelessWidget {
                 width: 128,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(radiusMedium),
-                  child: AspectRatio(aspectRatio: 16 / 9, child: _still()),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: _still(context),
+                  ),
                 ),
               ),
               const SizedBox(width: 16),
@@ -2140,7 +2144,7 @@ class _EpisodeTile extends StatelessWidget {
     );
   }
 
-  Widget _still() {
+  Widget _still(BuildContext context) {
     final part = resumedPart;
     return Stack(
       fit: StackFit.expand,
@@ -2175,8 +2179,8 @@ class _EpisodeTile extends StatelessWidget {
           top: 8,
           right: 8,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 280),
-            switchInCurve: Curves.easeOutBack,
+            duration: motionMs(context, 280),
+            switchInCurve: Curves.easeOutCubic,
             transitionBuilder: (child, animation) =>
                 ScaleTransition(scale: animation, child: child),
             child: !watched

@@ -666,7 +666,7 @@ class _TvDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const ease = Duration(milliseconds: 220);
+    final ease = motionMs(context, 220);
     Widget item(int i) {
       final (icon, selectedIcon, label) = _pages[i].destination;
       return Padding(
@@ -968,7 +968,8 @@ class _HomeFeed extends StatelessWidget {
           builder: (context, focused, _) {
             final media = focused ?? snap.data?.firstOrNull;
             return AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
+              duration: motionMs(context, 400),
+              switchInCurve: Curves.easeOutCubic,
               child: media == null
                   ? const SizedBox.expand()
                   : _Immersive(media, key: ValueKey(media['id'])),
@@ -1358,7 +1359,7 @@ class _FeaturedState extends State<_Featured> {
                 children: [
                   for (var i = 0; i < widget.items.length; i++)
                     AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
+                      duration: motionMs(context, 250),
                       margin: const EdgeInsets.symmetric(horizontal: 4),
                       width: i == page ? 24 : 8,
                       height: 8,

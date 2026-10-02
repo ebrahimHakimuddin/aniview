@@ -771,7 +771,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     const width = 56.0, gap = 8.0;
     final text = Theme.of(context).textTheme;
     final still = MediaQuery.disableAnimationsOf(context);
-    const motion = Duration(milliseconds: 320);
+    final motion = still ? Duration.zero : const Duration(milliseconds: 320);
     return TvRow(
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -782,7 +782,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           child: Stack(
             children: [
               AnimatedPositioned(
-                duration: still ? Duration.zero : motion,
+                duration: motion,
                 curve: Curves.easeOutCubic,
                 left: day * (width + gap),
                 top: 0,
@@ -1382,9 +1382,7 @@ class _CountUp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TweenAnimationBuilder<double>(
     tween: Tween(begin: 0, end: value),
-    duration: MediaQuery.disableAnimationsOf(context)
-        ? Duration.zero
-        : const Duration(milliseconds: 900),
+    duration: motionMs(context, 600),
     curve: Curves.easeOutCubic,
     builder: (context, v, _) => builder(context, v),
   );

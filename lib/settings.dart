@@ -839,7 +839,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
               ),
               onTap: () async {
-                await Navigator.push(
+                await pushSettled(
                   context,
                   MaterialPageRoute(
                     builder: (_) =>
