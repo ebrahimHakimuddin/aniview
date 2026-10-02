@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-import 'sources.dart';
+import 'net.dart';
 
 /// How a person is asked to pass a site's Cloudflare check: true once it's passed. The caller decides what that means
 /// (a verification page, nothing at all in the background), so what runs the task needn't have a screen to show it on.
@@ -93,27 +93,51 @@ Future<String> browserFetch(
   }
 }
 
-/// GETs [url] over HTTP/2 with the in-app browser's cookies and user agent (what a cf_clearance cookie is bound
-/// to), so only the first request to a Cloudflare-challenged site pays for a WebView. Without a valid clearance,
-/// the site is opened in the browser first ([browserFetch]), which may throw [CloudflareChallenge].
-Future<String> clearedFetch(String url, {String? referer}) async {
-  final uri = Uri.parse(url);
-  Future<(int, Map<String, String>, Uint8List)> get() async {
-    final cookies = await CookieManager.instance().getCookies(url: WebUri(url));
-    return h2Get(uri, {
+/// GETs over HTTP/2 with the in-app browser's cookies and user agent (what a cf_clearance cookie is bound to), so
+/// only the first request to a Cloudflare-challenged site pays for a WebView. Without a valid clearance, the site is
+/// opened in the browser first ([browserFetch]), which may throw [CloudflareChallenge].
+class CloudflareNet implements Net {
+  /// [request] and [verify] are what touch the WebView and its cookies; replaced in tests.
+  CloudflareNet({
+    Future<(int, Uint8List)> Function(Uri uri, Map<String, String> headers)?
+    request,
+    Future<void> Function(String origin)? verify,
+  }) : _request = request ?? _withCookies,
+       _verify = verify ?? ((origin) => browserFetch(origin));
+
+  final Future<(int, Uint8List)> Function(Uri, Map<String, String>) _request;
+  final Future<void> Function(String) _verify;
+
+  static Future<(int, Uint8List)> _withCookies(
+    Uri uri,
+    Map<String, String> headers,
+  ) async {
+    final cookies = await CookieManager.instance().getCookies(
+      url: WebUri('$uri'),
+    );
+    final (status, _, body) = await h2Get(uri, {
+      ...headers,
       'user-agent': await _browserAgent,
       'cookie': [for (final c in cookies) '${c.name}=${c.value}'].join('; '),
-      'referer': ?referer,
     });
+    return (status, body);
   }
 
-  var (status, _, body) = await get();
-  if (status == 403 || status == 503) {
-    await browserFetch('${uri.origin}/');
-    (status, _, body) = await get();
+  @override
+  Future<Uint8List> bytes(String url, {Map<String, String>? headers}) async {
+    final uri = Uri.parse(url);
+    var (status, body) = await _request(uri, headers ?? const {});
+    if (status == 403 || status == 503) {
+      await _verify('${uri.origin}/');
+      (status, body) = await _request(uri, headers ?? const {});
+    }
+    if (status != 200) throw HttpException('HTTP $status', uri: uri);
+    return body;
   }
-  if (status != 200) throw HttpException('HTTP $status', uri: uri);
-  return utf8.decode(body, allowMalformed: true);
+
+  @override
+  Future<String> text(String url, {Map<String, String>? headers}) async =>
+      utf8.decode(await bytes(url, headers: headers), allowMalformed: true);
 }
 
 final _browserAgent = InAppWebViewController.getDefaultUserAgent();

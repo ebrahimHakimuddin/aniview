@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'platform.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tv.dart';
@@ -135,18 +134,18 @@ class Extensions {
 
   static Future<Map<String, InstalledExtension>> installed() async {
     final byPkg = <String, InstalledExtension>{};
-    for (final s in await AndroidApp.extensions('list') as List) {
-      final pkg = s['pkg'] as String;
-      byPkg[pkg] = (
-        pkg: pkg,
-        version: s['version'],
-        sources: [...?byPkg[pkg]?.sources, s['name']],
+    for (final s in await ExtensionHost.current.sources()) {
+      byPkg[s.pkg] = (
+        pkg: s.pkg,
+        version: s.version,
+        sources: [...?byPkg[s.pkg]?.sources, s.name],
       );
     }
     return byPkg;
   }
 
-  /// Downloads [extension] and hands it to Android, which only loads it if it's signed with its repo's key.
+  /// Downloads [extension] and hands it to Android, which only loads it if it's signed with its repo's key. The site
+  /// list picks up the change.
   static Future<void> install(ExtensionInfo extension) async {
     final res = await http.get(
       Uri.parse('${extension.repo.base}/apk/${extension.apk}'),
@@ -159,10 +158,10 @@ class Extensions {
     );
     await file.writeAsBytes(res.bodyBytes);
     try {
-      await AndroidApp.extensions('install', {
-        'path': file.path,
-        'fingerprint': extension.repo.fingerprint,
-      });
+      await ExtensionHost.current.install(
+        file.path,
+        extension.repo.fingerprint,
+      );
     } finally {
       await file.delete();
     }
@@ -170,7 +169,7 @@ class Extensions {
   }
 
   static Future<void> uninstall(String pkg) async {
-    await AndroidApp.extensions('uninstall', {'pkg': pkg});
+    await ExtensionHost.current.uninstall(pkg);
     Sites.reload();
   }
 }

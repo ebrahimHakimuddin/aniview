@@ -1,5 +1,5 @@
-import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:aniview/extensions.dart';
 import 'package:aniview/settings.dart';
@@ -9,6 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'fakes.dart';
 
 const _channel = MethodChannel('aniview/extensions');
 
@@ -22,10 +24,12 @@ void _answer(
         calls?.add(call);
         return reply(call);
       });
-  addTearDown(
-    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(_channel, null),
-  );
+  ExtensionHost.current = const ChannelExtensionHost(android: true);
+  addTearDown(() {
+    ExtensionHost.current = const ChannelExtensionHost();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_channel, null);
+  });
 }
 
 Map _episode(String name, num number) => {
@@ -270,33 +274,171 @@ void main() {
     });
   });
 
+  group('the extension host', () {
+    tearDown(() => ExtensionHost.current = const ChannelExtensionHost());
+
+    test('lists every source once, for the sources and the installed extensions alike', () async {
+      _answer(
+        (call) => [
+          {
+            'id': '1',
+            'pkg': 'pkg.a',
+            'version': '16.1',
+            'name': 'A',
+            'lang': 'en',
+            'baseUrl': 'https://a.test',
+          },
+          {
+            'id': '2',
+            'pkg': 'pkg.a',
+            'version': '16.1',
+            'name': 'A2',
+            'lang': 'fr',
+            'baseUrl': null,
+          },
+        ],
+      );
+      expect((await ExtensionSource.installed()).map((s) => s.name), [
+        'A',
+        'A2 (FR)',
+      ]);
+      final installed = await Extensions.installed();
+      expect(installed['pkg.a']?.version, '16.1');
+      expect(installed['pkg.a']?.sources, ['A', 'A2']);
+    });
+
+    test('lists nothing off Android', () async {
+      _answer((_) => fail('the channel was asked'));
+      expect(await const ChannelExtensionHost().sources(), isEmpty);
+      expect(await const ChannelExtensionHost().search('1', 'x'), isEmpty);
+    });
+
+    test(
+      'episodes are renumbered by position when the host states no numbers',
+      () async {
+        final host = FakeHost()
+          ..episodeList = [
+            for (final n in ['c', 'b', 'a']) Episode(-1, title: n, ref: n),
+          ];
+        final episodes = await ExtensionSource(
+          '1',
+          'Test',
+          'https://t.test',
+          host: host,
+        ).episodesOf('/show');
+        expect(
+          [for (final e in episodes) (e.number, e.title)],
+          [(1, 'a'), (2, 'b'), (3, 'c')],
+        );
+      },
+    );
+
+    test('streams follow the audio asked for, and all of them when only the other exists', () async {
+      final host = FakeHost()
+        ..videoList = [
+          VideoStream('Server - Dub', 'https://cdn.test/dub.m3u8', {}),
+          VideoStream('Server - Sub', 'https://cdn.test/sub.m3u8', {}),
+        ];
+      final source = ExtensionSource('1', 'T', 'https://t.test', host: host);
+      final episode = Episode(1, ref: {});
+      expect(
+        (await source.streams(media, episode, dub: true)).map((s) => s.url),
+        ['https://cdn.test/dub.m3u8'],
+      );
+      host.videoList = [host.videoList.last];
+      expect(await source.streams(media, episode, dub: true), hasLength(1));
+    });
+
+    test(
+      'installing and uninstalling make the site list load afresh',
+      () async {
+        final dir = await Directory.systemTemp.createTemp();
+        addTearDown(() => dir.delete(recursive: true));
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('plugins.flutter.io/path_provider'),
+              (_) async => dir.path,
+            );
+        var loads = 0;
+        Sites.load = () async {
+          loads++;
+          return [];
+        };
+        addTearDown(() {
+          Sites.load = topSources;
+          Sites.reload();
+        });
+        final host = FakeHost();
+        ExtensionHost.current = host;
+        Sites.reload();
+        await Sites.all();
+        await Sites.all();
+        expect(loads, 1);
+
+        final info = ExtensionInfo(
+          const ExtensionRepo('https://repo.test/index.min.json', 'R', 'AB12'),
+          {
+            'pkg': 'pkg.a',
+            'apk': 'a.apk',
+            'name': 'A',
+            'lang': 'en',
+            'version': '16.1',
+          },
+        );
+        await http.runWithClient(
+          () => Extensions.install(info),
+          () => MockClient((_) async => http.Response('apk', 200)),
+        );
+        expect(host.installed, ['a.apk:AB12']);
+        await Sites.all();
+        expect(loads, 2);
+
+        await Extensions.uninstall('pkg.a');
+        expect(host.removed, ['pkg.a']);
+        await Sites.all();
+        expect(loads, 3);
+      },
+    );
+  });
+
   group('the site list', () {
     final builtIn = [ReAnime('Re:Anime', 'https://re.test')];
-    final extension = ExtensionSource('9', 'Ext', 'https://ext.test');
+    final host = FakeHost();
     setUp(() {
       Sites.load = () async => builtIn;
+      ExtensionHost.current = host;
+      host.sourceError = null;
+      host.sourceList = [
+        (
+          id: '9',
+          pkg: 'p',
+          version: '16.1',
+          name: 'Ext',
+          lang: 'en',
+          baseUrl: 'https://ext.test',
+        ),
+      ];
       Sites.reload();
     });
     tearDown(() {
-      Sites.loadExtensions = ExtensionSource.installed;
+      ExtensionHost.current = const ChannelExtensionHost();
       Sites.extensionsPatience = const Duration(seconds: 15);
       Sites.reload();
     });
 
     test('has the installed extensions after the built-in sites', () async {
-      Sites.loadExtensions = () async => [extension];
       expect((await Sites.all()).map((s) => s.name), ['Re:Anime', 'Ext']);
     });
 
     test('keeps the built-in sites when the extension host fails', () async {
-      Sites.loadExtensions = () async =>
-          throw PlatformException(code: 'extension');
+      host.sourceError = PlatformException(code: 'extension');
       expect((await Sites.all()).map((s) => s.name), ['Re:Anime']);
     });
 
     test('keeps the built-in sites when the extension host stalls', () async {
       Sites.extensionsPatience = const Duration(milliseconds: 50);
-      Sites.loadExtensions = () => Completer<List<Source>>().future;
+      host.sourcesStall = true;
+      addTearDown(() => host.sourcesStall = false);
       expect((await Sites.all()).map((s) => s.name), ['Re:Anime']);
     });
   });

@@ -88,14 +88,14 @@ Future<void> resumeWatching(
   Source? source;
   var episodes = loaded ?? const <Episode>[];
   try {
-    source = await Sites.named(record.source);
-    final site = source;
-    if (loaded == null && site != null && context.mounted) {
-      episodes = await SiteListing(
-        site,
-        media,
-        onChallenge: uiChallenge(context),
-      ).episodes();
+    final listing = await SiteListing.of(
+      record.source,
+      media,
+      uiChallenge(context),
+    );
+    source = listing?.source;
+    if (loaded == null && listing != null && context.mounted) {
+      episodes = await listing.episodes();
     }
   } catch (_) {
     if (!downloaded.any((e) => e.number == number)) {
@@ -617,10 +617,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final picked = await showSheet<SearchResult>(
       context,
       scrollControlled: true,
-      (_) => _MatchSheet(source: current, query: titleOf(media)),
+      (_) => _MatchSheet(listing: listing!, query: titleOf(media)),
     );
     if (picked == null || !mounted) return;
-    await (listing ?? SiteListing(current, media)).pick(picked.id);
+    await listing!.pick(picked.id);
     if (!mounted) return;
     _select(current);
     showSuccess(context, 'Using “${picked.title}” on ${current.name}');
@@ -1811,9 +1811,9 @@ class _EntrySheetState extends State<_EntrySheet> {
 
 /// Search the selected site and pick the right show when the automatic match is wrong or missing.
 class _MatchSheet extends StatefulWidget {
-  const _MatchSheet({required this.source, required this.query});
+  const _MatchSheet({required this.listing, required this.query});
 
-  final Source source;
+  final SiteListing listing;
   final String query;
 
   @override
@@ -1824,10 +1824,8 @@ class _MatchSheetState extends State<_MatchSheet> {
   late final controller = TextEditingController(text: widget.query);
   late Future<List<SearchResult>> results = _run();
 
-  Future<List<SearchResult>> _run() => withCloudflare(
-    context,
-    () => widget.source.search(controller.text.trim()),
-  );
+  Future<List<SearchResult>> _run() =>
+      widget.listing.search(controller.text.trim());
 
   void _retry() => setState(() => results = _run());
 
@@ -1847,7 +1845,7 @@ class _MatchSheetState extends State<_MatchSheet> {
         children: [
           sheetTitle(
             context,
-            'Pick the show on ${widget.source.name}',
+            'Pick the show on ${widget.listing.source.name}',
             subtitle: 'Your choice is remembered for this show.',
           ),
           Padding(
@@ -1857,7 +1855,7 @@ class _MatchSheetState extends State<_MatchSheet> {
               textInputAction: TextInputAction.search,
               onSubmitted: (_) => _retry(),
               decoration: InputDecoration(
-                hintText: 'Search ${widget.source.name}',
+                hintText: 'Search ${widget.listing.source.name}',
                 prefixIcon: const Icon(Icons.search_rounded),
                 suffixIcon: IconButton(
                   tooltip: 'Search',

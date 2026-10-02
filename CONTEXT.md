@@ -22,6 +22,8 @@ when to offer or start the next episode (**up next**), what OK on a TV remote do
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
 sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's
 adapter (Anikoto, animepahe, Re:Anime, or an extension's `ExtensionSource`); history and downloads remember it by name.
+Adapters reach the network through a `Net` (`lib/net.dart`: plain HTTP, or `CloudflareNet` with a passed check's clearance)
+and extensions through an `ExtensionHost` (`lib/sources.dart`: the Android side, typed); both are faked in tests.
 
 **Listing** (`lib/site_listing.dart`, `SiteListing`): a show's entry on one site: its **episodes** (the person's pick of
 which entry the show is, else the site's own guess, with titles and artwork from ani.zip) and the **streams** of an

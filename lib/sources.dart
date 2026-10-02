@@ -1,21 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:http2/http2.dart' hide Settings;
 import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cloudflare.dart';
 import 'metadata.dart';
+import 'net.dart';
 import 'platform.dart';
 import 'settings.dart';
 
-const userAgent =
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+export 'net.dart';
 
 /// The supported anime streaming sites from everythingmoe's ranking at build time, in rank order: loaded once, and loaded
 /// afresh on the next ask after a failed load.
@@ -31,26 +28,29 @@ class Sites {
   static Future<List<Source>> all() => _current ??=
       Future(() async {
         // Extensions load beside the top sites, and never hold them up or take them down: one that fails or stalls is
-        // simply left out for now.
+        // left out of this answer, and asked for again on the next [all].
         final extensions = _extensionSources();
-        return [...await load(), ...await extensions];
+        final sites = await load();
+        final (installed, loaded) = await extensions;
+        if (!loaded) _current = null;
+        return [...sites, ...installed];
       }).catchError((Object e) {
         _current = null;
         throw e;
       });
 
-  /// Where the installed extensions' sources come from, and how long they get; replaced in tests.
-  @visibleForTesting
-  static Future<List<Source>> Function() loadExtensions =
-      ExtensionSource.installed;
+  /// How long the installed extensions get; replaced in tests.
   @visibleForTesting
   static Duration extensionsPatience = const Duration(seconds: 15);
 
-  static Future<List<Source>> _extensionSources() async {
+  static Future<(List<Source>, bool)> _extensionSources() async {
     try {
-      return await loadExtensions().timeout(extensionsPatience);
+      return (
+        await ExtensionSource.installed().timeout(extensionsPatience),
+        true,
+      );
     } catch (_) {
-      return [];
+      return (<Source>[], false);
     }
   }
 
@@ -73,14 +73,6 @@ final _topSites = _topSitesDefine.isEmpty
         r'Built without --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)"',
       )
     : _topSitesDefine.split(';');
-
-class CloudflareChallenge implements Exception {
-  CloudflareChallenge(this.url);
-  final String url;
-  @override
-  String toString() =>
-      'Cloudflare verification required for ${Uri.parse(url).host}';
-}
 
 class Episode {
   const Episode(
@@ -205,41 +197,6 @@ Future<void> clearMatches() async {
   }
 }
 
-/// Every plain HTTP request the sites make; a MockClient in tests.
-@visibleForTesting
-http.Client httpClient = http.Client();
-
-/// Hosts whose Cloudflare turns away HTTP/1.1 (all package:http speaks), e.g. animepahe's kwik player and its CDN.
-final _h2Hosts = <String>{};
-
-Future<http.Response> _get(String url, Map<String, String>? headers) async {
-  final uri = Uri.parse(url);
-  final all = {'User-Agent': userAgent, ...?headers};
-  if (!_h2Hosts.contains(uri.host)) {
-    final res = await httpClient.get(uri, headers: all);
-    if (res.statusCode == 200) return res;
-    if (res.statusCode != 403) {
-      throw HttpException('HTTP ${res.statusCode}', uri: uri);
-    }
-  }
-  final (status, response, body) = await h2Get(uri, all);
-  if (status != 200) throw HttpException('HTTP $status', uri: uri);
-  _h2Hosts.add(uri.host);
-  return http.Response.bytes(
-    body,
-    status,
-    headers: {'content-type': ?response['content-type']},
-  );
-}
-
-Future<String> fetch(String url, {Map<String, String>? headers}) async =>
-    (await _get(url, headers)).body;
-
-Future<Uint8List> fetchBytes(
-  String url, {
-  Map<String, String>? headers,
-}) async => (await _get(url, headers)).bodyBytes;
-
 /// everythingmoe's ranking, fetched when the app is built by tool/top_sites.dart.
 Future<List<Source>> topSources() async => [
   for (final [name, origin] in _topSites.map((s) => s.split('|')))
@@ -274,14 +231,15 @@ Future<List<VideoStream>> megaplay(
   String label,
   String embed, {
   required String referer,
+  Net net = const HttpNet(),
 }) async {
-  final page = await fetch(embed, headers: {'Referer': referer});
+  final page = await net.text(embed, headers: {'Referer': referer});
   final id = RegExp(r'data-id="(\d+)"').firstMatch(page)?[1];
   if (id == null) return [];
   final uri = Uri.parse(embed);
   final server = uri.queryParameters['s'];
   final json = jsonDecode(
-    await fetch(
+    await net.text(
       '${uri.origin}/stream/getSourcesNew?id=$id${server == null ? '' : '&s=$server'}',
       headers: {'X-Requested-With': 'XMLHttpRequest', 'Referer': embed},
     ),
@@ -293,7 +251,7 @@ Future<List<VideoStream>> megaplay(
   // Some of megaplay's CDN hosts answer 403 to anything but its own player (and which one a server gets
   // rotates), while the player only tries the first stream, so drop the ones that don't load.
   try {
-    await fetch(file, headers: headers);
+    await net.text(file, headers: headers);
   } on HttpException {
     return [];
   }
@@ -352,8 +310,9 @@ Map decodeMegaplaySource(String enc) {
 }
 
 class Anikoto extends Source {
-  Anikoto(super.name, super.base);
+  Anikoto(super.name, super.base, {this.net = const HttpNet()});
 
+  final Net net;
   final _episodes = <String, List<Episode>>{};
 
   Map<String, String> get _ajax => {
@@ -363,7 +322,7 @@ class Anikoto extends Source {
 
   @override
   Future<List<SearchResult>> search(String query) async {
-    final html = await fetch(
+    final html = await net.text(
       '$base/filter?keyword=${Uri.encodeQueryComponent(query)}',
     );
     return [
@@ -401,13 +360,13 @@ class Anikoto extends Source {
   @override
   Future<List<Episode>> episodesOf(String id) async {
     if (_episodes[id] case final cached?) return cached;
-    final page = await fetch(id);
+    final page = await net.text(id);
     final showId = RegExp(r'id="watch-main"[^>]*?data-id="(\d+)"')
         .firstMatch(page)?[1];
     if (showId == null) return [];
     final html =
         jsonDecode(
-              await fetch('$base/ajax/episode/list/$showId', headers: _ajax),
+              await net.text('$base/ajax/episode/list/$showId', headers: _ajax),
             )['result']
             as String;
     return _episodes[id] = RegExp(r'<a [^>]*data-num="[^>]*>')
@@ -426,7 +385,7 @@ class Anikoto extends Source {
     final ids = (episode.ref as Map)['ids'];
     final html =
         jsonDecode(
-              await fetch(
+              await net.text(
                 '$base/ajax/server/list?servers=$ids',
                 headers: _ajax,
               ),
@@ -444,12 +403,20 @@ class Anikoto extends Source {
       servers.map((server) async {
         try {
           final result = jsonDecode(
-            await fetch('$base/ajax/server?get=${server[1]}', headers: _ajax),
+            await net.text(
+              '$base/ajax/server?get=${server[1]}',
+              headers: _ajax,
+            ),
           )['result'];
           final url = result['url'] as String;
           // ponytail: only megaplay embeds are resolved; other hosts are skipped until an extractor is added
           return url.contains('megaplay')
-              ? await megaplay(server[2]!.trim(), url, referer: '$base/')
+              ? await megaplay(
+                  server[2]!.trim(),
+                  url,
+                  referer: '$base/',
+                  net: net,
+                )
               : <VideoStream>[];
         } catch (_) {
           return <VideoStream>[];
@@ -461,12 +428,14 @@ class Anikoto extends Source {
 }
 
 class ReAnime extends Source {
-  ReAnime(super.name, super.base);
+  ReAnime(super.name, super.base, {this.net = const HttpNet()});
+
+  final Net net;
 
   @override
   Future<List<SearchResult>> search(String query) async {
     final json = jsonDecode(
-      await fetch(
+      await net.text(
         '$base/api/v1/search?limit=20&q=${Uri.encodeQueryComponent(query)}',
       ),
     );
@@ -488,7 +457,7 @@ class ReAnime extends Source {
 
   /// Search reports some shows' AniList id as 0 (One Piece, for one); the show's own entry has the real one.
   Future<String> _anilistId(String animeId) async =>
-      '${jsonDecode(await fetch('$base/api/v1/anime/$animeId'))['anilist_id'] ?? ''}';
+      '${jsonDecode(await net.text('$base/api/v1/anime/$animeId'))['anilist_id'] ?? ''}';
 
   static bool _unknown(String anilistId) =>
       anilistId.isEmpty || anilistId == '0';
@@ -521,7 +490,7 @@ class ReAnime extends Source {
     final data = [];
     for (var total = 1; data.length < total;) {
       final json = jsonDecode(
-        await fetch(
+        await net.text(
           '$base/api/v1/anime/$animeId/episodes?limit=1000&offset=${data.length}',
         ),
       );
@@ -557,6 +526,7 @@ class ReAnime extends Source {
           label,
           '$embed?s=$server',
           referer: '$base/',
+          net: net,
         ).catchError((Object _) => <VideoStream>[]),
     ]);
     return found.expand((s) => s).toList();
@@ -564,12 +534,15 @@ class ReAnime extends Source {
 }
 
 /// animepahe sits behind a Cloudflare JavaScript challenge: the in-app browser clears it once and the clearance is
-/// reused over HTTP/2 ([clearedFetch]). Its kwik player and CDN only refuse HTTP/1.1, which [fetch] handles.
+/// reused over HTTP/2 ([cleared]). Its kwik player and CDN only refuse HTTP/1.1, which [net] handles.
 class AnimePahe extends Source {
-  AnimePahe(super.name, super.base);
+  AnimePahe(super.name, super.base, {Net? cleared, this.net = const HttpNet()})
+    : cleared = cleared ?? CloudflareNet();
+
+  final Net cleared, net;
 
   Future<dynamic> _api(String query) async =>
-      jsonDecode(await clearedFetch('$base/api?$query'));
+      jsonDecode(await cleared.text('$base/api?$query'));
 
   @override
   Future<List<SearchResult>> search(String query) async {
@@ -596,7 +569,7 @@ class AnimePahe extends Source {
     );
     for (final title in _searchTitles(media)) {
       for (final result in (await search(title)).take(3)) {
-        if (links.hasMatch(await clearedFetch('$base/anime/${result.id}'))) {
+        if (links.hasMatch(await cleared.text('$base/anime/${result.id}'))) {
           return result.id;
         }
       }
@@ -634,9 +607,9 @@ class AnimePahe extends Source {
     Episode episode, {
     required bool dub,
   }) async {
-    final play = await clearedFetch(
+    final play = await cleared.text(
       '$base/play/${episode.ref}',
-      referer: '$base/',
+      headers: {'Referer': '$base/'},
     );
     final buttons =
         RegExp(r'<button[^>]*data-src="[^"]*"[^>]*>')
@@ -653,7 +626,7 @@ class AnimePahe extends Source {
       buttons.map((button) async {
         try {
           final kwik = Uri.parse(button['src']!);
-          final html = await fetch('$kwik', headers: {'Referer': '$base/'});
+          final html = await net.text('$kwik', headers: {'Referer': '$base/'});
           final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
               .firstMatch(unpack(html))?[0];
           if (m3u8 == null) return null;
@@ -671,28 +644,50 @@ class AnimePahe extends Source {
   }
 }
 
-/// A source from an installed Aniyomi extension, run by the Android side (Extensions.kt).
-class ExtensionSource extends Source {
-  ExtensionSource(this.id, super.name, super.base);
+/// An installed extension's source as the Android side lists it.
+typedef HostSource = ({
+  String id,
+  String pkg,
+  String version,
+  String name,
+  String lang,
+  String baseUrl,
+});
 
-  final String id;
+/// The installed Aniyomi extensions, run by the Android side (Extensions.kt). A site's Cloudflare check the extension
+/// couldn't pass itself is a [CloudflareChallenge]; other failures are a [PlatformException] with the reason. Listing
+/// calls answer nothing off Android.
+abstract class ExtensionHost {
+  /// What the app uses; replaced in tests.
+  static ExtensionHost current = const ChannelExtensionHost();
 
-  /// The sources of every installed extension; none off Android.
-  static Future<List<Source>> installed() async => [
-    if (Platform.isAndroid)
-      for (final s in await AndroidApp.extensions('list') as List)
-        ExtensionSource(
-          s['id'],
-          const {'en', 'all', ''}.contains(s['lang'])
-              ? s['name']
-              : '${s['name']} (${(s['lang'] as String).toUpperCase()})',
-          s['baseUrl'] ?? '',
-        ),
-  ];
+  /// Every source of every installed extension (an extension can add several).
+  Future<List<HostSource>> sources();
 
-  Future<List> _call(String method, Map<String, String> args) async {
+  Future<List<SearchResult>> search(String id, String query);
+
+  /// As the extension lists them (usually newest first), with the numbers it states: -1 when it states none.
+  Future<List<Episode>> episodes(String id, String url);
+
+  /// The streams of an episode this host listed.
+  Future<List<VideoStream>> videos(String id, Episode episode);
+
+  /// Hands the APK at [path] to Android, which only loads it if it's signed with [fingerprint].
+  Future<void> install(String path, String fingerprint);
+
+  Future<void> uninstall(String pkg);
+}
+
+/// [ExtensionHost] over the platform channel.
+class ChannelExtensionHost implements ExtensionHost {
+  /// [android] is whether the Android side is there; [Platform.isAndroid] unless a test says otherwise.
+  const ChannelExtensionHost({this.android});
+
+  final bool? android;
+
+  Future<Object?> _call(String method, [Map<String, String>? args]) async {
     try {
-      return await AndroidApp.extensions(method, {'id': id, ...args}) as List;
+      return await AndroidApp.extensions(method, args);
     } on PlatformException catch (e) {
       // The site's Cloudflare check the extension couldn't pass itself: the app's verification page can.
       if (e.code != 'cloudflare') rethrow;
@@ -700,11 +695,110 @@ class ExtensionSource extends Source {
     }
   }
 
+  Future<List> _list(String method, [Map<String, String>? args]) async =>
+      (android ?? Platform.isAndroid) ? await _call(method, args) as List : [];
+
   @override
-  Future<List<SearchResult>> search(String query) async => [
-    for (final a in await _call('search', {'query': query}))
+  Future<List<HostSource>> sources() async => [
+    for (final s in await _list('list'))
+      (
+        id: s['id'],
+        pkg: s['pkg'],
+        version: s['version'],
+        name: s['name'],
+        lang: s['lang'] ?? '',
+        baseUrl: s['baseUrl'] ?? '',
+      ),
+  ];
+
+  @override
+  Future<List<SearchResult>> search(String id, String query) async => [
+    for (final a in await _list('search', {'id': id, 'query': query}))
       SearchResult(a['url'], a['title'], image: a['thumbnail']),
   ];
+
+  @override
+  Future<List<Episode>> episodes(String id, String url) async => [
+    for (final e in await _list('episodes', {
+      'id': id,
+      'url': url,
+      'title': '',
+    }))
+      Episode(
+        e['number'] as num,
+        title: e['name'],
+        thumbnail: e['preview'],
+        overview: e['summary'],
+        ref: {'url': e['url'], 'name': e['name']},
+      ),
+  ];
+
+  @override
+  Future<List<VideoStream>> videos(String id, Episode episode) async {
+    final ref = episode.ref as Map;
+    return [
+      for (final v in await _list('videos', {
+        'id': id,
+        'url': ref['url'],
+        'name': ref['name'] ?? '',
+      }))
+        VideoStream(
+          v['title'],
+          v['url'],
+          {...?(v['headers'] as Map?)?.cast<String, String>()},
+          subtitles: [
+            for (final t in v['subtitles']) Subtitle(t['lang'], t['url']),
+          ],
+          skips: [
+            for (final t in v['timestamps'])
+              if (_extensionSkips[t['type']] case final type?)
+                SkipTime(
+                  type,
+                  Duration(milliseconds: ((t['start'] as num) * 1000).round()),
+                  Duration(milliseconds: ((t['end'] as num) * 1000).round()),
+                ),
+          ],
+        ),
+    ];
+  }
+
+  @override
+  Future<void> install(String path, String fingerprint) =>
+      _call('install', {'path': path, 'fingerprint': fingerprint});
+
+  @override
+  Future<void> uninstall(String pkg) => _call('uninstall', {'pkg': pkg});
+}
+
+const _extensionSkips = {
+  'Opening': SkipType.intro,
+  'MixedOp': SkipType.intro,
+  'Ending': SkipType.outro,
+  'Recap': SkipType.recap,
+};
+
+/// A source from an installed Aniyomi extension, run through the [ExtensionHost].
+class ExtensionSource extends Source {
+  ExtensionSource(this.id, super.name, super.base, {ExtensionHost? host})
+    : host = host ?? ExtensionHost.current;
+
+  final String id;
+  final ExtensionHost host;
+
+  /// The sources of every installed extension; none off Android.
+  static Future<List<Source>> installed() async => [
+    for (final s in await ExtensionHost.current.sources())
+      ExtensionSource(
+        s.id,
+        const {'en', 'all', ''}.contains(s.lang)
+            ? s.name
+            : '${s.name} (${s.lang.toUpperCase()})',
+        s.baseUrl,
+      ),
+  ];
+
+  @override
+  Future<List<SearchResult>> search(String query) => host.search(id, query);
 
   /// Only a result titled exactly as the show (ignoring case and punctuation): extensions carry no AniList or MAL
   /// id to check against, and a wrong show is worse than none, which leaves the pick to the user.
@@ -723,16 +817,7 @@ class ExtensionSource extends Source {
 
   @override
   Future<List<Episode>> episodesOf(String id) async {
-    final episodes = [
-      for (final e in await _call('episodes', {'url': id, 'title': ''}))
-        Episode(
-          e['number'] as num,
-          title: e['name'],
-          thumbnail: e['preview'],
-          overview: e['summary'],
-          ref: {'url': e['url'], 'name': e['name']},
-        ),
-    ];
+    final episodes = await host.episodes(this.id, id);
     // Extensions say what number an episode is, but some say nothing (-1) or the same for all, and numbers are what
     // picks, downloads and progress go by. Then it's the position that counts: they list newest first.
     final numbered =
@@ -757,43 +842,13 @@ class ExtensionSource extends Source {
     Episode episode, {
     required bool dub,
   }) async {
-    final ref = episode.ref as Map;
-    final streams = [
-      for (final v in await _call('videos', {
-        'url': ref['url'],
-        'name': ref['name'] ?? '',
-      }))
-        VideoStream(
-          v['title'],
-          v['url'],
-          {...?(v['headers'] as Map?)?.cast<String, String>()},
-          subtitles: [
-            for (final t in v['subtitles']) Subtitle(t['lang'], t['url']),
-          ],
-          skips: [
-            for (final t in v['timestamps'])
-              if (_extensionSkips[t['type']] case final type?)
-                SkipTime(
-                  type,
-                  Duration(milliseconds: ((t['start'] as num) * 1000).round()),
-                  Duration(milliseconds: ((t['end'] as num) * 1000).round()),
-                ),
-          ],
-        ),
-    ];
+    final streams = await host.videos(id, episode);
     // Extensions name sub and dub in the video title, when they serve both.
     bool isDub(VideoStream s) => s.label.toLowerCase().contains('dub');
     final picked = streams.where((s) => isDub(s) == dub).toList();
     return picked.isEmpty ? streams : picked;
   }
 }
-
-const _extensionSkips = {
-  'Opening': SkipType.intro,
-  'MixedOp': SkipType.intro,
-  'Ending': SkipType.outro,
-  'Recap': SkipType.recap,
-};
 
 /// Expands Dean Edwards' p.a.c.k.e.r `eval(function(p,a,c,k,e,d){...}('...',a,c,'...'.split('|')))` scripts.
 String unpack(String js) {
@@ -817,63 +872,6 @@ String unpack(String js) {
   return m[1]!
       .replaceAll(r"\'", "'")
       .replaceAllMapped(RegExp(r'\b\w+\b'), (w) => dict[w[0]] ?? w[0]!);
-}
-
-/// One HTTP/2 GET. package:http speaks only HTTP/1.1, which Cloudflare turns away on some sites (animepahe).
-/// [extra] overrides the default user agent; names are lowercased as HTTP/2 requires.
-// ponytail: a new connection per request (HLS segments included); pool ClientTransportConnections per host if
-// segment loads get slow
-Future<(int, Map<String, String>, Uint8List)> h2Get(
-  Uri uri, [
-  Map<String, String> extra = const {},
-]) async {
-  final headers = {
-    'user-agent': userAgent,
-    for (final MapEntry(:key, :value) in extra.entries)
-      key.toLowerCase(): value,
-  };
-  final socket = await SecureSocket.connect(
-    uri.host,
-    443,
-    supportedProtocols: const ['h2'],
-    timeout: const Duration(seconds: 15),
-  );
-  final connection = ClientTransportConnection.viaSocket(socket);
-  try {
-    final stream = connection.makeRequest([
-      Header.ascii(':method', 'GET'),
-      Header.ascii(
-        ':path',
-        uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path,
-      ),
-      Header.ascii(':scheme', 'https'),
-      Header.ascii(':authority', uri.host),
-      for (final MapEntry(:key, :value) in headers.entries)
-        Header.ascii(key, value),
-    ], endStream: true);
-    final response = <String, String>{};
-    final body = BytesBuilder(copy: false);
-    await for (final message in stream.incomingMessages.timeout(
-      const Duration(seconds: 30),
-    )) {
-      switch (message) {
-        case HeadersStreamMessage(:final headers):
-          for (final h in headers) {
-            response[utf8.decode(h.name)] = utf8.decode(h.value);
-          }
-        case DataStreamMessage(:final bytes):
-          body.add(bytes);
-      }
-    }
-    return (
-      int.tryParse(response[':status'] ?? '') ?? 0,
-      response,
-      body.takeBytes(),
-    );
-  } finally {
-    // terminate, not finish: finish waits forever on a stream abandoned by the timeout.
-    await connection.terminate();
-  }
 }
 
 extension on String {

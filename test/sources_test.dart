@@ -10,10 +10,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import '../tool/top_sites.dart';
+import 'fakes.dart';
 
 void main() {
   test('loads the top sites once, and afresh after a failed load', () async {
     var loads = 0;
+    ExtensionHost.current = FakeHost();
+    addTearDown(() => ExtensionHost.current = const ChannelExtensionHost());
     Sites.load = () async {
       if (++loads == 1) throw const SocketException('offline');
       return [ReAnime('Re:Anime', 'https://re.test')];

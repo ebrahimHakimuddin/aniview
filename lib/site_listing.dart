@@ -9,6 +9,16 @@ import 'sources.dart';
 class SiteListing {
   SiteListing(this.source, this.media, {this.onChallenge});
 
+  /// The listing of [media] on the site saved under [name]; null when it's no longer one of the sites.
+  static Future<SiteListing?> of(
+    String name,
+    Map media, [
+    ChallengeHandler? onChallenge,
+  ]) async => switch (await Sites.named(name)) {
+    final source? => SiteListing(source, media, onChallenge: onChallenge),
+    null => null,
+  };
+
   final Source source;
   final Map media;
   final ChallengeHandler? onChallenge;
@@ -23,6 +33,10 @@ class SiteListing {
         onChallenge,
         () => source.streams(media, episode, dub: dub),
       );
+
+  /// The site's shows matching [query], for the person to pick from.
+  Future<List<SearchResult>> search(String query) =>
+      withChallenge(onChallenge, () => source.search(query));
 
   /// Remembers [id] as this show's entry on the site, for [episodes] from now on.
   Future<void> pick(String id) => setMatch(source, media, id);

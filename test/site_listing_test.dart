@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'fakes.dart';
+
 /// A site whose answers, and how many times it's blocked first, the test decides.
 class FakeSource extends Source {
   FakeSource() : super('Fake', 'https://fake.test');
@@ -24,7 +26,8 @@ class FakeSource extends Source {
   }
 
   @override
-  Future<List<SearchResult>> search(String query) => _answer('search', []);
+  Future<List<SearchResult>> search(String query) =>
+      _answer('search', [SearchResult('/found', 'Found')]);
 
   @override
   Future<String?> match(Map media) => _answer('match', guess);
@@ -87,6 +90,124 @@ void main() {
     test('are empty when the site has no match for the show', () async {
       final source = FakeSource()..guess = null;
       expect(await SiteListing(source, media).episodes(), isEmpty);
+    });
+  });
+
+  group('search', () {
+    test(
+      'lists the site\'s shows, passing a Cloudflare check on the way',
+      () async {
+        final source = FakeSource()..blocked = 1;
+        var shown = 0;
+        final listing = SiteListing(
+          source,
+          media,
+          onChallenge: (_) async => ++shown > 0,
+        );
+        expect((await listing.search('x')).map((r) => r.id), ['/found']);
+        expect(shown, 1);
+      },
+    );
+  });
+
+  group('of', () {
+    final host = FakeHost();
+    setUp(() {
+      Sites.load = () async => [FakeSource()];
+      ExtensionHost.current = host;
+      host.sourceError = null;
+      Sites.reload();
+    });
+    tearDown(() {
+      Sites.load = topSources;
+      ExtensionHost.current = const ChannelExtensionHost();
+      Sites.reload();
+    });
+
+    test('is the listing on the site saved under that name', () async {
+      final listing = await SiteListing.of('Fake', media);
+      expect(listing?.source.name, 'Fake');
+      expect(listing?.media, media);
+    });
+
+    test('is null when the site is gone', () async {
+      expect(await SiteListing.of('Gone', media), isNull);
+    });
+
+    test('finds an extension\'s site once the extension host answers after failing', () async {
+      host.sourceList = [
+        (
+          id: '9',
+          pkg: 'p',
+          version: '16.1',
+          name: 'Ext',
+          lang: 'en',
+          baseUrl: 'https://ext.test',
+        ),
+      ];
+      host.sourceError = StateError('host not up yet');
+      expect(await SiteListing.of('Ext', media), isNull);
+      host.sourceError = null;
+      expect((await SiteListing.of('Ext', media))?.source.name, 'Ext');
+    });
+  });
+
+  group('search', () {
+    test(
+      'lists the site\'s shows, passing a Cloudflare check on the way',
+      () async {
+        final source = FakeSource()..blocked = 1;
+        var shown = 0;
+        final listing = SiteListing(
+          source,
+          media,
+          onChallenge: (_) async => ++shown > 0,
+        );
+        expect((await listing.search('x')).map((r) => r.id), ['/found']);
+        expect(shown, 1);
+      },
+    );
+  });
+
+  group('of', () {
+    final host = FakeHost();
+    setUp(() {
+      Sites.load = () async => [FakeSource()];
+      ExtensionHost.current = host;
+      host.sourceError = null;
+      Sites.reload();
+    });
+    tearDown(() {
+      Sites.load = topSources;
+      ExtensionHost.current = const ChannelExtensionHost();
+      Sites.reload();
+    });
+
+    test('is the listing on the site saved under that name', () async {
+      final listing = await SiteListing.of('Fake', media);
+      expect(listing?.source.name, 'Fake');
+      expect(listing?.media, media);
+    });
+
+    test('is null when the site is gone', () async {
+      expect(await SiteListing.of('Gone', media), isNull);
+    });
+
+    test('finds an extension\'s site once the extension host answers after failing', () async {
+      host.sourceList = [
+        (
+          id: '9',
+          pkg: 'p',
+          version: '16.1',
+          name: 'Ext',
+          lang: 'en',
+          baseUrl: 'https://ext.test',
+        ),
+      ];
+      host.sourceError = StateError('host not up yet');
+      expect(await SiteListing.of('Ext', media), isNull);
+      host.sourceError = null;
+      expect((await SiteListing.of('Ext', media))?.source.name, 'Ext');
     });
   });
 
