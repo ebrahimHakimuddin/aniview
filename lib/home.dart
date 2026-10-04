@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'analytics.dart';
 import 'changelog.dart';
 import 'anilist.dart';
+import 'desktop/shell.dart';
 import 'details.dart';
 import 'downloads.dart';
 import 'downloads_screen.dart';
@@ -14,6 +15,7 @@ import 'home_feed.dart';
 import 'library.dart';
 import 'notifications.dart';
 import 'pairing.dart';
+import 'platform.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
@@ -463,6 +465,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     if (isTv) return _tv();
+    if (isDesktop) return _desktop();
     // Back leaves another page for Home before it leaves the app.
     return PopScope(
       canPop: tab == 0,
@@ -510,6 +513,15 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
   }
+
+  /// Desktop: its own shell (lib/desktop), made for a mouse, a keyboard and a window.
+  Widget _desktop() => DeskShell(
+    feed: feed,
+    onRefresh: _refresh,
+    onReload: _reloadLists,
+    onSignIn: _signIn,
+    actions: [_randomButton, _releaseBell, _remoteButton],
+  );
 
   // ───────────────────────────── TV ─────────────────────────────
 
