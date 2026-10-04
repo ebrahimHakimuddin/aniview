@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'analytics.dart';
 import 'changelog.dart';
 import 'downloads.dart';
+import 'desktop/launcher.dart';
 import 'extensions.dart';
 import 'history.dart';
 import 'notifications.dart';
@@ -183,6 +184,18 @@ class Settings {
   static set changelogSeen(String? v) => v == null
       ? _prefs.remove('changelog_seen')
       : _prefs.setString('changelog_seen', v);
+
+  /// The desktop window's last size and place.
+  static Rect? get windowBounds {
+    final v = _prefs.getStringList('window_bounds')?.map(double.parse).toList();
+    return v == null ? null : Rect.fromLTWH(v[0], v[1], v[2], v[3]);
+  }
+
+  static set windowBounds(Rect? r) => r == null
+      ? _prefs.remove('window_bounds')
+      : _prefs.setStringList('window_bounds', [
+          for (final v in [r.left, r.top, r.width, r.height]) '$v',
+        ]);
 
   /// Site name to select first; empty means the highest ranked site.
   static String get preferredSource =>
@@ -402,7 +415,9 @@ Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
     final release = jsonDecode(res.body) as Map;
     final latest = release['tag_name'] as String;
     final abi = await AndroidApp.abi();
-    final apk = updateApk(release['assets'] as List? ?? const [], abi);
+    final apk = Platform.isAndroid
+        ? updateApk(release['assets'] as List? ?? const [], abi)
+        : null; // other platforms open the release page
     final version = latest.replaceFirst('v', '');
     if (!context.mounted) return;
     if (!isNewerVersion(latest, current)) {
@@ -692,9 +707,612 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showSuccess(context, 'Signed out of AniList');
   }
 
+  int _page = 0;
+
+  /// Desktop: the groups down the left, the one you picked filling the right, so no scrolling past the rest.
+  Widget _desktop(List<Widget> sections) {
+    final text = Theme.of(context).textTheme;
+    final groups = [
+      for (final w in sections)
+        if (w is _Group) w,
+    ];
+    // The account, then each group; a page is picked by its place.
+    final titles = ['Account', for (final g in groups) g.title];
+    final page = _page.clamp(0, titles.length - 1);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 240,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(12, 28, 12, 24),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                child: Text('Settings', style: text.headlineMedium),
+              ),
+              for (final (i, title) in titles.indexed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: ListTile(
+                    dense: true,
+                    selected: i == page,
+                    selectedTileColor: scheme.primary.withValues(alpha: .16),
+                    selectedColor: scheme.primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    title: Text(title),
+                    onTap: () => setState(() => _page = i),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        VerticalDivider(width: 1, color: hairline),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(32, 8, 32, 48),
+            children: [
+              Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 760),
+                  child: page == 0 ? sections.first : groups[page - 1],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final signedIn = Tracker.signedIn;
+    final sections = <Widget>[
+      _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
+      _Group('Appearance', [
+        ListTile(
+          title: const Text('Theme'),
+          subtitle: Text(Settings.themeSelection.label),
+          onTap: _pickTheme,
+        ),
+        SwitchListTile(
+          title: const Text('Follow system light and dark'),
+          subtitle: const Text(
+            'Uses the light or dark version of this theme to match your phone',
+          ),
+          value: Settings.followSystemTheme,
+          onChanged: (v) {
+            setState(() => Settings.followSystemTheme = v);
+            themeGeneration.value++;
+          },
+        ),
+        if (isBetaBuild)
+          SwitchListTile(
+            title: const Text('Performance overlay'),
+            subtitle: const Text(
+              'Frame graph: top is the UI thread, bottom the raster thread. Red bars are slow frames',
+            ),
+            value: Settings.perfOverlay,
+            onChanged: (v) {
+              setState(() => Settings.perfOverlay = v);
+              themeGeneration.value++; // the app rebuilds to show or hide it
+            },
+          ),
+      ]),
+      _Group('Tracking', [
+        SwitchListTile(
+          title: const Text('Update progress automatically'),
+          subtitle: const Text('Marks the episode watched on AniList'),
+          value: Settings.syncAniList,
+          onChanged: (v) => setState(() => Settings.syncAniList = v),
+        ),
+        _Choice(
+          title: 'Count as watched at',
+          value: '${Settings.watchedPercent}%',
+          onTap: () => _choose(
+            'Count as watched at',
+            {
+              for (final p in const [50, 60, 70, 75, 80, 85, 90, 95]) p: '$p%',
+            },
+            Settings.watchedPercent,
+            (v) => Settings.watchedPercent = v,
+          ),
+        ),
+      ]),
+      _Group('Home screen', [
+        _Choice(
+          title: 'Watch random picks from',
+          value: _randomFrom[Settings.randomFrom] ?? 'Planning list',
+          onTap: () => _choose(
+            'Watch random picks from',
+            const {
+              'planning': 'Planning list · anything when it’s empty',
+              'everything': 'Anything popular you haven’t watched',
+            },
+            Settings.randomFrom,
+            (v) => Settings.randomFrom = v,
+          ),
+        ),
+        ListTile(
+          title: const Text('Layout'),
+          subtitle: Text(
+            const {
+              'auto': 'Automatic · TV layout on TVs',
+              'phone': 'Phone',
+              'tv': 'TV · for a remote or keyboard, in landscape',
+            }[Settings.layout]!,
+          ),
+          onTap: () async {
+            final picked = await pickOne(context, 'Layout', const {
+              'auto': 'Automatic',
+              'phone': 'Phone',
+              'tv': 'TV',
+            }, Settings.layout);
+            if (picked == null || picked == Settings.layout) return;
+            Settings.layout = picked;
+            applyLayout(picked);
+            appGeneration.value++; // rebuilt in the new layout
+          },
+        ),
+        ListTile(
+          title: const Text('Sections'),
+          subtitle: const Text('Choose and reorder the rows on home'),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const _HomeSectionsScreen()),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Hide NSFW shows'),
+          subtitle: const Text('Keeps ecchi titles out of browse and search'),
+          value: Settings.hideNsfw,
+          onChanged: (v) => setState(() => Settings.hideNsfw = v),
+        ),
+      ]),
+      // A phone that has never paired a TV sets one up; "remote" only once there's a TV to control.
+      _Group(isTv ? 'Remote' : 'TV', [
+        ListTile(
+          leading: Icon(
+            isTv || Settings.tvRemotes.isNotEmpty
+                ? Icons.settings_remote_rounded
+                : Icons.connected_tv_rounded,
+          ),
+          title: Text(
+            isTv
+                ? 'Phone remote'
+                : Settings.tvRemotes.isEmpty
+                ? 'Set up AniView on a TV'
+                : 'TV remote',
+          ),
+          subtitle: Text(
+            isTv
+                ? 'Control AniView on this TV from your phone'
+                : Settings.tvRemotes.isEmpty
+                ? 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
+                : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
+          ),
+          onTap: () async {
+            await pushSettled(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    isTv ? const TvPairScreen() : const PhoneRemoteScreen(),
+              ),
+            );
+            // Pairing may have signed the TV in.
+            if (mounted) setState(() {});
+          },
+        ),
+      ]),
+      if (Platform.isAndroid)
+        _Group('Notifications', [
+          SwitchListTile(
+            title: const Text('New episodes'),
+            subtitle: const Text(
+              'When a show you\'re watching or recently watched airs',
+            ),
+            value: Settings.episodeNotifications,
+            onChanged: (v) {
+              setState(() => Settings.episodeNotifications = v);
+              // The schedule itself is refreshed by home when Settings closes.
+              if (v) EpisodeNotifications.requestPermission(again: true);
+            },
+          ),
+        ]),
+      _Group('Playback', [
+        _Choice(
+          title: 'Preferred audio',
+          value: Settings.preferDub ? 'Dub' : 'Sub',
+          onTap: () => _choose(
+            'Preferred audio',
+            const {false: 'Sub (Japanese audio)', true: 'Dub (English audio)'},
+            Settings.preferDub,
+            (v) => Settings.preferDub = v,
+          ),
+        ),
+        FutureBuilder(
+          future: Sites.all(),
+          builder: (context, snap) => _Choice(
+            title: 'Preferred source',
+            value: Settings.preferredSource.isEmpty
+                ? 'Highest ranked'
+                : Settings.preferredSource,
+            onTap: () => _choose(
+              'Preferred source',
+              {
+                '': 'Highest ranked',
+                for (final s in snap.data ?? const <Source>[]) s.name: s.label,
+              },
+              Settings.preferredSource,
+              (v) => Settings.preferredSource = v,
+            ),
+          ),
+        ),
+        if (Platform.isAndroid)
+          ListTile(
+            title: const Text('Extensions'),
+            subtitle: const Text('More sites, from Aniyomi extension repos'),
+            onTap: () async {
+              await pushSettled(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => const ExtensionsScreen(),
+                ),
+              );
+              // Installed extensions join the sources above.
+              if (mounted) setState(() {});
+            },
+          ),
+        _Choice(
+          title: 'Streaming quality',
+          subtitle: 'Change it for one episode in the player',
+          value: _qualities[Settings.streamQuality] ?? 'Best',
+          onTap: () => _choose(
+            'Streaming quality',
+            _qualities,
+            Settings.streamQuality,
+            (v) => Settings.streamQuality = v,
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Resume where you left off'),
+          value: Settings.resume,
+          onChanged: (v) => setState(() => Settings.resume = v),
+        ),
+        SwitchListTile(
+          title: const Text('Play next episode automatically'),
+          value: Settings.autoNext,
+          onChanged: (v) => setState(() => Settings.autoNext = v),
+        ),
+        _Choice(
+          title: 'Skip intro & outro',
+          subtitle: 'Timestamps from AniSkip',
+          value: const {
+            SkipMode.button: 'Show button',
+            SkipMode.auto: 'Automatically',
+            SkipMode.off: 'Off',
+          }[Settings.skipMode]!,
+          onTap: () => _choose(
+            'Skip intro & outro',
+            const {
+              SkipMode.button: 'Show a skip button',
+              SkipMode.auto: 'Skip automatically',
+              SkipMode.off: 'Off',
+            },
+            Settings.skipMode,
+            (v) => Settings.skipMode = v,
+          ),
+        ),
+        if (Platform.isAndroid)
+          SwitchListTile(
+            title: const Text('Use an external player'),
+            subtitle: const Text(
+              'Play episodes in MX Player, VLC or another installed app',
+            ),
+            value: Settings.externalPlayer,
+            onChanged: (v) => setState(() => Settings.externalPlayer = v),
+          ),
+        if (!isTv)
+          SwitchListTile(
+            title: const Text('Swipe gestures'),
+            subtitle: const Text(
+              'Swipe to seek, brightness on the left, volume on the right',
+            ),
+            value: Settings.swipeGestures,
+            onChanged: (v) => setState(() => Settings.swipeGestures = v),
+          ),
+        if (!isTv)
+          _Choice(
+            title: 'Hold the video to',
+            value: _holdGestures[Settings.holdGesture] ?? 'Play at 2×',
+            onTap: () => _choose(
+              'Hold the video to',
+              _holdGestures,
+              Settings.holdGesture,
+              (v) => Settings.holdGesture = v,
+            ),
+          ),
+        _Choice(
+          title: isTv ? 'Left / right seeks' : 'Double-tap to seek',
+          value: '${Settings.seekSeconds}s',
+          onTap: () => _choose(
+            isTv ? 'Left / right seeks' : 'Double-tap to seek',
+            {
+              for (final s in const [5, 10, 15, 30]) s: '$s seconds',
+            },
+            Settings.seekSeconds,
+            (v) => Settings.seekSeconds = v,
+          ),
+        ),
+        _Choice(
+          title: 'Skip button length',
+          value: '${Settings.skipSeconds}s',
+          onTap: () => _choose(
+            'Skip button length',
+            {
+              for (final s in const [30, 60, 75, 85, 90, 120]) s: '$s seconds',
+            },
+            Settings.skipSeconds,
+            (v) => Settings.skipSeconds = v,
+          ),
+        ),
+        _Choice(
+          title: 'Default speed',
+          value: '${Settings.speed}×',
+          onTap: () => _choose(
+            'Default speed',
+            {
+              for (final s in const [.75, 1.0, 1.25, 1.5, 2.0]) s: '$s×',
+            },
+            Settings.speed,
+            (v) => Settings.speed = v,
+          ),
+        ),
+        _Choice(
+          title: 'Default picture',
+          value: pictureFits[Settings.videoFit]!,
+          onTap: () => _choose(
+            'Default picture',
+            pictureFits,
+            Settings.videoFit,
+            (v) => Settings.videoFit = v,
+          ),
+        ),
+      ]),
+      _Group('Subtitles', [
+        _Choice(
+          title: 'Language',
+          value: Settings.subtitleLanguage,
+          onTap: () => _choose(
+            'Subtitle language',
+            {for (final l in subtitleLanguages) l: l},
+            Settings.subtitleLanguage,
+            (v) => Settings.subtitleLanguage = v,
+          ),
+        ),
+        _Choice(
+          title: 'Size',
+          value:
+              {
+                18.0: 'Small',
+                22.0: 'Medium',
+                28.0: 'Large',
+              }[Settings.subtitleSize] ??
+              'Medium',
+          onTap: () => _choose(
+            'Subtitle size',
+            {18.0: 'Small', 22.0: 'Medium', 28.0: 'Large'},
+            Settings.subtitleSize,
+            (v) => Settings.subtitleSize = v,
+          ),
+        ),
+      ]),
+      _Group('Storage', [
+        _Choice(
+          title: 'Download quality',
+          subtitle: 'Lower quality takes less space',
+          value: _qualities[Settings.downloadQuality] ?? 'Best',
+          onTap: () => _choose(
+            'Download quality',
+            _qualities,
+            Settings.downloadQuality,
+            (v) => Settings.downloadQuality = v,
+          ),
+        ),
+        if (Platform.isAndroid)
+          SwitchListTile(
+            title: const Text('Save downloads to gallery'),
+            subtitle: const Text(
+              'Also copies each finished episode to Movies/AniView',
+            ),
+            value: Settings.saveToGallery,
+            onChanged: (v) => setState(() => Settings.saveToGallery = v),
+          ),
+        if (Platform.isAndroid && Settings.saveToGallery)
+          ListTile(
+            leading: const Icon(Icons.folder_open_rounded),
+            title: const Text('Download folder'),
+            subtitle: Text(Settings.downloadFolderLabel),
+            trailing: Settings.downloadFolder.isEmpty
+                ? const Icon(Icons.chevron_right_rounded)
+                : IconButton(
+                    tooltip: 'Use app storage for new downloads',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () =>
+                        setState(() => Settings.downloadFolder = ''),
+                  ),
+            onTap: () async {
+              try {
+                final folder = await AndroidApp.pickDownloadFolder();
+                if (folder != null && mounted) {
+                  setState(() => Settings.downloadFolder = folder);
+                }
+              } catch (e) {
+                if (mounted) showError(this.context, e);
+              }
+            },
+          ),
+        ListenableBuilder(
+          listenable: Downloads.instance,
+          builder: (context, _) => DestructiveTile(
+            icon: Icons.download_for_offline_outlined,
+            title: 'Delete all downloads',
+            subtitle: Text(
+              '${formatBytes(Downloads.instance.totalBytes)} used on this device',
+            ),
+            onTap: Downloads.instance.items.isEmpty
+                ? null
+                : () async {
+                    if (!await _confirm(
+                      'Delete all downloads?',
+                      'Every downloaded episode will be removed from this device.',
+                      'Delete',
+                    )) {
+                      return;
+                    }
+                    await Downloads.instance.removeAll();
+                    if (context.mounted) {
+                      showSuccess(context, 'All downloads deleted');
+                    }
+                  },
+          ),
+        ),
+        DestructiveTile(
+          icon: Icons.history_rounded,
+          title: 'Clear watch history',
+          subtitle: const Text(
+            'Removes continue-watching positions on this device',
+          ),
+          onTap: () async {
+            if (!await _confirm(
+              'Clear watch history?',
+              'Saved positions will be removed.',
+              'Clear',
+            )) {
+              return;
+            }
+            await WatchHistory.clear();
+            if (context.mounted) {
+              showSuccess(context, 'Watch history cleared');
+            }
+          },
+        ),
+        DestructiveTile(
+          icon: Icons.link_off_rounded,
+          title: 'Reset show matches',
+          subtitle: const Text('Forget shows you picked manually on each site'),
+          onTap: () async {
+            await clearMatches();
+            if (context.mounted) {
+              showSuccess(context, 'Show matches reset');
+            }
+          },
+        ),
+        DestructiveTile(
+          icon: Icons.verified_user_outlined,
+          title: 'Clear site verifications',
+          subtitle: const Text(
+            'Use this if a site keeps failing after verifying',
+          ),
+          onTap: () async {
+            await CookieManager.instance().deleteAllCookies();
+            if (context.mounted) {
+              showSuccess(context, 'Site verifications cleared');
+            }
+          },
+        ),
+      ]),
+      _Group('About', [
+        FutureBuilder(
+          future: AndroidApp.version(),
+          builder: (context, snap) => ListTile(
+            leading: const Icon(Icons.info_outline_rounded),
+            title: Text(isBetaBuild ? 'AniView Beta' : 'AniView'),
+            subtitle: Text(
+              snap.hasData
+                  ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · Tap to check for updates'}'
+                  : 'Version',
+            ),
+            trailing: isBetaBuild
+                ? null
+                : const Icon(Icons.system_update_rounded, size: 18),
+            onTap: isBetaBuild ? null : () => checkForUpdate(context),
+          ),
+        ),
+        if (Platform.isLinux)
+          FutureBuilder(
+            future: launcherInstalled(),
+            builder: (_, snap) => ListTile(
+              leading: const Icon(Icons.apps_rounded),
+              title: Text(
+                snap.data == true
+                    ? 'Update the app menu entry'
+                    : 'Add AniView to the app menu',
+              ),
+              subtitle: const Text(
+                'A launcher with its icon, which also lets the browser return you here after signing in',
+              ),
+              onTap: () async {
+                await installLauncher();
+                if (!mounted) return;
+                showSuccess(this.context, 'AniView is in your app menu');
+                setState(() {});
+              },
+            ),
+          ),
+        ListTile(
+          leading: const Icon(Icons.new_releases_outlined),
+          title: const Text('What’s new'),
+          subtitle: const Text('Version $changelogVersion'),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: () => showChangelog(context),
+        ),
+        if (Analytics.available)
+          SwitchListTile(
+            title: const Text('Share anonymous usage stats'),
+            subtitle: const Text(
+              'Which screens and features get used. No account, search text or personal data',
+            ),
+            value: Settings.analytics,
+            // Sent while analytics is on: before switching it off, after switching it on.
+            onChanged: (v) {
+              if (!v) Analytics.event('usage_stats', {'enabled': false});
+              setState(() => Settings.analytics = v);
+              if (v) Analytics.event('usage_stats', {'enabled': true});
+            },
+          ),
+        for (final (icon, title, url) in const [
+          (
+            Icons.coffee_rounded,
+            'Buy me a coffee',
+            'https://www.buymeacoffee.com/kidfury',
+          ),
+          (Icons.discord, 'Join the Discord', 'https://discord.gg/TXkEgGK9cp'),
+          (
+            Icons.code_rounded,
+            'GitHub',
+            'https://github.com/ebrahimHakimuddin',
+          ),
+          (
+            Icons.description_outlined,
+            'Resume',
+            'https://resume.ebrahim.co.tz',
+          ),
+        ])
+          ListTile(
+            leading: Icon(icon),
+            title: Text(title),
+            subtitle: Text(url.replaceFirst('https://', '')),
+            trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+            onTap: () => AndroidApp.open(url).ignore(),
+          ),
+      ]),
+    ];
+    if (isDesktop) return _desktop(sections);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -710,535 +1328,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           isTv ? MediaQuery.sizeOf(context).width * .3 : 0,
           32 + MediaQuery.paddingOf(context).bottom,
         ),
-        children: [
-          _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
-          _Group('Appearance', [
-            ListTile(
-              title: const Text('Theme'),
-              subtitle: Text(Settings.themeSelection.label),
-              onTap: _pickTheme,
-            ),
-            SwitchListTile(
-              title: const Text('Follow system light and dark'),
-              subtitle: const Text(
-                'Uses the light or dark version of this theme to match your phone',
-              ),
-              value: Settings.followSystemTheme,
-              onChanged: (v) {
-                setState(() => Settings.followSystemTheme = v);
-                themeGeneration.value++;
-              },
-            ),
-            if (isBetaBuild)
-              SwitchListTile(
-                title: const Text('Performance overlay'),
-                subtitle: const Text(
-                  'Frame graph: top is the UI thread, bottom the raster thread. Red bars are slow frames',
-                ),
-                value: Settings.perfOverlay,
-                onChanged: (v) {
-                  setState(() => Settings.perfOverlay = v);
-                  themeGeneration
-                      .value++; // the app rebuilds to show or hide it
-                },
-              ),
-          ]),
-          _Group('Tracking', [
-            SwitchListTile(
-              title: const Text('Update progress automatically'),
-              subtitle: const Text('Marks the episode watched on AniList'),
-              value: Settings.syncAniList,
-              onChanged: (v) => setState(() => Settings.syncAniList = v),
-            ),
-            _Choice(
-              title: 'Count as watched at',
-              value: '${Settings.watchedPercent}%',
-              onTap: () => _choose(
-                'Count as watched at',
-                {
-                  for (final p in const [50, 60, 70, 75, 80, 85, 90, 95])
-                    p: '$p%',
-                },
-                Settings.watchedPercent,
-                (v) => Settings.watchedPercent = v,
-              ),
-            ),
-          ]),
-          _Group('Home screen', [
-            _Choice(
-              title: 'Watch random picks from',
-              value: _randomFrom[Settings.randomFrom] ?? 'Planning list',
-              onTap: () => _choose(
-                'Watch random picks from',
-                const {
-                  'planning': 'Planning list · anything when it’s empty',
-                  'everything': 'Anything popular you haven’t watched',
-                },
-                Settings.randomFrom,
-                (v) => Settings.randomFrom = v,
-              ),
-            ),
-            ListTile(
-              title: const Text('Layout'),
-              subtitle: Text(
-                const {
-                  'auto': 'Automatic · TV layout on TVs',
-                  'phone': 'Phone',
-                  'tv': 'TV · for a remote or keyboard, in landscape',
-                }[Settings.layout]!,
-              ),
-              onTap: () async {
-                final picked = await pickOne(context, 'Layout', const {
-                  'auto': 'Automatic',
-                  'phone': 'Phone',
-                  'tv': 'TV',
-                }, Settings.layout);
-                if (picked == null || picked == Settings.layout) return;
-                Settings.layout = picked;
-                applyLayout(picked);
-                appGeneration.value++; // rebuilt in the new layout
-              },
-            ),
-            ListTile(
-              title: const Text('Sections'),
-              subtitle: const Text('Choose and reorder the rows on home'),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const _HomeSectionsScreen()),
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('Hide NSFW shows'),
-              subtitle: const Text(
-                'Keeps ecchi titles out of browse and search',
-              ),
-              value: Settings.hideNsfw,
-              onChanged: (v) => setState(() => Settings.hideNsfw = v),
-            ),
-          ]),
-          // A phone that has never paired a TV sets one up; "remote" only once there's a TV to control.
-          _Group(isTv ? 'Remote' : 'TV', [
-            ListTile(
-              leading: Icon(
-                isTv || Settings.tvRemotes.isNotEmpty
-                    ? Icons.settings_remote_rounded
-                    : Icons.connected_tv_rounded,
-              ),
-              title: Text(
-                isTv
-                    ? 'Phone remote'
-                    : Settings.tvRemotes.isEmpty
-                    ? 'Set up AniView on a TV'
-                    : 'TV remote',
-              ),
-              subtitle: Text(
-                isTv
-                    ? 'Control AniView on this TV from your phone'
-                    : Settings.tvRemotes.isEmpty
-                    ? 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
-                    : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
-              ),
-              onTap: () async {
-                await pushSettled(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        isTv ? const TvPairScreen() : const PhoneRemoteScreen(),
-                  ),
-                );
-                // Pairing may have signed the TV in.
-                if (mounted) setState(() {});
-              },
-            ),
-          ]),
-          _Group('Notifications', [
-            SwitchListTile(
-              title: const Text('New episodes'),
-              subtitle: const Text(
-                'When a show you\'re watching or recently watched airs',
-              ),
-              value: Settings.episodeNotifications,
-              onChanged: (v) {
-                setState(() => Settings.episodeNotifications = v);
-                // The schedule itself is refreshed by home when Settings closes.
-                if (v) EpisodeNotifications.requestPermission(again: true);
-              },
-            ),
-          ]),
-          _Group('Playback', [
-            _Choice(
-              title: 'Preferred audio',
-              value: Settings.preferDub ? 'Dub' : 'Sub',
-              onTap: () => _choose(
-                'Preferred audio',
-                const {
-                  false: 'Sub (Japanese audio)',
-                  true: 'Dub (English audio)',
-                },
-                Settings.preferDub,
-                (v) => Settings.preferDub = v,
-              ),
-            ),
-            FutureBuilder(
-              future: Sites.all(),
-              builder: (context, snap) => _Choice(
-                title: 'Preferred source',
-                value: Settings.preferredSource.isEmpty
-                    ? 'Highest ranked'
-                    : Settings.preferredSource,
-                onTap: () => _choose(
-                  'Preferred source',
-                  {
-                    '': 'Highest ranked',
-                    for (final s in snap.data ?? const <Source>[])
-                      s.name: s.label,
-                  },
-                  Settings.preferredSource,
-                  (v) => Settings.preferredSource = v,
-                ),
-              ),
-            ),
-            ListTile(
-              title: const Text('Extensions'),
-              subtitle: const Text('More sites, from Aniyomi extension repos'),
-              onTap: () async {
-                await pushSettled(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => const ExtensionsScreen(),
-                  ),
-                );
-                // Installed extensions join the sources above.
-                if (mounted) setState(() {});
-              },
-            ),
-            _Choice(
-              title: 'Streaming quality',
-              subtitle: 'Change it for one episode in the player',
-              value: _qualities[Settings.streamQuality] ?? 'Best',
-              onTap: () => _choose(
-                'Streaming quality',
-                _qualities,
-                Settings.streamQuality,
-                (v) => Settings.streamQuality = v,
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('Resume where you left off'),
-              value: Settings.resume,
-              onChanged: (v) => setState(() => Settings.resume = v),
-            ),
-            SwitchListTile(
-              title: const Text('Play next episode automatically'),
-              value: Settings.autoNext,
-              onChanged: (v) => setState(() => Settings.autoNext = v),
-            ),
-            _Choice(
-              title: 'Skip intro & outro',
-              subtitle: 'Timestamps from AniSkip',
-              value: const {
-                SkipMode.button: 'Show button',
-                SkipMode.auto: 'Automatically',
-                SkipMode.off: 'Off',
-              }[Settings.skipMode]!,
-              onTap: () => _choose(
-                'Skip intro & outro',
-                const {
-                  SkipMode.button: 'Show a skip button',
-                  SkipMode.auto: 'Skip automatically',
-                  SkipMode.off: 'Off',
-                },
-                Settings.skipMode,
-                (v) => Settings.skipMode = v,
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('Use an external player'),
-              subtitle: const Text(
-                'Play episodes in MX Player, VLC or another installed app',
-              ),
-              value: Settings.externalPlayer,
-              onChanged: (v) => setState(() => Settings.externalPlayer = v),
-            ),
-            if (!isTv)
-              SwitchListTile(
-                title: const Text('Swipe gestures'),
-                subtitle: const Text(
-                  'Swipe to seek, brightness on the left, volume on the right',
-                ),
-                value: Settings.swipeGestures,
-                onChanged: (v) => setState(() => Settings.swipeGestures = v),
-              ),
-            if (!isTv)
-              _Choice(
-                title: 'Hold the video to',
-                value: _holdGestures[Settings.holdGesture] ?? 'Play at 2×',
-                onTap: () => _choose(
-                  'Hold the video to',
-                  _holdGestures,
-                  Settings.holdGesture,
-                  (v) => Settings.holdGesture = v,
-                ),
-              ),
-            _Choice(
-              title: isTv ? 'Left / right seeks' : 'Double-tap to seek',
-              value: '${Settings.seekSeconds}s',
-              onTap: () => _choose(
-                isTv ? 'Left / right seeks' : 'Double-tap to seek',
-                {
-                  for (final s in const [5, 10, 15, 30]) s: '$s seconds',
-                },
-                Settings.seekSeconds,
-                (v) => Settings.seekSeconds = v,
-              ),
-            ),
-            _Choice(
-              title: 'Skip button length',
-              value: '${Settings.skipSeconds}s',
-              onTap: () => _choose(
-                'Skip button length',
-                {
-                  for (final s in const [30, 60, 75, 85, 90, 120])
-                    s: '$s seconds',
-                },
-                Settings.skipSeconds,
-                (v) => Settings.skipSeconds = v,
-              ),
-            ),
-            _Choice(
-              title: 'Default speed',
-              value: '${Settings.speed}×',
-              onTap: () => _choose(
-                'Default speed',
-                {
-                  for (final s in const [.75, 1.0, 1.25, 1.5, 2.0]) s: '$s×',
-                },
-                Settings.speed,
-                (v) => Settings.speed = v,
-              ),
-            ),
-            _Choice(
-              title: 'Default picture',
-              value: pictureFits[Settings.videoFit]!,
-              onTap: () => _choose(
-                'Default picture',
-                pictureFits,
-                Settings.videoFit,
-                (v) => Settings.videoFit = v,
-              ),
-            ),
-          ]),
-          _Group('Subtitles', [
-            _Choice(
-              title: 'Language',
-              value: Settings.subtitleLanguage,
-              onTap: () => _choose(
-                'Subtitle language',
-                {for (final l in subtitleLanguages) l: l},
-                Settings.subtitleLanguage,
-                (v) => Settings.subtitleLanguage = v,
-              ),
-            ),
-            _Choice(
-              title: 'Size',
-              value:
-                  {
-                    18.0: 'Small',
-                    22.0: 'Medium',
-                    28.0: 'Large',
-                  }[Settings.subtitleSize] ??
-                  'Medium',
-              onTap: () => _choose(
-                'Subtitle size',
-                {18.0: 'Small', 22.0: 'Medium', 28.0: 'Large'},
-                Settings.subtitleSize,
-                (v) => Settings.subtitleSize = v,
-              ),
-            ),
-          ]),
-          _Group('Storage', [
-            _Choice(
-              title: 'Download quality',
-              subtitle: 'Lower quality takes less space',
-              value: _qualities[Settings.downloadQuality] ?? 'Best',
-              onTap: () => _choose(
-                'Download quality',
-                _qualities,
-                Settings.downloadQuality,
-                (v) => Settings.downloadQuality = v,
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('Save downloads to gallery'),
-              subtitle: const Text(
-                'Also copies each finished episode to Movies/AniView',
-              ),
-              value: Settings.saveToGallery,
-              onChanged: (v) => setState(() => Settings.saveToGallery = v),
-            ),
-            if (Settings.saveToGallery)
-              ListTile(
-                leading: const Icon(Icons.folder_open_rounded),
-                title: const Text('Download folder'),
-                subtitle: Text(Settings.downloadFolderLabel),
-                trailing: Settings.downloadFolder.isEmpty
-                    ? const Icon(Icons.chevron_right_rounded)
-                    : IconButton(
-                        tooltip: 'Use app storage for new downloads',
-                        icon: const Icon(Icons.close_rounded),
-                        onPressed: () =>
-                            setState(() => Settings.downloadFolder = ''),
-                      ),
-                onTap: () async {
-                  try {
-                    final folder = await AndroidApp.pickDownloadFolder();
-                    if (folder != null && mounted) {
-                      setState(() => Settings.downloadFolder = folder);
-                    }
-                  } catch (e) {
-                    if (mounted) showError(this.context, e);
-                  }
-                },
-              ),
-            ListenableBuilder(
-              listenable: Downloads.instance,
-              builder: (context, _) => DestructiveTile(
-                icon: Icons.download_for_offline_outlined,
-                title: 'Delete all downloads',
-                subtitle: Text(
-                  '${formatBytes(Downloads.instance.totalBytes)} used on this device',
-                ),
-                onTap: Downloads.instance.items.isEmpty
-                    ? null
-                    : () async {
-                        if (!await _confirm(
-                          'Delete all downloads?',
-                          'Every downloaded episode will be removed from this device.',
-                          'Delete',
-                        )) {
-                          return;
-                        }
-                        await Downloads.instance.removeAll();
-                        if (context.mounted) {
-                          showSuccess(context, 'All downloads deleted');
-                        }
-                      },
-              ),
-            ),
-            DestructiveTile(
-              icon: Icons.history_rounded,
-              title: 'Clear watch history',
-              subtitle: const Text(
-                'Removes continue-watching positions on this device',
-              ),
-              onTap: () async {
-                if (!await _confirm(
-                  'Clear watch history?',
-                  'Saved positions will be removed.',
-                  'Clear',
-                )) {
-                  return;
-                }
-                await WatchHistory.clear();
-                if (context.mounted) {
-                  showSuccess(context, 'Watch history cleared');
-                }
-              },
-            ),
-            DestructiveTile(
-              icon: Icons.link_off_rounded,
-              title: 'Reset show matches',
-              subtitle: const Text(
-                'Forget shows you picked manually on each site',
-              ),
-              onTap: () async {
-                await clearMatches();
-                if (context.mounted) showSuccess(context, 'Show matches reset');
-              },
-            ),
-            DestructiveTile(
-              icon: Icons.verified_user_outlined,
-              title: 'Clear site verifications',
-              subtitle: const Text(
-                'Use this if a site keeps failing after verifying',
-              ),
-              onTap: () async {
-                await CookieManager.instance().deleteAllCookies();
-                if (context.mounted) {
-                  showSuccess(context, 'Site verifications cleared');
-                }
-              },
-            ),
-          ]),
-          _Group('About', [
-            FutureBuilder(
-              future: AndroidApp.version(),
-              builder: (context, snap) => ListTile(
-                leading: const Icon(Icons.info_outline_rounded),
-                title: Text(isBetaBuild ? 'AniView Beta' : 'AniView'),
-                subtitle: Text(
-                  snap.hasData
-                      ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · Tap to check for updates'}'
-                      : 'Version',
-                ),
-                trailing: isBetaBuild
-                    ? null
-                    : const Icon(Icons.system_update_rounded, size: 18),
-                onTap: isBetaBuild ? null : () => checkForUpdate(context),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.new_releases_outlined),
-              title: const Text('What’s new'),
-              subtitle: const Text('Version $changelogVersion'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => showChangelog(context),
-            ),
-            if (Analytics.available)
-              SwitchListTile(
-                title: const Text('Share anonymous usage stats'),
-                subtitle: const Text(
-                  'Which screens and features get used. No account, search text or personal data',
-                ),
-                value: Settings.analytics,
-                // Sent while analytics is on: before switching it off, after switching it on.
-                onChanged: (v) {
-                  if (!v) Analytics.event('usage_stats', {'enabled': false});
-                  setState(() => Settings.analytics = v);
-                  if (v) Analytics.event('usage_stats', {'enabled': true});
-                },
-              ),
-            for (final (icon, title, url) in const [
-              (
-                Icons.coffee_rounded,
-                'Buy me a coffee',
-                'https://www.buymeacoffee.com/kidfury',
-              ),
-              (
-                Icons.discord,
-                'Join the Discord',
-                'https://discord.gg/TXkEgGK9cp',
-              ),
-              (
-                Icons.code_rounded,
-                'GitHub',
-                'https://github.com/ebrahimHakimuddin',
-              ),
-              (
-                Icons.description_outlined,
-                'Resume',
-                'https://resume.ebrahim.co.tz',
-              ),
-            ])
-              ListTile(
-                leading: Icon(icon),
-                title: Text(title),
-                subtitle: Text(url.replaceFirst('https://', '')),
-                trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                onTap: () => AndroidApp.open(url).ignore(),
-              ),
-          ]),
-        ],
+        children: sections,
       ),
     );
   }

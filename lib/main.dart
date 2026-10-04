@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'anilist.dart';
+import 'desktop.dart';
 import 'downloads.dart';
 import 'pairing.dart';
 import 'platform.dart';
@@ -13,6 +15,7 @@ import 'ui.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
   // Build the top sites on app load; screens await it later.
   Sites.all().ignore();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -23,6 +26,7 @@ Future<void> main() async {
     loadSystemAccent(),
     AndroidApp.buttonNavigation().then((v) => buttonNavigation = v),
   ]);
+  if (isDesktop) await setupWindow();
   await detectTv(layout: Settings.layout);
   // Phones find it to pair as a remote and sign it in.
   if (deviceIsTv) TvLink.start().ignore();
@@ -70,6 +74,8 @@ class _AppState extends State<App> with WidgetsBindingObserver {
   Widget _app(Key key) => MaterialApp(
     key: key,
     title: 'AniView',
+    navigatorKey: isDesktop ? navigatorKey : null,
+    scrollBehavior: isDesktop ? const DesktopScroll() : null,
     debugShowCheckedModeBanner: false,
     showPerformanceOverlay: Settings.perfOverlay,
     theme: buildTheme(),
@@ -79,6 +85,8 @@ class _AppState extends State<App> with WidgetsBindingObserver {
         ? (context, child) => TvInput(child: child!)
         : buttonNavigation
         ? (context, child) => _SolidNavigationBar(child: child!)
+        : isDesktop
+        ? (context, child) => DesktopKeys(child: child!)
         : null,
     home: const HomeScreen(),
   );

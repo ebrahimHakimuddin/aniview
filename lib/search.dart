@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
+import 'desktop.dart';
 import 'library.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -12,11 +13,14 @@ import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-Future<void> openSearch(BuildContext context, SearchFilters filters) =>
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => SearchScreen(filters: filters)),
-    );
+Future<void> openSearch(BuildContext context, SearchFilters filters) async {
+  // The desktop has one Search place, with its own filters panel.
+  if (onDesktopSearch case final open?) return open(filters);
+  await Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => SearchScreen(filters: filters)),
+  );
+}
 
 const _any = ''; // the "Any" choice in a filter's picker
 
@@ -69,6 +73,13 @@ const _genres = [
   'Supernatural',
   'Thriller',
 ];
+
+/// The filter choices, for the desktop's filter panel.
+const searchSorts = _sorts,
+    searchSeasons = _seasons,
+    searchFormats = _formats,
+    searchStatuses = _statuses,
+    searchGenres = _genres;
 
 /// Search by title, or browse by filters alone. Before anything is typed it offers recent searches and genres.
 class SearchScreen extends StatefulWidget {

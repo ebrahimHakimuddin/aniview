@@ -6,7 +6,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'desktop/sign_in.dart';
 import 'pairing.dart';
+import 'platform.dart';
 import 'tv.dart';
 
 String titleOf(Map media) =>
@@ -144,6 +146,15 @@ class AniList {
       return; // signed in by the phone, or closed
     }
     if (!context.mounted) return;
+    // The desktop uses the system browser, where the person is likely signed in to AniList already.
+    if (isDesktop) {
+      final value = await signInInBrowser(
+        context,
+        'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
+      );
+      if (value != null && value.isNotEmpty) await useToken(value);
+      return;
+    }
     final value = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         fullscreenDialog: true,

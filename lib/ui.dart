@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
+import 'desktop/motion.dart' show DeskPageTransitions;
 import 'details.dart';
 import 'platform.dart';
 import 'selection.dart';
@@ -26,6 +27,13 @@ bool buttonNavigation = false;
 /// image and moves that.
 PageTransitionsTheme get pageTransitions => PageTransitionsTheme(
   builders: {
+    // Desktop pages fade rather than zoom, which is a phone's idiom.
+    for (final platform in const [
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+      TargetPlatform.macOS,
+    ])
+      platform: const DeskPageTransitions(),
     TargetPlatform.android: buttonNavigation
         ? const ZoomPageTransitionsBuilder()
         : const PredictiveBackPageTransitionsBuilder(),
