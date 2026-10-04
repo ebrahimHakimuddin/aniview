@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../anilist.dart';
 import '../details.dart';
+import '../platform.dart';
 import '../tracker.dart';
 import '../ui.dart';
 import 'motion.dart';
@@ -183,9 +184,12 @@ class _Field extends StatelessWidget {
           suffixIcon: ListenableBuilder(
             listenable: controller,
             builder: (context, _) => controller.text.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.only(right: 14),
-                    child: Center(widthFactor: 1, child: _Key('Ctrl F')),
+                ? Padding(
+                    padding: const EdgeInsets.only(right: 14),
+                    child: Center(
+                      widthFactor: 1,
+                      child: _Key('$shortcutKey F'),
+                    ),
                   )
                 : IconButton(
                     tooltip: 'Clear',

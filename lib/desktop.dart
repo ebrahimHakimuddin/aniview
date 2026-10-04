@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +11,7 @@ import 'platform.dart';
 import 'settings.dart';
 
 /// What the desktop window adds on top of the phone app: its size and place remembered, back on Esc, Alt+Left or the
-/// mouse's back button, Ctrl+F for Search and Ctrl+Q to quit. None of it runs on Android.
+/// mouse's back button, Ctrl+F (Cmd+F on a Mac) for Search and Ctrl+Q (Cmd+Q) to quit. None of it runs on Android.
 
 /// Set by the desktop shell: puts the cursor in its search box.
 VoidCallback? onDesktopFind;
@@ -125,10 +126,22 @@ class DesktopKeys extends StatelessWidget {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): _escape,
         const SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true): _back,
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true): () =>
+        SingleActivator(
+          LogicalKeyboardKey.keyF,
+          control: !Platform.isMacOS,
+          meta: Platform.isMacOS,
+        ): () =>
             onDesktopFind?.call(),
-        const SingleActivator(LogicalKeyboardKey.keyQ, control: true): () =>
+        SingleActivator(
+          LogicalKeyboardKey.keyQ,
+          control: !Platform.isMacOS,
+          meta: Platform.isMacOS,
+        ): () =>
             windowManager.close(),
+        // Cmd+[ is a Mac's back.
+        if (Platform.isMacOS)
+          const SingleActivator(LogicalKeyboardKey.bracketLeft, meta: true):
+              _back,
       },
       child: child,
     ),

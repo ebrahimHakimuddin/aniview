@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1312,7 +1313,9 @@ class _Featured extends StatefulWidget {
   /// Marquee: the key art takes most of the first screen.
   static double height(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    return (size.width * 1.35).clamp(420.0, size.height * .72);
+    // A short window (a phone in landscape) can't hold the 420 minimum; clamp would throw on it.
+    final most = size.height * .72;
+    return (size.width * 1.35).clamp(math.min(420.0, most), most);
   }
 
   @override

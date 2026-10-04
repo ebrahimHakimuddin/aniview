@@ -1489,7 +1489,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       isTv
                           ? 'Hold OK on an episode to mark it watched or manage its download'
                           : isDesktop
-                          ? 'Right-click an episode for more, or Ctrl+click to select several'
+                          ? 'Right-click an episode for more, or $shortcutKey+click to select several'
                           : 'Long-press episodes to select them: download, delete or mark watched',
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: scheme.onSurfaceVariant),

@@ -636,7 +636,7 @@ extension _DeskDetails on _DetailsScreenState {
       child: Hover(
         pressScale: .99,
         onTap: () {
-          if (picking || HardwareKeyboard.instance.isControlPressed) {
+          if (picking || shortcutKeyHeld) {
             _togglePick(episode);
           } else {
             play();

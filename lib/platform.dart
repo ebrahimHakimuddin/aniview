@@ -7,6 +7,14 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// they set it themselves (see test/flutter_test_config.dart).
 bool isDesktop = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
+/// The desktop's shortcut key: Cmd on a Mac, Ctrl on Windows and Linux.
+String get shortcutKey => Platform.isMacOS ? 'Cmd' : 'Ctrl';
+
+/// Whether the shortcut key is held, for Ctrl+click (Cmd+click on a Mac) to select several.
+bool get shortcutKeyHeld => Platform.isMacOS
+    ? HardwareKeyboard.instance.isMetaPressed
+    : HardwareKeyboard.instance.isControlPressed;
+
 /// The Android side of the app: MainActivity.kt's 'aniview/app' and 'aniview/volume' channels. Off Android every
 /// call throws [MissingPluginException]; failures on Android arrive as [PlatformException] with the reason.
 class AndroidApp {
@@ -65,7 +73,10 @@ class AndroidApp {
     try {
       await _app.invokeMethod('open', url);
     } on MissingPluginException {
-      await Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [url]);
+      // `start` takes the first quoted argument as a window title, hence the empty one.
+      await (Platform.isWindows
+          ? Process.run('cmd', ['/c', 'start', '', url])
+          : Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [url]));
     }
   }
 
