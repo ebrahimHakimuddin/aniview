@@ -781,8 +781,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         SwitchListTile(
           title: const Text('Follow system light and dark'),
-          subtitle: const Text(
-            'Uses the light or dark version of this theme to match your phone',
+          subtitle: Text(
+            'Uses the light or dark version of this theme to match your ${isDesktop ? 'computer' : 'phone'}',
           ),
           value: Settings.followSystemTheme,
           onChanged: (v) {
@@ -892,7 +892,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             isTv
                 ? 'Control AniView on this TV from your phone'
                 : Settings.tvRemotes.isEmpty
-                ? 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
+                ? isDesktop
+                      ? 'Pair a TV running AniView to sign it in from this computer and use it as the TV\'s remote'
+                      : 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
                 : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
           ),
           onTap: () async {
@@ -1234,7 +1236,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: Text(isBetaBuild ? 'AniView Beta' : 'AniView'),
             subtitle: Text(
               snap.hasData
-                  ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · Tap to check for updates'}'
+                  ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · ${isDesktop ? 'Click' : 'Tap'} to check for updates'}'
                   : 'Version',
             ),
             trailing: isBetaBuild

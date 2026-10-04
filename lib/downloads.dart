@@ -273,10 +273,18 @@ class Downloads extends ChangeNotifier {
   var _notifiedPercent = -1;
   var _notifiedAt = DateTime(0);
 
+  /// Documents, or the app's own folder where there isn't one (Linux without xdg-user-dirs throws, and nothing
+  /// would start).
+  Future<Directory> _appFolder() async {
+    try {
+      return await getApplicationDocumentsDirectory();
+    } on MissingPlatformDirectoryException {
+      return getApplicationSupportDirectory();
+    }
+  }
+
   Future<void> load() async {
-    _root = Directory(
-      '${(await getApplicationDocumentsDirectory()).path}/downloads',
-    );
+    _root = Directory('${(await _appFolder()).path}/downloads');
     await _root.create(recursive: true);
     _store = DownloadStore(_root);
     _queue = DownloadQueue(await _store.read());
