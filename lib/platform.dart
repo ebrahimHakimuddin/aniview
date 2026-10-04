@@ -1,4 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
+/// Linux, Windows or macOS: a mouse and keyboard, a resizable window, no phone sensors. Tests run on one of them, so
+/// they set it themselves (see test/flutter_test_config.dart).
+bool isDesktop = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
 /// The Android side of the app: MainActivity.kt's 'aniview/app' and 'aniview/volume' channels. Off Android every
 /// call throws [MissingPluginException]; failures on Android arrive as [PlatformException] with the reason.
@@ -8,13 +15,18 @@ class AndroidApp {
   static const _volume = MethodChannel('aniview/volume');
   static const _extensions = MethodChannel('aniview/extensions');
 
-  static Future<String?> version() => _app.invokeMethod<String>('version');
+  static Future<String?> version() async => Platform.isAndroid
+      ? _app.invokeMethod<String>('version')
+      : (await PackageInfo.fromPlatform()).version;
 
-  /// "Android 14; Pixel 7".
-  static Future<String?> device() => _app.invokeMethod<String>('device');
+  /// "Android 14; Pixel 7"; the OS version elsewhere.
+  static Future<String?> device() async => Platform.isAndroid
+      ? _app.invokeMethod<String>('device')
+      : Platform.operatingSystemVersion;
 
   /// The primary ABI, to pick the matching release APK.
-  static Future<String?> abi() => _app.invokeMethod<String>('abi');
+  static Future<String?> abi() async =>
+      Platform.isAndroid ? _app.invokeMethod<String>('abi') : null;
 
   /// The phone's wallpaper accent (ARGB) on Android 12+; null before Material You or off Android.
   static Future<int?> accent() async {
@@ -49,7 +61,13 @@ class AndroidApp {
   }
 
   /// Opens [url] in the browser or whichever app handles it.
-  static Future<void> open(String url) => _app.invokeMethod('open', url);
+  static Future<void> open(String url) async {
+    try {
+      await _app.invokeMethod('open', url);
+    } on MissingPluginException {
+      await Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [url]);
+    }
+  }
 
   /// Installs the APK at [path] as an update (Android asks to confirm). False when Android first needs
   /// "Install unknown apps" allowed: its settings page opens, and the install goes on once you're back.

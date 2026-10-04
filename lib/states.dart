@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'platform.dart';
 import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
@@ -25,14 +26,14 @@ String friendlyError(Object error) => switch (error) {
   _ => '$error'.replaceFirst('Exception: ', ''),
 };
 
-/// A bottom sheet on phones; on TV a panel in the middle of the screen, since a sheet from the bottom
+/// A bottom sheet on phones; on TV and desktop a panel in the middle of the screen, since a sheet from the bottom
 /// edge is a touch idiom. [height] fixes a phone sheet at that share of the screen below the status bar.
 Future<T?> showSheet<T>(
   BuildContext context,
   WidgetBuilder builder, {
   bool scrollControlled = false,
   double? height,
-}) => isTv
+}) => isTv || isDesktop
     ? showDialog<T>(
         context: context,
         builder: (context) => PanelDialog(
@@ -114,6 +115,8 @@ void _snack(
   ..hideCurrentSnackBar()
   ..showSnackBar(
     SnackBar(
+      // A window is wide: a floating bar stays a readable size instead of spanning it.
+      width: isDesktop ? 440 : null,
       backgroundColor: background,
       content: Row(
         children: [

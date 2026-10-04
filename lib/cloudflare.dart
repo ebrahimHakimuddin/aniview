@@ -140,7 +140,39 @@ class CloudflareNet implements Net {
       utf8.decode(await bytes(url, headers: headers), allowMalformed: true);
 }
 
-final _browserAgent = InAppWebViewController.getDefaultUserAgent();
+final _browserAgent = _defaultAgent();
+
+Future<String> _defaultAgent() async {
+  try {
+    return await InAppWebViewController.getDefaultUserAgent();
+  } catch (_) {
+    return _pageAgent(); // not implemented on Linux
+  }
+}
+
+/// The WebView's own user agent, read from a page, where the platform can't give it directly (Linux): a
+/// cf_clearance cookie only works with the agent that earned it. A common desktop one if that fails too.
+Future<String> _pageAgent() async {
+  final agent = Completer<String>();
+  final view = HeadlessInAppWebView(
+    initialUrlRequest: URLRequest(url: WebUri('about:blank')),
+    onLoadStop: (controller, _) async {
+      if (agent.isCompleted) return;
+      final ua = await controller.evaluateJavascript(
+        source: 'navigator.userAgent',
+      );
+      agent.complete('$ua');
+    },
+  );
+  try {
+    await view.run();
+    return await agent.future.timeout(const Duration(seconds: 5));
+  } catch (_) {
+    return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+  } finally {
+    await view.dispose();
+  }
+}
 
 bool _isChallenge(String title) =>
     title.contains('Just a moment') || title.contains('Attention Required');

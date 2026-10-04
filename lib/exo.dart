@@ -1,7 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart' as mk;
+import 'package:media_kit_video/media_kit_video.dart';
+
+import 'platform.dart';
 
 /// A subtitle track the stream or a subtitle file brings; [id] picks it in [ExoPlayer.setSubtitleTrack].
 class SubtitleTrack {
@@ -38,10 +43,15 @@ class ExoPlayerState {
   Size? size;
 }
 
-/// Media3 ExoPlayer on the Android side (see ExoPlayers.kt), drawing into a texture. Reads like media_kit's
-/// player: [state] for now, [stream] for changes.
+/// Media3 ExoPlayer on the Android side (see ExoPlayers.kt), drawing into a texture; libmpv through media_kit on
+/// desktop. Reads like media_kit's player: [state] for now, [stream] for changes.
 class ExoPlayer {
   ExoPlayer() {
+    if (!Platform.isAndroid) {
+      _ready = Future.value();
+      _startMpv();
+      return;
+    }
     _ready = _channel.invokeMapMethod<String, Object>('create').then((ids) {
       _id = (ids!['id']! as num).toInt();
       texture.value = (ids['texture']! as num).toInt();
@@ -56,6 +66,10 @@ class ExoPlayer {
   int? _id;
   StreamSubscription? _events;
   bool _disposed = false;
+  mk.Player? _mpv;
+
+  /// The desktop picture's controller; null on Android, which draws [texture].
+  VideoController? video;
 
   /// The texture the picture draws into, once the player exists.
   final texture = ValueNotifier<int?>(null);
@@ -119,7 +133,104 @@ class ExoPlayer {
   ]) async {
     await _ready;
     if (_disposed) return;
+    if (_mpv case final mpv?) return _mpvCall(mpv, method, args);
     await _channel.invokeMethod(method, {'id': _id, ...args});
+  }
+
+  void _startMpv() {
+    final mpv = _mpv = mk.Player();
+    video = VideoController(mpv);
+    final s = mpv.stream;
+    // Each [_on] key is read on its own, so the position event carries what it needs.
+    void position(Duration _) => _on({
+      'position': mpv.state.position.inMilliseconds,
+      'buffer': mpv.state.buffer.inMilliseconds,
+      'duration': mpv.state.duration.inMilliseconds,
+    });
+    _mpvEvents = [
+      s.position.listen(position),
+      s.duration.listen(position),
+      s.playing.listen((v) => _on({'playing': v})),
+      s.buffering.listen((v) => _on({'buffering': v})),
+      s.completed.listen((v) => _on({'completed': v})),
+      s.error.listen((e) => _on({'error': e})),
+      s.subtitle.listen((lines) => _on({'cues': lines.join('\n').trim()})),
+      s.tracks.listen(
+        (t) => _on({
+          'tracks': [
+            for (final t in t.subtitle)
+              if (t.id != 'auto' && t.id != 'no')
+                {'id': t.id, 'title': t.title, 'language': t.language},
+          ],
+        }),
+      ),
+      s.width.listen((_) => _mpvSize(mpv)),
+      s.height.listen((_) => _mpvSize(mpv)),
+    ];
+  }
+
+  late List<StreamSubscription> _mpvEvents;
+
+  void _mpvSize(mk.Player mpv) {
+    if (mpv.state.width case final w? when w > 0) {
+      if (mpv.state.height case final h? when h > 0) {
+        _on({'width': w, 'height': h});
+      }
+    }
+  }
+
+  Future<void> _mpvCall(
+    mk.Player mpv,
+    String method,
+    Map<String, Object?> args,
+  ) async {
+    switch (method) {
+      case 'open':
+        await mpv.open(
+          mk.Media(
+            args['url']! as String,
+            httpHeaders: (args['headers']! as Map).cast<String, String>(),
+            start: Duration(milliseconds: args['start']! as int),
+          ),
+        );
+        final subtitles = args['subtitles']! as List;
+        if (subtitles.isEmpty) return;
+        // A subtitle file can only join once the stream has loaded.
+        final loaded = await mpv.stream.duration
+            .firstWhere((d) => d > Duration.zero)
+            .timeout(
+              const Duration(seconds: 20),
+              onTimeout: () => Duration.zero,
+            );
+        if (loaded == Duration.zero) return;
+        for (final Map s in subtitles) {
+          await (mpv.platform as mk.NativePlayer).command([
+            'sub-add',
+            s['url'] as String,
+            'auto',
+            s['label'] as String,
+          ]);
+        }
+      case 'stop':
+        await mpv.stop();
+      case 'play':
+        await mpv.play();
+      case 'pause':
+        await mpv.pause();
+      case 'seek':
+        await mpv.seek(Duration(milliseconds: args['ms']! as int));
+      case 'rate':
+        await mpv.setRate(args['rate']! as double);
+      case 'volume':
+        await mpv.setVolume((args['level']! as double) * 100);
+      case 'subtitle':
+        await mpv.setSubtitleTrack(switch (args['track']) {
+          'off' => mk.SubtitleTrack.no(),
+          'auto' => mk.SubtitleTrack.auto(),
+          final id => mpv.state.tracks.subtitle.firstWhere((t) => t.id == id),
+        });
+      // 'quality': mpv takes the stream's own pick, there's no cap to set yet.
+    }
   }
 
   /// Plays [url] from [start]: a local file path, or a URL fetched with [headers]. [hls] says it's a playlist
@@ -179,9 +290,22 @@ class ExoPlayer {
     return _call('subtitle', {'track': track.id});
   }
 
+  /// The player's own volume, 0–1 (Android moves the phone's media volume instead).
+  Future<void> setVolume(double level) => _mpv == null
+      ? AndroidApp.setVolume(level)
+      : _call('volume', {'level': level});
+
   Future<void> dispose() async {
-    await _call('dispose');
-    _disposed = true;
+    if (_mpv case final mpv?) {
+      _disposed = true;
+      for (final sub in _mpvEvents) {
+        sub.cancel();
+      }
+      await mpv.dispose();
+    } else {
+      await _call('dispose');
+      _disposed = true;
+    }
     await _events?.cancel();
     stream._close();
     texture.dispose();
@@ -245,32 +369,43 @@ class ExoVideo extends StatelessWidget {
     child: Stack(
       fit: StackFit.expand,
       children: [
-        ValueListenableBuilder(
-          valueListenable: player.texture,
-          builder: (context, texture, _) => texture == null
-              ? const SizedBox.expand()
-              : StreamBuilder(
-                  stream: player.stream.size,
-                  initialData: player.state.size,
-                  builder: (context, snap) {
-                    final size = snap.data;
-                    if (size == null) return const SizedBox.expand();
-                    return ClipRect(
-                      child: FittedBox(
-                        fit: fit,
-                        child: SizedBox(
-                          width: size.width,
-                          height: size.height,
-                          child: Texture(
-                            textureId: texture,
-                            filterQuality: FilterQuality.low,
+        if (player.video case final video?)
+          Video(
+            controller: video,
+            fit: fit,
+            controls: NoVideoControls,
+            fill: Colors.black,
+            subtitleViewConfiguration: const SubtitleViewConfiguration(
+              visible: false,
+            ),
+          )
+        else
+          ValueListenableBuilder(
+            valueListenable: player.texture,
+            builder: (context, texture, _) => texture == null
+                ? const SizedBox.expand()
+                : StreamBuilder(
+                    stream: player.stream.size,
+                    initialData: player.state.size,
+                    builder: (context, snap) {
+                      final size = snap.data;
+                      if (size == null) return const SizedBox.expand();
+                      return ClipRect(
+                        child: FittedBox(
+                          fit: fit,
+                          child: SizedBox(
+                            width: size.width,
+                            height: size.height,
+                            child: Texture(
+                              textureId: texture,
+                              filterQuality: FilterQuality.low,
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-        ),
+                      );
+                    },
+                  ),
+          ),
         Positioned(
           left: 24,
           right: 24,
