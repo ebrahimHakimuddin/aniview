@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_brightness/screen_brightness.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
@@ -19,8 +22,11 @@ import 'stream_address.dart';
 import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
+import 'desktop.dart' show setPlayerTitle;
 import 'platform.dart';
 import 'playback.dart';
+
+part 'desktop/player_view.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -95,6 +101,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// The height picked in the player for this session; 0 for Auto.
   int quality = 0;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
+  // Desktop: the volume before M muted it, the pointer's place over the seek bar (0–1), and always on top.
+  double _beforeMute = 1;
+  final _seekHover = ValueNotifier<double?>(null);
+  bool _onTop = false, _overControls = false;
+
+  /// For the desktop controls, which live in their own file and can't call [setState].
+  void _set(VoidCallback change) => setState(change);
   // The phone's media volume as 0–1.
 
   Duration? seekTarget;
@@ -187,6 +200,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
   /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
   bool _onKey(KeyEvent event) {
+    if (isDesktop && !isTv) return _onDesktopKey(event);
     if (!isTv || !mounted) return false;
     // Releasing a held left/right lands the scrub with one seek.
     if (event is KeyUpEvent) {
@@ -254,6 +268,124 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return true;
   }
 
+  void _setVolume(double v) {
+    volume = v.clamp(0.0, 1.0);
+    player.setVolume(volume).ignore();
+    _hint(
+      '${(volume * 100).round()}%',
+      icon: volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+    );
+  }
+
+  void _nudgeVolume(double delta) => _setVolume(volume + delta);
+
+  static const _speeds = [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+  void _stepSpeed(int direction) {
+    final i = _speeds.indexOf(rate);
+    final next =
+        _speeds[(i < 0 ? _speeds.indexOf(1.0) : i + direction).clamp(
+          0,
+          _speeds.length - 1,
+        )];
+    setState(() => rate = next);
+    player.setRate(next);
+    _hint('$next×', icon: Icons.speed_rounded);
+  }
+
+  void _toggleFullscreen() => windowManager.isFullScreen().then(
+    (full) => windowManager.setFullScreen(!full),
+  );
+
+  /// A click plays or pauses (the controls come up with the pointer, see [_pointer]).
+  void _click() {
+    player.playOrPause();
+    _showControls();
+  }
+
+  void _showControls() {
+    if (!controls) setState(() => controls = true);
+    _scheduleHide();
+  }
+
+  /// The pointer over the video: moving it brings the controls up and the wheel changes the volume. Still, the
+  /// controls and the cursor go away while it plays.
+  Widget _pointer(Widget child) => !isDesktop
+      ? child
+      : Listener(
+          onPointerSignal: (e) {
+            if (e is PointerScrollEvent) {
+              _nudgeVolume(e.scrollDelta.dy < 0 ? .05 : -.05);
+            }
+          },
+          child: MouseRegion(
+            cursor: controls || !player.state.playing
+                ? MouseCursor.defer
+                : SystemMouseCursors.none,
+            onHover: (_) => _showControls(),
+            child: child,
+          ),
+        );
+
+  /// Desktop keyboard: space plays/pauses, left/right seek, up/down and the wheel change the volume, M mutes, [ and ]
+  /// change the speed, N plays the next episode, T keeps the window on top, F or F11 toggles fullscreen and Esc leaves it.
+  bool _onDesktopKey(KeyEvent event) {
+    if (event is KeyUpEvent || !mounted) return false;
+    if (error != null ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _scaffold.currentState?.isEndDrawerOpen == true) {
+      return false;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space) {
+      if (event is KeyDownEvent) player.playOrPause();
+    } else if (key == LogicalKeyboardKey.arrowLeft) {
+      _seekBy(-Settings.seekSeconds);
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      _seekBy(Settings.seekSeconds);
+    } else if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown) {
+      _nudgeVolume(key == LogicalKeyboardKey.arrowUp ? .05 : -.05);
+    } else if (key == LogicalKeyboardKey.keyM) {
+      if (event is KeyDownEvent) {
+        if (volume > 0) _beforeMute = volume;
+        _setVolume(volume > 0 ? 0 : _beforeMute);
+      }
+    } else if (key == LogicalKeyboardKey.bracketLeft ||
+        key == LogicalKeyboardKey.bracketRight) {
+      if (event is KeyDownEvent) {
+        _stepSpeed(key == LogicalKeyboardKey.bracketRight ? 1 : -1);
+      }
+    } else if (key == LogicalKeyboardKey.keyT) {
+      if (event is KeyDownEvent) {
+        _onTop = !_onTop;
+        windowManager.setAlwaysOnTop(_onTop).ignore();
+        _hint(
+          _onTop ? 'Always on top' : 'Not on top',
+          icon: Icons.picture_in_picture_alt_rounded,
+        );
+      }
+    } else if (key == LogicalKeyboardKey.keyN && hasNext) {
+      if (event is KeyDownEvent) _load(index + 1);
+    } else if (key == LogicalKeyboardKey.keyF ||
+        key == LogicalKeyboardKey.f11) {
+      if (event is KeyDownEvent) _toggleFullscreen();
+    } else if (key == LogicalKeyboardKey.escape) {
+      if (event is! KeyDownEvent) return false;
+      // Esc leaves fullscreen first; out of it, Esc is just Back.
+      windowManager.isFullScreen().then((full) {
+        if (full) {
+          windowManager.setFullScreen(false);
+        } else if (mounted) {
+          Navigator.maybePop(context);
+        }
+      });
+    } else {
+      return false;
+    }
+    return true;
+  }
+
   /// Left/right: a step per press, or a scrub while held that lands on release (see [_onKey]).
   void _scrub(KeyEvent event) {
     final seek = Settings.seekSeconds;
@@ -289,8 +421,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hideTimer?.cancel();
     _hintTimer?.cancel();
     _timelineTimer?.cancel();
+    _seekHover.dispose();
     player.dispose();
-    ScreenBrightness().resetApplicationScreenBrightness();
+    if (Platform.isAndroid) {
+      ScreenBrightness().resetApplicationScreenBrightness();
+    }
+    if (isDesktop) {
+      setPlayerTitle(null);
+      windowManager.setFullScreen(false).ignore();
+      if (_onTop) windowManager.setAlwaysOnTop(false).ignore();
+    }
     restoreOrientation();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
@@ -307,6 +447,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       error = null;
       _skipsRequested = null;
     });
+    if (isDesktop) {
+      setPlayerTitle(
+        '${titleOf(widget.media)} · Episode ${epNumber(session.episode.number)}',
+      );
+    }
     // The previous episode keeps emitting its (near-end) position while servers load, which would count the new one as watched.
     await player.stop();
     if (!mounted) return;
@@ -537,7 +682,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _scheduleHide() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && player.state.playing) setState(() => controls = false);
+      if (mounted && player.state.playing && !_overControls) {
+        setState(() => controls = false);
+      }
     });
   }
 
@@ -582,6 +729,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _verticalDrag(DragUpdateDetails d, Size size) {
     final delta = -d.delta.dy / (size.height * .8);
     if (d.localPosition.dx < size.width / 2) {
+      if (!Platform.isAndroid) return;
       brightness = (brightness + delta).clamp(0.0, 1.0);
       ScreenBrightness().setApplicationScreenBrightness(brightness);
       _hint(
@@ -591,7 +739,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     } else {
       volume = (volume + delta).clamp(0.0, 1.0);
-      AndroidApp.setVolume(volume).ignore();
+      player.setVolume(volume).ignore();
       _hint(
         '${(volume * 100).round()}%',
         icon: volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
@@ -627,7 +775,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         player,
         fit: fit,
         subtitleStyle: TextStyle(
-          fontSize: Settings.subtitleSize,
+          // On a desktop the picture is as big as the window, so the text follows it (22 is for a 720p-high one).
+          fontSize:
+              Settings.subtitleSize *
+              (isDesktop
+                  ? (MediaQuery.sizeOf(context).height / 720).clamp(.8, 2.2)
+                  : 1),
           color: Colors.white,
           height: 1.3,
           shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
@@ -640,7 +793,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     // With the controls hidden, the remote's keys go to the player itself (see _onKey).
-    if (isTv && !controls && !_keys.hasPrimaryFocus) {
+    if ((isTv || isDesktop) && !controls && !_keys.hasPrimaryFocus) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
             !controls &&
@@ -652,7 +805,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     return Focus(
       focusNode: _keys,
-      autofocus: isTv,
+      autofocus: isTv || isDesktop,
       onKeyEvent: (_, event) =>
           _onKey(event) ? KeyEventResult.handled : KeyEventResult.ignored,
       child: Theme(
@@ -678,8 +831,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final skip = session.skipButton(position);
     final loading =
         error == null && (current == null || player.state.buffering);
-    final swipes = !locked && Settings.swipeGestures;
-    final hold = locked ? 'off' : Settings.holdGesture;
+    // A mouse clicks, wheels and hovers instead (see [_pointer]).
+    final swipes = !isDesktop && !locked && Settings.swipeGestures;
+    final hold = locked || isDesktop ? 'off' : Settings.holdGesture;
     final upNext = _upNext(position);
 
     // On TV, Back first hides the controls, like Netflix.
@@ -699,7 +853,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         key: _scaffold,
         backgroundColor: Colors.black,
         endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
-        onEndDrawerChanged: _onDialog, // paused while the episodes are open
+        // Paused while the episodes are open, except on desktop, where you browse them as it plays.
+        onEndDrawerChanged: isDesktop ? null : _onDialog,
         endDrawer: Drawer(
           width: 400,
           backgroundColor: Colors.transparent,
@@ -725,213 +880,221 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
           ),
         ),
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            _videoView,
-            IgnorePointer(
-              child: AnimatedOpacity(
-                opacity: controls && !locked ? 1 : 0,
-                duration: motionMs(context, 200),
-                child: const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Color(0xB3000000),
-                        Color(0x1A000000),
-                        Color(0x1A000000),
-                        Color(0xE6000000),
-                      ],
-                      stops: [0, .28, .6, 1],
+        body: _pointer(
+          Stack(
+            fit: StackFit.expand,
+            children: [
+              _videoView,
+              IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: controls && !locked ? 1 : 0,
+                  duration: motionMs(context, 200),
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xB3000000),
+                          Color(0x1A000000),
+                          Color(0x1A000000),
+                          Color(0xE6000000),
+                        ],
+                        stops: [0, .28, .6, 1],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _toggleControls,
-              onDoubleTapDown: locked
-                  ? null
-                  : (d) => doubleTapX = d.localPosition.dx,
-              onDoubleTap: locked
-                  ? null
-                  : () => _seekBy(
-                      doubleTapX < size.width / 2
-                          ? -Settings.seekSeconds
-                          : Settings.seekSeconds,
-                    ),
-              onLongPressStart: hold == 'off'
-                  ? null
-                  : (_) {
-                      HapticFeedback.mediumImpact();
-                      if (hold == 'pause') {
-                        heldPlaying = player.state.playing;
-                        player.pause();
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: isDesktop ? _click : _toggleControls,
+                onDoubleTapDown: locked
+                    ? null
+                    : (d) => doubleTapX = d.localPosition.dx,
+                onDoubleTap: locked
+                    ? null
+                    : isDesktop
+                    ? _toggleFullscreen
+                    : () => _seekBy(
+                        doubleTapX < size.width / 2
+                            ? -Settings.seekSeconds
+                            : Settings.seekSeconds,
+                      ),
+                onLongPressStart: hold == 'off'
+                    ? null
+                    : (_) {
+                        HapticFeedback.mediumImpact();
+                        if (hold == 'pause') {
+                          heldPlaying = player.state.playing;
+                          player.pause();
+                          _hint(
+                            'Paused · release to play',
+                            icon: Icons.pause_rounded,
+                            sticky: true,
+                          );
+                          return;
+                        }
+                        player.setRate(2);
+                        setState(() => fastHeld = true);
+                      },
+                onLongPressEnd: hold == 'off'
+                    ? null
+                    : (_) {
+                        if (hold == 'pause') {
+                          if (heldPlaying) player.play();
+                        } else {
+                          player.setRate(rate);
+                          setState(() => fastHeld = false);
+                        }
+                        _clearHint();
+                      },
+                onVerticalDragStart: !swipes
+                    ? null
+                    // may have changed with the volume keys
+                    : (_) => AndroidApp.volume()
+                          .then((v) => volume = v ?? volume)
+                          .ignore(),
+                onVerticalDragUpdate: !swipes
+                    ? null
+                    : (d) => _verticalDrag(d, size),
+                onVerticalDragEnd: !swipes ? null : _clearHint,
+                onHorizontalDragStart: !swipes
+                    ? null
+                    : (_) => seekTarget = player.state.position,
+                onHorizontalDragUpdate: !swipes
+                    ? null
+                    : (d) {
+                        seekTarget = _clamp(
+                          seekTarget! +
+                              Duration(
+                                milliseconds: (d.delta.dx * 250).round(),
+                              ),
+                        );
+                        final diff = (seekTarget! - position).inSeconds;
                         _hint(
-                          'Paused · release to play',
-                          icon: Icons.pause_rounded,
+                          '${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)',
                           sticky: true,
                         );
-                        return;
-                      }
-                      player.setRate(2);
-                      setState(() => fastHeld = true);
-                    },
-              onLongPressEnd: hold == 'off'
-                  ? null
-                  : (_) {
-                      if (hold == 'pause') {
-                        if (heldPlaying) player.play();
-                      } else {
-                        player.setRate(rate);
-                        setState(() => fastHeld = false);
-                      }
-                      _clearHint();
-                    },
-              onVerticalDragStart: !swipes
-                  ? null
-                  // may have changed with the volume keys
-                  : (_) => AndroidApp.volume()
-                        .then((v) => volume = v ?? volume)
-                        .ignore(),
-              onVerticalDragUpdate: !swipes
-                  ? null
-                  : (d) => _verticalDrag(d, size),
-              onVerticalDragEnd: !swipes ? null : _clearHint,
-              onHorizontalDragStart: !swipes
-                  ? null
-                  : (_) => seekTarget = player.state.position,
-              onHorizontalDragUpdate: !swipes
-                  ? null
-                  : (d) {
-                      seekTarget = _clamp(
-                        seekTarget! +
-                            Duration(milliseconds: (d.delta.dx * 250).round()),
-                      );
-                      final diff = (seekTarget! - position).inSeconds;
-                      _hint(
-                        '${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)',
-                        sticky: true,
-                      );
-                    },
-              onHorizontalDragEnd: !swipes
-                  ? null
-                  : (_) {
-                      player.seek(seekTarget!);
-                      seekTarget = null;
-                      _clearHint();
-                    },
-            ),
-            if (loading)
-              const IgnorePointer(
-                child: Center(
-                  child: CircularProgressIndicator(color: Colors.white),
-                ),
+                      },
+                onHorizontalDragEnd: !swipes
+                    ? null
+                    : (_) {
+                        player.seek(seekTarget!);
+                        seekTarget = null;
+                        _clearHint();
+                      },
               ),
-            if (fastHeld)
-              const IgnorePointer(
-                child: Align(
-                  alignment: Alignment(0, -.85),
-                  child: _FastForward(),
+              if (loading)
+                const IgnorePointer(
+                  child: Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
                 ),
-              ),
-            if (hint != null)
-              IgnorePointer(
-                child: Align(
-                  alignment: const Alignment(0, -.6),
-                  child: DecoratedBox(
-                    // Dark in every theme: it sits on the video, and its text is white.
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .7),
-                      borderRadius: BorderRadius.circular(radiusLarge),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
+              if (fastHeld)
+                const IgnorePointer(
+                  child: Align(
+                    alignment: Alignment(0, -.85),
+                    child: _FastForward(),
+                  ),
+                ),
+              if (hint != null)
+                IgnorePointer(
+                  child: Align(
+                    alignment: const Alignment(0, -.6),
+                    child: DecoratedBox(
+                      // Dark in every theme: it sits on the video, and its text is white.
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: .7),
+                        borderRadius: BorderRadius.circular(radiusLarge),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (hintIcon != null) ...[
-                            Icon(hintIcon, size: 20, color: Colors.white),
-                            const SizedBox(width: 8),
-                          ],
-                          Text(
-                            hint!,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (hintIcon != null) ...[
+                              Icon(hintIcon, size: 20, color: Colors.white),
+                              const SizedBox(width: 8),
+                            ],
+                            Text(
+                              hint!,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            IgnorePointer(
-              ignoring: !controls,
-              // Hidden controls can't hold D-pad focus.
-              child: ExcludeFocus(
-                excluding: !controls,
-                child: AnimatedOpacity(
-                  opacity: controls ? 1 : 0,
-                  duration: motionMs(context, 200),
-                  child: Focus(
-                    focusNode: _controlsNode,
-                    child: locked
-                        ? _lockedOverlay()
-                        : isTv
-                        ? _tvOverlay(position, loading)
-                        : _overlay(position, loading),
-                  ),
-                ),
-              ),
-            ),
-            if (_timelineShown && !controls && !locked && error == null)
-              Positioned(
-                left: isTv ? tvMargin : 16,
-                right: isTv ? tvMargin : 16,
-                bottom: isTv ? 24 : 16,
-                child: IgnorePointer(
-                  child: SafeArea(top: false, child: _timeline(position)),
-                ),
-              ),
-            if (upNext != null && !locked && !controls)
-              Positioned(
-                right: isTv ? tvMargin : 24,
-                bottom: isTv ? 32 : 24,
-                // OK takes the offer on TV (see _onKey), so it never holds focus.
-                child: ExcludeFocus(excluding: isTv, child: upNext),
-              )
-            else if (skip != null &&
-                !locked &&
-                !controls) // the controls have their own
-              Positioned(
-                right: isTv ? tvMargin : 24,
-                bottom: isTv ? 48 : 32,
+              IgnorePointer(
+                ignoring: !controls,
+                // Hidden controls can't hold D-pad focus.
                 child: ExcludeFocus(
-                  excluding: isTv,
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                    ),
-                    onPressed: () => player.seek(skip.end),
-                    icon: const Icon(Icons.fast_forward_rounded),
-                    label: Text(
-                      'Skip ${_skipName(skip.type)}${isTv ? ' · OK' : ''}',
+                  excluding: !controls,
+                  child: AnimatedOpacity(
+                    opacity: controls ? 1 : 0,
+                    duration: motionMs(context, 200),
+                    child: Focus(
+                      focusNode: _controlsNode,
+                      child: locked
+                          ? _lockedOverlay()
+                          : isTv
+                          ? _tvOverlay(position, loading)
+                          : isDesktop
+                          ? _deskOverlay(position, loading)
+                          : _overlay(position, loading),
                     ),
                   ),
                 ),
               ),
-            if (error != null) _errorView(),
-          ],
+              if (_timelineShown && !controls && !locked && error == null)
+                Positioned(
+                  left: isTv ? tvMargin : 16,
+                  right: isTv ? tvMargin : 16,
+                  bottom: isTv ? 24 : 16,
+                  child: IgnorePointer(
+                    child: SafeArea(top: false, child: _timeline(position)),
+                  ),
+                ),
+              if (upNext != null && !locked && !controls)
+                Positioned(
+                  right: isTv ? tvMargin : 24,
+                  bottom: isTv ? 32 : 24,
+                  // OK takes the offer on TV (see _onKey), so it never holds focus.
+                  child: ExcludeFocus(excluding: isTv, child: upNext),
+                )
+              else if (skip != null &&
+                  !locked &&
+                  !controls) // the controls have their own
+                Positioned(
+                  right: isTv ? tvMargin : 24,
+                  bottom: isTv ? 48 : 32,
+                  child: ExcludeFocus(
+                    excluding: isTv,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                      ),
+                      onPressed: () => player.seek(skip.end),
+                      icon: const Icon(Icons.fast_forward_rounded),
+                      label: Text(
+                        'Skip ${_skipName(skip.type)}${isTv ? ' · OK' : ''}',
+                      ),
+                    ),
+                  ),
+                ),
+              if (error != null) _errorView(),
+            ],
+          ),
         ),
       ),
     );
@@ -1152,9 +1315,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _pickSpeed() async {
-    final r = await _pick('Speed', {
-      for (final r in const [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0]) r: '$r×',
-    }, rate);
+    final r = await _pick('Speed', {for (final r in _speeds) r: '$r×'}, rate);
     if (r == null || !mounted) return;
     setState(() => rate = r);
     await player.setRate(r);
@@ -1666,56 +1827,89 @@ class _PlayerScreenState extends State<PlayerScreen> {
           (d.inMilliseconds / duration.inMilliseconds)
               .clamp(0.0, 1.0)
               .toDouble();
-      return Stack(
-        alignment: Alignment.centerLeft,
-        children: [
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 4,
-              activeTrackColor: Theme.of(context).colorScheme.primary,
-              thumbColor: Colors.white,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: inset),
-              secondaryActiveTrackColor: Colors.white38,
-              inactiveTrackColor: Colors.white24,
-            ),
-            child: Slider(
-              max: max,
-              value: shown.inMilliseconds.toDouble().clamp(0, max),
-              secondaryTrackValue: player.state.buffer.inMilliseconds
-                  .toDouble()
-                  .clamp(0, max),
-              onChangeStart: (_) => _hideTimer?.cancel(),
-              onChanged: (v) => setState(
-                () => seekTarget = Duration(milliseconds: v.round()),
+      return MouseRegion(
+        onHover: isDesktop
+            ? (e) => _seekHover.value = ((e.localPosition.dx - inset) / track)
+                  .clamp(0.0, 1.0)
+            : null,
+        onExit: isDesktop ? (_) => _seekHover.value = null : null,
+        child: Stack(
+          alignment: Alignment.centerLeft,
+          clipBehavior: Clip.none,
+          children: [
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                activeTrackColor: Theme.of(context).colorScheme.primary,
+                thumbColor: Colors.white,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                overlayShape: const RoundSliderOverlayShape(
+                  overlayRadius: inset,
+                ),
+                secondaryActiveTrackColor: Colors.white38,
+                inactiveTrackColor: Colors.white24,
               ),
-              onChangeEnd: (v) {
-                player.seek(Duration(milliseconds: v.round()));
-                seekTarget = null;
-                _scheduleHide();
-              },
+              child: Slider(
+                max: max,
+                value: shown.inMilliseconds.toDouble().clamp(0, max),
+                secondaryTrackValue: player.state.buffer.inMilliseconds
+                    .toDouble()
+                    .clamp(0, max),
+                onChangeStart: (_) => _hideTimer?.cancel(),
+                onChanged: (v) => setState(
+                  () => seekTarget = Duration(milliseconds: v.round()),
+                ),
+                onChangeEnd: (v) {
+                  player.seek(Duration(milliseconds: v.round()));
+                  seekTarget = null;
+                  _scheduleHide();
+                },
+              ),
             ),
-          ),
-          if (duration > Duration.zero)
-            for (final s in skips.where((s) => s.type != SkipType.recap))
-              Positioned(
-                left: inset + track * fraction(s.start),
-                width: track * (fraction(s.end) - fraction(s.start)),
-                child: IgnorePointer(
-                  child: Container(
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color:
-                          (s.type == SkipType.intro
-                                  ? const Color(0xFFFFC857)
-                                  : const Color(0xFF7DD3FC))
-                              .withValues(alpha: .9),
-                      borderRadius: BorderRadius.circular(2),
+            if (duration > Duration.zero)
+              for (final s in skips.where((s) => s.type != SkipType.recap))
+                Positioned(
+                  left: inset + track * fraction(s.start),
+                  width: track * (fraction(s.end) - fraction(s.start)),
+                  child: IgnorePointer(
+                    child: Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color:
+                            (s.type == SkipType.intro
+                                    ? const Color(0xFFFFC857)
+                                    : const Color(0xFF7DD3FC))
+                                .withValues(alpha: .9),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
                 ),
+            // Desktop: the time under the pointer.
+            if (isDesktop && duration > Duration.zero)
+              ValueListenableBuilder(
+                valueListenable: _seekHover,
+                builder: (context, at, _) => at == null
+                    ? const SizedBox()
+                    : Positioned(
+                        left: inset + track * at - 28,
+                        bottom: 36,
+                        width: 56,
+                        child: IgnorePointer(
+                          child: Text(
+                            formatDuration(duration * at),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              shadows: [Shadow(blurRadius: 6)],
+                            ),
+                          ),
+                        ),
+                      ),
               ),
-        ],
+          ],
+        ),
       );
     },
   );
