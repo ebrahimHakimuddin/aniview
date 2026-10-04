@@ -1,15 +1,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
 import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
+import 'desktop/motion.dart';
+import 'desktop/widgets.dart';
 import 'downloads.dart';
 import 'history.dart';
 import 'playback.dart';
 import 'pairing.dart';
+import 'platform.dart';
 import 'player.dart';
 import 'search.dart';
 import 'selection.dart';
@@ -22,6 +26,8 @@ import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
 
+part 'desktop/details_page.dart';
+
 Future<void> openDetails(
   BuildContext context,
   Map media, {
@@ -30,7 +36,11 @@ Future<void> openDetails(
 }) async {
   await pushSettled(
     context,
-    MaterialPageRoute(builder: (_) => DetailsScreen(media, autoplay: autoplay)),
+    MaterialPageRoute(
+      // The desktop's window title follows the show (see DeskShell).
+      settings: RouteSettings(name: 'show', arguments: titleOf(media)),
+      builder: (_) => DetailsScreen(media, autoplay: autoplay),
+    ),
   );
   onBack?.call();
 }
@@ -51,8 +61,8 @@ Future<void> _openPlayer(
   if (_playerOpening) return;
   _playerOpening = true;
   try {
-    await Navigator.push(
-      context,
+    // On desktop the player covers the whole window, not just the page area beside the sidebar.
+    await Navigator.of(context, rootNavigator: isDesktop).push(
       // No transition: the player turns the screen sideways, which would show this page in landscape as it slides.
       PageRouteBuilder(
         transitionDuration: Duration.zero,
@@ -264,6 +274,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Phones: episodes picked for a bulk action, by number.
   final picked = Selection<num, Episode>((e) => e.number);
 
+  /// Desktop: the page's scroll, a marker just above the episode rows, and the episode last jumped to (lit for a
+  /// moment).
+  final scroll = ScrollController();
+  final listAnchor = GlobalKey();
+  num? highlight;
+  Timer? _highlightTimer;
+
   void _togglePick(Episode episode) {
     picked.toggle(episode);
     selectionTick();
@@ -283,6 +300,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   @override
   void dispose() {
     picked.dispose();
+    scroll.dispose();
+    _highlightTimer?.cancel();
     super.dispose();
   }
 
@@ -920,8 +939,64 @@ class _DetailsScreenState extends State<DetailsScreen> {
     },
   );
 
+  /// The tabs lead the section (shows AniList knows get its social side); what the episodes come from (site,
+  /// audio) sits inside the Episodes tab, as it's about them alone.
+  Widget _tabBar(TextTheme text) => SliverToBoxAdapter(
+    child: show.onAniList
+        ? Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: DefaultTabController(
+              length: 3,
+              initialIndex: tab,
+              child: TabBar(
+                onTap: (i) => setState(() {
+                  tab = i;
+                  picked.clear();
+                }),
+                tabs: const [
+                  Tab(text: 'Episodes'),
+                  Tab(text: 'Discussion'),
+                  Tab(text: 'Friends'),
+                ],
+              ),
+            ),
+          )
+        : Padding(
+            padding: EdgeInsets.fromLTRB(side, 24, side, 0),
+            child: Text('Episodes', style: text.titleLarge),
+          ),
+  );
+
+  /// The new tab's content fades in.
+  Widget _tabContent() => TweenAnimationBuilder<double>(
+    key: ValueKey(tab),
+    tween: Tween(begin: 0, end: 1),
+    duration: motionMs(context, 200),
+    curve: Curves.easeOut,
+    builder: (context, opacity, sliver) =>
+        SliverOpacity(opacity: opacity, sliver: sliver),
+    child: switch (tab) {
+      1 => DiscussionList(media, progress: _progress),
+      2 => FriendsList(media),
+      _ => SliverMainAxisGroup(
+        slivers: [
+          SliverToBoxAdapter(child: _episodeSource()),
+          _episodeList(),
+        ],
+      ),
+    },
+  );
+
   @override
-  Widget build(BuildContext context) => isTv ? _tv() : _phone();
+  Widget build(BuildContext context) =>
+      isTv ? _tv() : (isDesktop ? _deskBuild() : _phone());
+
+  /// For the desktop page, which lives in its own file and can't call [setState].
+  void _set(VoidCallback change) => setState(change);
+
+  /// A season's episodes as the layout lays them out: rows on phones, wide rows with a right click on desktop.
+  Widget _episodes(List<Episode> list, Source? site) =>
+      isDesktop ? _deskEpisodeSliver(list, site) : _episodeSliver(list, site);
 
   Widget _phone() {
     final text = Theme.of(context).textTheme;
@@ -1062,52 +1137,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             SliverToBoxAdapter(child: _related()),
-            // The tabs lead the section (shows AniList knows get its social side); what the episodes come from (site,
-            // audio) sits inside the Episodes tab, as it's about them alone.
-            SliverToBoxAdapter(
-              child: show.onAniList
-                  ? Padding(
-                      padding: const EdgeInsets.only(top: 16),
-                      child: DefaultTabController(
-                        length: 3,
-                        initialIndex: tab,
-                        child: TabBar(
-                          onTap: (i) => setState(() {
-                            tab = i;
-                            picked.clear();
-                          }),
-                          tabs: const [
-                            Tab(text: 'Episodes'),
-                            Tab(text: 'Discussion'),
-                            Tab(text: 'Friends'),
-                          ],
-                        ),
-                      ),
-                    )
-                  : Padding(
-                      padding: EdgeInsets.fromLTRB(side, 24, side, 0),
-                      child: Text('Episodes', style: text.titleLarge),
-                    ),
-            ),
-            // The new tab's content fades in.
-            TweenAnimationBuilder<double>(
-              key: ValueKey(tab),
-              tween: Tween(begin: 0, end: 1),
-              duration: motionMs(context, 200),
-              curve: Curves.easeOut,
-              builder: (context, opacity, sliver) =>
-                  SliverOpacity(opacity: opacity, sliver: sliver),
-              child: switch (tab) {
-                1 => DiscussionList(media, progress: _progress),
-                2 => FriendsList(media),
-                _ => SliverMainAxisGroup(
-                  slivers: [
-                    SliverToBoxAdapter(child: _episodeSource()),
-                    _episodeList(),
-                  ],
-                ),
-              },
-            ),
+            _tabBar(text),
+            _tabContent(),
             // Clear of the floating play button.
             SliverToBoxAdapter(
               child: SizedBox(
@@ -1342,7 +1373,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           );
         }
-        return _episodeSliver(list, current);
+        return _episodes(list, current);
       },
     );
   }
@@ -1373,8 +1404,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         FutureBuilder(
           future: cachedSeason,
-          builder: (context, snap) =>
-              _episodeSliver(snap.data ?? downloaded, null),
+          builder: (context, snap) => _episodes(snap.data ?? downloaded, null),
         ),
       ],
     );
@@ -1432,7 +1462,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   /// The long-press tip until it's used or dismissed, the order, and pages for long shows.
-  Widget _episodeControls(List<Episode> list, EpisodePlan plan) {
+  Widget _episodeControls(
+    List<Episode> list,
+    EpisodePlan plan, {
+    Widget? extra,
+  }) {
     final pages = plan.pages;
     return Padding(
       padding: EdgeInsets.fromLTRB(side - 8, 0, 0, 8),
@@ -1454,6 +1488,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     child: Text(
                       isTv
                           ? 'Hold OK on an episode to mark it watched or manage its download'
+                          : isDesktop
+                          ? 'Right-click an episode for more, or Ctrl+click to select several'
                           : 'Long-press episodes to select them: download, delete or mark watched',
                       style: Theme.of(context).textTheme.bodySmall
                           ?.copyWith(color: scheme.onSurfaceVariant),
@@ -1482,6 +1518,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               children: [
                 // TV has it in the action row, with everything else the D-pad walks along.
                 if (!isTv) _orderButton(plan.newestFirst),
+                ?extra,
                 if (pages.length > 1)
                   Expanded(
                     child: SizedBox(
