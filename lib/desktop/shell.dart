@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../anilist.dart';
+import '../changelog.dart';
 import '../desktop.dart';
 import '../home_feed.dart';
 import '../tracker.dart';
@@ -113,7 +114,10 @@ class _DeskShellState extends State<DeskShell> {
     onDesktopFind = () => _fieldFocus.requestFocus();
     desktopBack = _back;
     onDesktopSearch = _openSearch;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _retitle());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retitle();
+      if (mounted) maybeShowWhatsNew(context);
+    });
   }
 
   @override

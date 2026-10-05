@@ -6,41 +6,21 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.4.0';
+const changelogVersion = '2.5.0-beta.1';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
   (
-    icon: Icons.contrast_rounded,
-    title: 'Follows your phone’s light and dark',
-    body: 'A switch in Settings → Appearance uses your theme’s light or dark version to match your phone.',
+    icon: Icons.sync_rounded,
+    title: 'MyAnimeList sign-in',
+    body: 'Sign in to AniList, MyAnimeList or both. The first one you sign in to is your main list, and progress goes there first, then to the other.',
   ),
   (
-    icon: Icons.swap_horiz_rounded,
-    title: 'Try another site',
-    body: 'When a site has nothing for an episode, the player offers another one so you can keep watching.',
-  ),
-  (
-    icon: Icons.arrow_back_rounded,
-    title: 'Smoother going back',
-    body: 'Home waits for the back animation to end before it reloads, and rows you’ve scrolled past stay built.',
-  ),
-  (
-    icon: Icons.animation_rounded,
-    title: 'Calmer motion',
-    body: 'With animations turned off in Android, loading placeholders and the 2× chevrons hold still. Springy overshoots are gone.',
-  ),
-  (
-    icon: Icons.insights_rounded,
-    title: 'Steadier lists and stats',
-    body: 'Me shows your stats when AniList leaves its breakdown empty, completing a show counts every episode, and signing out clears saves still waiting.',
-  ),
-  (
-    icon: Icons.download_for_offline_rounded,
-    title: 'Download folder',
-    body: 'The folder you pick applies only while Save downloads to gallery is on. Otherwise episodes stay in the app’s storage.',
+    icon: Icons.desktop_windows_rounded,
+    title: 'AniView on your computer',
+    body: 'A new desktop app for Linux (AppImage), Windows and macOS, with its own layout, keyboard controls and player.',
   ),
 ];
 
