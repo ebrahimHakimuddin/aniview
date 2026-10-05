@@ -5,11 +5,34 @@ import 'package:aniview/home.dart';
 import 'package:aniview/platform.dart';
 import 'package:aniview/settings.dart';
 import 'package:aniview/sources.dart';
+import 'package:aniview/tracker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// A catalog with nothing in it, so no test reaches for the network.
+class _Empty implements Catalog {
+  @override
+  bool get usable => true;
+  @override
+  Future<List> trending() async => [];
+  @override
+  Future<List> season() async => [];
+  @override
+  Future<(List, bool)> search(
+    String text,
+    SearchFilters filters,
+    int page,
+  ) async => (<dynamic>[], false);
+  @override
+  Future<List<(String, Map)>> relations(Map media) async => [];
+}
+
 void main() {
+  setUp(() => Tracker.primary = _Empty());
+  tearDown(() => Tracker.primary = const AniListCatalog());
+
   testWidgets('the desktop has a sidebar of places, each opening its page', (
     tester,
   ) async {
@@ -126,5 +149,87 @@ void main() {
     await tester.tap(find.text('Hide this row'));
     await tester.pumpAndSettle();
     expect(hidden, 1);
+  });
+
+  // A page in the shell sits in a Navigator beside the sidebar and under the top bar.
+  Future<void> shellLike(WidgetTester tester, Widget page) async {
+    isDesktop = true;
+    addTearDown(() => isDesktop = false);
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              const SizedBox(width: 232),
+              Expanded(
+                child: Column(
+                  children: [
+                    const SizedBox(height: 64),
+                    Expanded(
+                      child: Navigator(
+                        onGenerateRoute: (_) => MaterialPageRoute<void>(
+                          builder: (_) => Material(child: page),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('posters with two-line titles fit their cells at any width', (
+    tester,
+  ) async {
+    await shellLike(
+      tester,
+      GridView.builder(
+        gridDelegate: const DeskPosterGrid(),
+        itemCount: 12,
+        itemBuilder: (_, i) => DeskPoster({
+          'id': i,
+          'title': {
+            'userPreferred':
+                'A show with a title long enough to need two lines $i',
+          },
+        }, subtitle: 'EP 2 / 12'),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a right click opens its menu at the pointer', (tester) async {
+    await shellLike(
+      tester,
+      Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 172,
+          child: DeskPoster({
+            'id': 1,
+            'title': {'userPreferred': 'A show'},
+          }),
+        ),
+      ),
+    );
+    final at = tester.getCenter(find.text('A show'));
+    final mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await mouse.down(at);
+    await mouse.up();
+    await tester.pumpAndSettle();
+    final menu = tester.getTopLeft(find.text('Open'));
+    // The item's text sits a padding in from the menu's corner, which is where the pointer was.
+    expect((menu.dx - at.dx).abs(), lessThan(40));
+    expect((menu.dy - at.dy).abs(), lessThan(40));
   });
 }

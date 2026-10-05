@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'anilist.dart' show SearchFilters;
 import 'platform.dart';
 import 'settings.dart';
+import 'desktop/picks.dart' show deskPicks;
 
 /// What the desktop window adds on top of the phone app: its size and place remembered, back on Esc, Alt+Left or the
 /// mouse's back button, Ctrl+F (Cmd+F on a Mac) for Search and Ctrl+Q (Cmd+Q) to quit. None of it runs on Android.
@@ -34,6 +35,9 @@ void _showTitle(String page) {
   windowManager.setTitle(page.isEmpty ? 'AniView' : '$page · AniView').ignore();
 }
 
+/// The dropdown menu that's open, if any: Esc closes it before it goes back a page.
+MenuController? openMenu;
+
 /// Set by the desktop shell: goes back in its pages; false when there's nowhere left to go.
 bool Function()? desktopBack;
 
@@ -54,7 +58,7 @@ Future<void> setupWindow() async {
   await windowManager.waitUntilReadyToShow(
     WindowOptions(
       size: saved?.size ?? const Size(1100, 750),
-      minimumSize: const Size(420, 600),
+      minimumSize: const Size(700, 560),
       title: 'AniView',
     ),
     () async {
@@ -108,6 +112,14 @@ class DesktopKeys extends StatelessWidget {
 
   /// Esc first lets go of a text field, then goes back.
   void _escape() {
+    if (openMenu != null) {
+      openMenu!.close();
+      return;
+    }
+    if (deskPicks.active && !deskPicks.busy) {
+      deskPicks.clear();
+      return;
+    }
     final focus = FocusManager.instance.primaryFocus;
     if (focus?.context?.findAncestorWidgetOfExactType<EditableText>() != null) {
       focus!.unfocus();

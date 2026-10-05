@@ -77,7 +77,7 @@ class _DeskScheduleState extends State<DeskSchedule> {
                 builder: (context, box) {
                   const gap = 12.0;
                   final inner = box.maxWidth - deskMargin * 2;
-                  final column = ((inner - gap * 6) / 7).clamp(168.0, 400.0);
+                  final column = ((inner - gap * 6) / 7).clamp(132.0, 400.0);
                   final board = Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -129,7 +129,7 @@ class _Loading extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: EdgeInsets.only(left: i == 0 ? 0 : 12),
-              child: const Skeleton(radius: 14),
+              child: Skeleton(radius: nested(8)),
             ),
           ),
       ],
@@ -156,7 +156,7 @@ class _Day extends StatelessWidget {
         color: today
             ? scheme.primary.withValues(alpha: .08)
             : scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(nested(8)),
         border: today
             ? Border.all(color: scheme.primary.withValues(alpha: .5))
             : null,
@@ -239,74 +239,82 @@ class _Slot extends StatelessWidget {
     final show = Show(media);
     final at = airsAt(slot);
     final aired = at.isBefore(DateTime.now());
-    return Hover(
-      pressScale: .98,
-      onTap: () => openDetails(context, media, onBack: onChanged),
-      builder: (context, hovered) => AnimatedContainer(
-        duration: motionMs(context, 120),
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: hovered
-              ? scheme.surfaceContainerHighest
-              : scheme.surfaceContainer,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: next ? scheme.primary : Colors.transparent,
-            width: 1.5,
+    return LayoutBuilder(
+      builder: (context, box) {
+        // A narrow column (seven days across a modest window) gives the poster less.
+        final narrow = box.maxWidth < 156;
+        return Hover(
+          pressScale: .98,
+          onTap: () => openDetails(context, media, onBack: onChanged),
+          builder: (context, hovered) => AnimatedContainer(
+            duration: motionMs(context, 120),
+            padding: EdgeInsets.all(narrow ? 6 : 8),
+            decoration: BoxDecoration(
+              color: hovered
+                  ? scheme.surfaceContainerHighest
+                  : scheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(buttonRadius),
+              border: Border.all(
+                color: next ? scheme.primary : Colors.transparent,
+                width: 1.5,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(radiusSmall),
+                  child: SizedBox(
+                    width: narrow ? 34 : 44,
+                    height: narrow ? 50 : 64,
+                    child: Artwork(show.cover, color: show.color),
+                  ),
+                ),
+                SizedBox(width: narrow ? 7 : 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _time(context, at),
+                        style: text.labelMedium?.copyWith(
+                          color: aired
+                              ? scheme.onSurfaceVariant
+                              : scheme.primary,
+                          // Times line up down the column, whatever the digits.
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        show.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'EP ${slot['episode']}${aired
+                            ? ' · aired'
+                            : next
+                            ? ' · next'
+                            : ''}',
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                width: 44,
-                height: 64,
-                child: Artwork(show.cover, color: show.color),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _time(context, at),
-                    style: text.labelMedium?.copyWith(
-                      color: aired ? scheme.onSurfaceVariant : scheme.primary,
-                      // Times line up down the column, whatever the digits.
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    show.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(
-                      color: scheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                      height: 1.25,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'EP ${slot['episode']}${aired
-                        ? ' · aired'
-                        : next
-                        ? ' · next'
-                        : ''}',
-                    style: text.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+        );
+      },
     );
   }
 }

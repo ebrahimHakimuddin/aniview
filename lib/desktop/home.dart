@@ -322,7 +322,7 @@ class _SignInBanner extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(nested(8)),
         ),
         child: Padding(
           padding: const EdgeInsets.all(20),

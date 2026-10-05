@@ -172,6 +172,14 @@ ThemeData buildTheme() {
       ),
     ),
     // Tabs under a page's header: the accent marks the chosen one; the label weight stays put so nothing shifts.
+    // A desktop tooltip sits clear of its button (the default overlaps a 48px one), after a short rest of the pointer.
+    tooltipTheme: isDesktop
+        ? const TooltipThemeData(
+            verticalOffset: 34,
+            preferBelow: true,
+            waitDuration: Duration(milliseconds: 450),
+          )
+        : null,
     tabBarTheme: TabBarThemeData(
       labelColor: scheme.primary,
       unselectedLabelColor: scheme.onSurfaceVariant,
@@ -579,38 +587,84 @@ class SelectionBar extends StatelessWidget {
   final bool busy;
 
   @override
-  Widget build(BuildContext context) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Row(
-        children: [
-          IconButton(
-            tooltip: 'Done',
-            onPressed: busy ? null : onDone,
-            icon: const Icon(Icons.close_rounded),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              '$count selected',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleLarge,
+  Widget build(BuildContext context) => isDesktop
+      ? _floating(context)
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Done',
+                  onPressed: busy ? null : onDone,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    '$count selected',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                if (onAll != null)
+                  TextButton(
+                    onPressed: busy ? null : onAll,
+                    child: const Text('All'),
+                  ),
+                ...actions,
+              ],
             ),
-          ),
-          if (onAll != null)
-            TextButton(
-              onPressed: busy ? null : onAll,
-              child: const Text('All'),
+            SizedBox(
+              height: progressBarHeight,
+              child: busy ? const LinearProgressIndicator() : null,
             ),
-          ...actions,
-        ],
-      ),
-      SizedBox(
-        height: progressBarHeight,
-        child: busy ? const LinearProgressIndicator() : null,
-      ),
-    ],
+          ],
+        );
+
+  /// Desktop: a pill that floats over the foot of the page (place it as the page's floating button or in a Stack),
+  /// the same wherever things are picked.
+  Widget _floating(BuildContext context) => Material(
+    elevation: 8,
+    color: scheme.surfaceContainerHigh,
+    borderRadius: BorderRadius.circular(nested(8)),
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Done',
+                onPressed: busy ? null : onDone,
+                icon: const Icon(Icons.close_rounded),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '$count selected',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              if (onAll != null)
+                TextButton(
+                  onPressed: busy ? null : onAll,
+                  child: const Text('Select all'),
+                ),
+              ...actions,
+            ],
+          ),
+        ),
+        SizedBox(
+          height: progressBarHeight,
+          child: busy ? const LinearProgressIndicator() : null,
+        ),
+      ],
+    ),
   );
 }
 

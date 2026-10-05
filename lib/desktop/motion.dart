@@ -6,24 +6,47 @@ import 'package:flutter/material.dart';
 const deskEaseOut = Cubic(0.23, 1, 0.32, 1);
 const deskEaseInOut = Cubic(0.77, 0, 0.175, 1);
 
-/// Fades [child] up into place; the first few of a group (an [index] under a handful) follow each other 35ms apart,
-/// the rest come in together, so a long grid doesn't take long to arrive and scrolling back doesn't replay it.
-class Reveal extends StatelessWidget {
+/// Fades [child] up into place when a page first fills in; the first few of a group (an [index] under a handful)
+/// follow each other 35ms apart, the rest come in together. Anything built while a list is being scrolled, or scrolled
+/// away from its start, just appears: scrolling back must not replay it.
+class Reveal extends StatefulWidget {
   const Reveal({super.key, required this.child, this.index = 0});
 
   final Widget child;
   final int index;
 
   @override
+  State<Reveal> createState() => _RevealState();
+}
+
+class _RevealState extends State<Reveal> {
+  late final bool _play = _atRest();
+
+  /// No list around this is moving or away from its start.
+  bool _atRest() {
+    ScrollableState? scrollable = Scrollable.maybeOf(context);
+    while (scrollable != null) {
+      final position = scrollable.position;
+      if (position.isScrollingNotifier.value ||
+          (position.hasPixels && position.pixels > 1)) {
+        return false;
+      }
+      scrollable = scrollable.context
+          .findAncestorStateOfType<ScrollableState>();
+    }
+    return true;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) return child;
-    final delay = index.clamp(0, 8) * 35;
+    if (!_play || MediaQuery.disableAnimationsOf(context)) return widget.child;
+    final delay = widget.index.clamp(0, 8) * 35;
     final total = 260 + delay;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: total),
       curve: Interval(delay / total, 1, curve: deskEaseOut),
-      child: child,
+      child: widget.child,
       builder: (context, t, child) => Opacity(
         opacity: t,
         child: Transform.translate(

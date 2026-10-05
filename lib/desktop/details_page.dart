@@ -15,17 +15,8 @@ extension _DeskDetails on _DetailsScreenState {
         if (!didPop) picked.clear();
       },
       child: Scaffold(
-        bottomNavigationBar: picked.active
-            ? Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  deskMargin,
-                  8,
-                  deskMargin,
-                  12,
-                ),
-                child: _pickedActions(),
-              )
-            : null,
+        floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+        floatingActionButton: picked.active ? _pickedActions() : null,
         body: LayoutBuilder(
           builder: (context, box) {
             // The page keeps to a readable width and centres in a very wide window; in a narrow one the show's
@@ -34,46 +25,74 @@ extension _DeskDetails on _DetailsScreenState {
               deskMargin,
               double.infinity,
             );
-            final narrow = box.maxWidth < 880;
-            return CustomScrollView(
-              controller: scroll,
-              slivers: [
-                SliverToBoxAdapter(child: _deskHero(text, inset)),
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(inset, 24, inset, 48),
-                  sliver: narrow
-                      ? SliverMainAxisGroup(
-                          slivers: [
-                            SliverToBoxAdapter(child: _deskSide(text)),
-                            const SliverToBoxAdapter(
-                              child: SizedBox(height: 24),
+            final narrow = box.maxWidth < 760;
+            final hero = SliverToBoxAdapter(child: _deskHero(text, inset));
+            if (narrow) {
+              return CustomScrollView(
+                controller: scroll,
+                slivers: [
+                  hero,
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(inset, 24, inset, 48),
+                    // The episodes first: they're what the page is for.
+                    sliver: SliverMainAxisGroup(
+                      slivers: [
+                        _tabBar(text),
+                        _tabContent(),
+                        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                        SliverToBoxAdapter(child: _deskSide(text)),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }
+            // The show's details stay in view beside the episodes: they scroll with the page until they reach the
+            // top, then hold there (and scroll on their own, if they're taller than the window).
+            const sideWidth = 320.0, gap = 32.0;
+            final bannerEnd = _deskHeroHeight() + 24;
+            return Stack(
+              children: [
+                CustomScrollView(
+                  controller: scroll,
+                  slivers: [
+                    hero,
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(
+                        inset + sideWidth + gap,
+                        24,
+                        inset,
+                        48,
+                      ),
+                      sliver: SliverMainAxisGroup(
+                        slivers: [_tabBar(text), _tabContent()],
+                      ),
+                    ),
+                  ],
+                ),
+                Positioned.fill(
+                  child: ListenableBuilder(
+                    listenable: scroll,
+                    builder: (context, _) {
+                      final top =
+                          (bannerEnd - (scroll.hasClients ? scroll.offset : 0))
+                              .clamp(16.0, box.maxHeight);
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Padding(
+                          padding: EdgeInsets.only(left: inset, top: top),
+                          child: SizedBox(
+                            width: sideWidth,
+                            height: box.maxHeight - top,
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.only(bottom: 32),
+                              child: _deskSide(text),
                             ),
-                            _tabBar(text),
-                            _tabContent(),
-                          ],
-                        )
-                      : SliverCrossAxisGroup(
-                          slivers: [
-                            SliverConstrainedCrossAxis(
-                              maxExtent: 320,
-                              sliver: SliverToBoxAdapter(
-                                child: _deskSide(text),
-                              ),
-                            ),
-                            const SliverConstrainedCrossAxis(
-                              maxExtent: 32,
-                              sliver: SliverToBoxAdapter(
-                                child: SizedBox(width: 32),
-                              ),
-                            ),
-                            SliverCrossAxisExpanded(
-                              flex: 1,
-                              sliver: SliverMainAxisGroup(
-                                slivers: [_tabBar(text), _tabContent()],
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
+                      );
+                    },
+                  ),
                 ),
               ],
             );
@@ -85,11 +104,15 @@ extension _DeskDetails on _DetailsScreenState {
 
   // ───────────────────────────── The banner ─────────────────────────────
 
+  /// The banner follows the window, so a short one still has room for episodes under it.
+  double _deskHeroHeight() =>
+      (MediaQuery.sizeOf(context).height * .44).clamp(310.0, 420.0);
+
   Widget _deskHero(TextTheme text, double inset) {
     final airing = airingLabel(media);
     final score = show.score;
     // The banner follows the window, so a short one still has room for episodes under it.
-    final hero = (MediaQuery.sizeOf(context).height * .44).clamp(310.0, 420.0);
+    final hero = _deskHeroHeight();
     final posterHeight = hero - 100;
     return SizedBox(
       height: hero,
@@ -135,7 +158,7 @@ extension _DeskDetails on _DetailsScreenState {
               children: [
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(radiusLarge),
                     boxShadow: const [
                       BoxShadow(
                         color: Color(0x66000000),
@@ -145,7 +168,7 @@ extension _DeskDetails on _DetailsScreenState {
                     ],
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(radiusLarge),
                     child: SizedBox(
                       width: posterHeight * 2 / 3,
                       height: posterHeight,
@@ -210,14 +233,22 @@ extension _DeskDetails on _DetailsScreenState {
                           ),
                         ],
                         const SizedBox(height: 18),
+                        // No spacing of its own: with nothing to play, the other buttons start at the left edge.
                         Wrap(
-                          spacing: 12,
                           runSpacing: 8,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            SizedBox(width: 300, child: _playAction()),
-                            _deskListButton(),
-                            _deskMore(),
+                            _playAction(
+                              frame: (button) => Padding(
+                                padding: const EdgeInsets.only(right: 12),
+                                child: SizedBox(width: 300, child: button),
+                              ),
+                            ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              spacing: 12,
+                              children: [_deskListButton(), _deskMore()],
+                            ),
                           ],
                         ),
                       ],
@@ -321,8 +352,6 @@ extension _DeskDetails on _DetailsScreenState {
               Icons.done_all_rounded,
               () => _markWatched(EpisodePlan.progressAfter(list)),
             ),
-          if (site != null)
-            ('Wrong show? Pick it', Icons.swap_horiz_rounded, _fixMatch),
         ];
         if (items.isEmpty) return const SizedBox.shrink();
         return PopupMenuButton<int>(
@@ -428,12 +457,14 @@ extension _DeskDetails on _DetailsScreenState {
                         color: hovered
                             ? scheme.onSurface.withValues(alpha: .06)
                             : Colors.transparent,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(
+                          nested(6, radiusMedium),
+                        ),
                       ),
                       child: Row(
                         children: [
                           ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(radiusMedium),
                             child: SizedBox(
                               width: 40,
                               height: 60,
@@ -567,7 +598,7 @@ extension _DeskDetails on _DetailsScreenState {
     Future<void> menu(Offset at) async {
       final choice = await showMenu<String>(
         context: context,
-        position: RelativeRect.fromLTRB(at.dx, at.dy, at.dx, at.dy),
+        position: menuAt(context, at),
         items: [
           const PopupMenuItem(value: 'play', child: Text('Play')),
           if (Tracker.signedIn)
@@ -652,7 +683,7 @@ extension _DeskDetails on _DetailsScreenState {
                 : hovered
                 ? scheme.onSurface.withValues(alpha: .06)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(nested(8, radiusLarge)),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -660,7 +691,7 @@ extension _DeskDetails on _DetailsScreenState {
               SizedBox(
                 width: 208,
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(radiusLarge),
                   child: AspectRatio(
                     aspectRatio: 16 / 9,
                     child: Stack(
@@ -685,16 +716,13 @@ extension _DeskDetails on _DetailsScreenState {
                             ),
                           ),
                         ),
-                        if (picking)
+                        if (picking || hovered)
                           Positioned(
-                            top: 8,
-                            left: 8,
-                            child: Icon(
-                              isPicked
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked_rounded,
-                              color: isPicked ? scheme.primary : Colors.white,
-                              shadows: const [Shadow(blurRadius: 6)],
+                            top: 2,
+                            left: 2,
+                            child: PickBox(
+                              picked: isPicked,
+                              onTap: () => _togglePick(episode),
                             ),
                           ),
                       ],
@@ -733,7 +761,10 @@ extension _DeskDetails on _DetailsScreenState {
                           ],
                         ],
                       ),
-                      if (episode.title != null)
+                      // Not when it only repeats the number above it.
+                      if (episode.title != null &&
+                          episode.title!.trim().toLowerCase() !=
+                              'episode ${epNumber(episode.number)}')
                         Text(
                           episode.title!,
                           maxLines: 1,
@@ -837,7 +868,7 @@ extension _DeskDetails on _DetailsScreenState {
         contentPadding: const EdgeInsets.symmetric(vertical: 0),
         prefixIcon: const Icon(Icons.tag_rounded, size: 18),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(buttonRadius),
           borderSide: BorderSide.none,
         ),
       ),

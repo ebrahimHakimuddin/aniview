@@ -93,7 +93,7 @@ class _DeskSearchBoxState extends State<DeskSearchBox> {
             child: Material(
               elevation: 8,
               color: scheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(nested(8)),
               clipBehavior: Clip.antiAlias,
               child: ConstrainedBox(
                 constraints: BoxConstraints(
@@ -163,7 +163,7 @@ class _Field extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     OutlineInputBorder border(Color color, double width) => OutlineInputBorder(
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(buttonRadius),
       borderSide: BorderSide(color: color, width: width),
     );
     return SizedBox(
@@ -257,7 +257,7 @@ class _Suggestion extends StatelessWidget {
             : Row(
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(5),
+                    borderRadius: BorderRadius.circular(radiusSmall),
                     child: SizedBox(
                       width: 36,
                       height: 54,
@@ -309,7 +309,7 @@ class _Key extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       border: Border.all(color: hairline),
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(radiusSmall),
     ),
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),

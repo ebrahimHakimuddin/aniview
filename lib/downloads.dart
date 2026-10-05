@@ -264,6 +264,9 @@ class Downloads extends ChangeNotifier {
   var _queue = DownloadQueue();
   List<Download> get items => _queue.items;
   late Directory _root;
+
+  /// Where the downloaded episodes are kept.
+  String get folder => _root.path;
   late DownloadStore _store;
   Completer<void>? _activeDone;
   bool _running = false;
@@ -283,12 +286,68 @@ class Downloads extends ChangeNotifier {
     }
   }
 
+  Future<Directory> _chosenRoot() async =>
+      Settings.desktopDownloadFolder.isEmpty
+      ? Directory('${(await _appFolder()).path}/downloads')
+      : Directory('${Settings.desktopDownloadFolder}/AniView');
+
   Future<void> load() async {
-    _root = Directory('${(await _appFolder()).path}/downloads');
+    _root = await _chosenRoot();
     await _root.create(recursive: true);
     _store = DownloadStore(_root);
     _queue = DownloadQueue(await _store.read());
     _pump();
+  }
+
+  /// Desktop: keeps the downloads in [parent] from now on (the app's own folder when null), taking the ones already
+  /// made along. Not while one is being fetched; throws then, or when the folder can't be written.
+  Future<void> moveTo(String? parent) async {
+    if (items.any(
+      (d) =>
+          d.status == DownloadStatus.queued ||
+          d.status == DownloadStatus.downloading,
+    )) {
+      throw 'Wait for the current downloads to finish, or cancel them, before moving the folder.';
+    }
+    final before = _root, chosen = Settings.desktopDownloadFolder;
+    Settings.desktopDownloadFolder = parent ?? '';
+    final after = await _chosenRoot();
+    if (after.path == before.path) return;
+    try {
+      await after.create(recursive: true);
+      for (final entity in await before.list().toList()) {
+        final target =
+            '${after.path}/${entity.uri.pathSegments.where((s) => s.isNotEmpty).last}';
+        try {
+          await entity.rename(target);
+        } on FileSystemException {
+          // Another disk: copy, then remove.
+          await _copy(entity, target);
+          await entity.delete(recursive: true);
+        }
+      }
+    } catch (_) {
+      Settings.desktopDownloadFolder = chosen;
+      rethrow;
+    }
+    _root = after;
+    _store = DownloadStore(_root);
+    _queue = DownloadQueue(await _store.read());
+    notifyListeners();
+  }
+
+  Future<void> _copy(FileSystemEntity from, String to) async {
+    if (from is File) {
+      await from.copy(to);
+    } else if (from is Directory) {
+      await Directory(to).create(recursive: true);
+      await for (final child in from.list()) {
+        await _copy(
+          child,
+          '$to/${child.uri.pathSegments.where((s) => s.isNotEmpty).last}',
+        );
+      }
+    }
   }
 
   Directory _dir(Download d) => Directory('${_root.path}/${d.id}');

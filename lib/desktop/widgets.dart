@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart'
+    show SliverConstraints, SliverGridLayout, SliverGridRegularTileLayout;
 
 import '../anilist.dart';
 import '../details.dart';
@@ -11,13 +13,14 @@ import '../states.dart';
 import '../tracker.dart';
 import '../ui.dart';
 import 'motion.dart';
+import 'picks.dart';
 
 /// The desktop UI's own pieces: pointer-first (hover reveals what a phone shows all the time, a right click opens a
 /// menu), dense, and laid out for a window rather than a screen held in the hand.
 
 const deskMargin = 32.0;
 const deskPosterWidth = 172.0;
-const deskCorner = 10.0;
+const deskCorner = radiusLarge;
 
 /// A hairline edge and a soft lift, as two translucent shadows: unlike a solid border, they take the colour of
 /// whatever is behind, so a card sits on the page instead of being drawn onto it.
@@ -140,6 +143,82 @@ List<PopupMenuEntry<String>> statusItems(Map media) => [
     ),
 ];
 
+/// The round checkbox that picks an item among several: on hover, and for as long as picking goes on. A click on it
+/// picks (or unpicks) without opening the item.
+class PickBox extends StatelessWidget {
+  const PickBox({
+    super.key,
+    required this.picked,
+    required this.onTap,
+    this.onDark = true,
+  });
+
+  final bool picked;
+  final VoidCallback onTap;
+
+  /// Over a picture (white when unchecked), or on the page itself.
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    cursor: SystemMouseCursors.click,
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Icon(
+          picked
+              ? Icons.check_circle_rounded
+              : Icons.radio_button_unchecked_rounded,
+          color: picked
+              ? scheme.primary
+              : onDark
+              ? Colors.white
+              : scheme.onSurfaceVariant,
+          shadows: onDark ? const [Shadow(blurRadius: 6)] : null,
+        ),
+      ),
+    ),
+  );
+}
+
+/// Where a right click at [at] (window coordinates) puts a menu. A page in the shell sits in a Navigator that starts
+/// below the top bar and beside the sidebar, and a menu's position is relative to that.
+RelativeRect menuAt(BuildContext context, Offset at) {
+  final box = Navigator.of(context).context.findRenderObject() as RenderBox;
+  return RelativeRect.fromRect(
+    box.globalToLocal(at) & Size.zero,
+    Offset.zero & box.size,
+  );
+}
+
+/// A grid of [DeskPoster]s: as many columns as fit, each cell as tall as its poster (2:3, so it grows with the
+/// column) plus the room for two lines of title and one of facts.
+class DeskPosterGrid extends SliverGridDelegate {
+  const DeskPosterGrid();
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) {
+    const spacing = 20.0, rowGap = 12.0, captions = 72.0;
+    final count =
+        (constraints.crossAxisExtent / (deskPosterWidth + 24 + spacing)).ceil();
+    final width = (constraints.crossAxisExtent - spacing * (count - 1)) / count;
+    final height = width * 1.5 + captions;
+    return SliverGridRegularTileLayout(
+      crossAxisCount: count,
+      mainAxisStride: height + rowGap,
+      crossAxisStride: width + spacing,
+      childMainAxisExtent: height,
+      childCrossAxisExtent: width,
+      reverseCrossAxis: false,
+    );
+  }
+
+  @override
+  bool shouldRelayout(DeskPosterGrid oldDelegate) => false;
+}
+
 /// A poster for a grid or row: the title under it, and on hover the way in, a play button, the facts and a ＋ to
 /// put it on a list. A right click opens the same as a menu. With [onToggle] it can be picked among several.
 class DeskPoster extends StatelessWidget {
@@ -165,10 +244,15 @@ class DeskPoster extends StatelessWidget {
   void _open(BuildContext context, {bool play = false}) =>
       openDetails(context, media, onBack: onChanged, autoplay: play);
 
-  Future<void> _menu(BuildContext context, Offset at) async {
+  Future<void> _menu(
+    BuildContext context,
+    Offset at,
+    bool? selected,
+    VoidCallback? onToggle,
+  ) async {
     final picked = await showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(at.dx, at.dy, at.dx, at.dy),
+      position: menuAt(context, at),
       items: [
         const PopupMenuItem(value: '_open', child: Text('Open')),
         const PopupMenuItem(value: '_play', child: Text('Watch next episode')),
@@ -196,8 +280,21 @@ class DeskPoster extends StatelessWidget {
     }
   }
 
+  /// Where it isn't given its own way to pick (My list has one), a poster joins the desktop-wide picks, when there's a
+  /// list to put them on.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => onToggle != null || !Tracker.signedIn
+      ? _build(context, selected, onToggle)
+      : ListenableBuilder(
+          listenable: deskPicks,
+          builder: (context, _) => _build(
+            context,
+            deskPicks.active ? deskPicks.has(media) : null,
+            () => deskPicks.toggle(media),
+          ),
+        );
+
+  Widget _build(BuildContext context, bool? selected, VoidCallback? onToggle) {
     final text = Theme.of(context).textTheme;
     final show = Show(media);
     final picking = selected != null;
@@ -211,7 +308,7 @@ class DeskPoster extends StatelessWidget {
             : 'EP $progress${total == null ? '' : ' / $total'}');
     return Hover(
       onTap: picking ? onToggle : () => _open(context),
-      onSecondary: (at) => _menu(context, at),
+      onSecondary: (at) => _menu(context, at, selected, onToggle),
       builder: (context, hovered) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -262,16 +359,13 @@ class DeskPoster extends StatelessWidget {
                           showAdd: !picking,
                         ),
                       ),
-                      if (picking)
+                      if (picking || (hovered && onToggle != null))
                         Positioned(
-                          top: 8,
-                          left: 8,
-                          child: Icon(
-                            selected!
-                                ? Icons.check_circle_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            color: selected! ? scheme.primary : Colors.white,
-                            shadows: const [Shadow(blurRadius: 6)],
+                          top: 2,
+                          left: 2,
+                          child: PickBox(
+                            picked: selected == true,
+                            onTap: onToggle!,
                           ),
                         ),
                     ],
@@ -360,15 +454,19 @@ class _HoverOverlay extends StatelessWidget {
       child: Stack(
         children: [
           Center(
-            child: IconButton.filled(
-              tooltip: 'Watch next episode',
-              iconSize: 32,
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.black,
+            // Above the button: below it, the tip lands on the facts at the foot of the poster.
+            child: Tooltip(
+              message: 'Watch next episode',
+              preferBelow: false,
+              child: IconButton.filled(
+                iconSize: 32,
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                ),
+                onPressed: onPlay,
+                icon: const Icon(Icons.play_arrow_rounded),
               ),
-              onPressed: onPlay,
-              icon: const Icon(Icons.play_arrow_rounded),
             ),
           ),
           if (showAdd && Tracker.signedIn)
@@ -460,6 +558,8 @@ class DeskRow extends StatelessWidget {
   );
 }
 
+const _rowBleed = 6.0;
+
 /// The header and arrowed list under a row's title; [itemBuilder] draws each of [count] items [itemWidth] wide.
 class _RowFrame extends StatelessWidget {
   const _RowFrame({
@@ -523,14 +623,19 @@ class _RowFrame extends StatelessWidget {
             ],
           ),
         ),
+        // A few pixels above and below the cards, so a hovered one (it grows a little, with an outline) isn't cut off by
+        // the list's edge.
         SizedBox(
-          height: height,
+          height: height + 2 * _rowBleed,
           child: ScrollArrows(
-            arrowTop: arrowTop,
+            arrowTop: arrowTop + _rowBleed,
             builder: (controller) => ListView.separated(
               controller: controller,
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: deskMargin),
+              padding: const EdgeInsets.symmetric(
+                horizontal: deskMargin,
+                vertical: _rowBleed,
+              ),
               itemCount: count,
               separatorBuilder: (_, _) => const SizedBox(width: 20),
               itemBuilder: (context, i) => SizedBox(
@@ -616,7 +721,7 @@ class _ResumeCard extends StatelessWidget {
       onSecondary: (at) async {
         final picked = await showMenu<String>(
           context: context,
-          position: RelativeRect.fromLTRB(at.dx, at.dy, at.dx, at.dy),
+          position: menuAt(context, at),
           items: const [
             PopupMenuItem(value: 'play', child: Text('Resume')),
             PopupMenuItem(value: 'open', child: Text('Open show')),
@@ -841,36 +946,16 @@ class _DeskHeroState extends State<DeskHero> {
             ),
             if (widget.items.length > 1) ...[
               Positioned(
-                left: 12,
-                top: height / 2 - 24,
-                child: AnimatedOpacity(
-                  opacity: hovered ? 1 : 0,
-                  duration: motionMs(context, 160),
-                  child: IconButton.filledTonal(
-                    tooltip: 'Previous',
-                    onPressed: () => _go(page - 1),
-                    icon: const Icon(Icons.chevron_left_rounded),
-                  ),
-                ),
-              ),
-              Positioned(
-                right: 12,
-                top: height / 2 - 24,
-                child: AnimatedOpacity(
-                  opacity: hovered ? 1 : 0,
-                  duration: motionMs(context, 160),
-                  child: IconButton.filledTonal(
-                    tooltip: 'Next',
-                    onPressed: () => _go(page + 1),
-                    icon: const Icon(Icons.chevron_right_rounded),
-                  ),
-                ),
-              ),
-              Positioned(
-                right: deskMargin,
-                bottom: 20,
+                // Beside the dots, clear of the text on the left.
+                right: deskMargin - 12,
+                bottom: 8,
                 child: Row(
                   children: [
+                    IconButton(
+                      tooltip: 'Previous',
+                      onPressed: () => _go(page - 1),
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
                     for (var i = 0; i < widget.items.length; i++)
                       GestureDetector(
                         onTap: () => _go(i),
@@ -890,6 +975,11 @@ class _DeskHeroState extends State<DeskHero> {
                           ),
                         ),
                       ),
+                    IconButton(
+                      tooltip: 'Next',
+                      onPressed: () => _go(page + 1),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
                   ],
                 ),
               ),

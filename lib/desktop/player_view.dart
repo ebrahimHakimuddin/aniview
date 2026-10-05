@@ -169,7 +169,18 @@ extension _DeskPlayer on _PlayerScreenState {
   }) => PopupMenuButton<T>(
     tooltip: tooltip,
     icon: Icon(icon),
-    onSelected: onSelected,
+    // Snaps open: the long grow-in feels slow with a mouse, and janks over a playing video.
+    popUpAnimationStyle: const AnimationStyle(
+      duration: Duration(milliseconds: 90),
+      reverseDuration: Duration(milliseconds: 60),
+    ),
+    // The controls stay up while a menu is open, rather than fading out from under it.
+    onOpened: () => _hideTimer?.cancel(),
+    onCanceled: _scheduleHide,
+    onSelected: (value) {
+      _scheduleHide();
+      onSelected(value);
+    },
     itemBuilder: (_) => [
       for (final MapEntry(:key, :value) in options.entries)
         CheckedPopupMenuItem<T>(

@@ -157,10 +157,24 @@ class _DeskMyListState extends State<DeskMyList> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _picking ? _selectionBar(shown) : _header(total, snap.hasData),
+            _header(total, snap.hasData),
             _tabs(lists),
             const SizedBox(height: 8),
-            Expanded(child: _body(snap, shown)),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(child: _body(snap, shown)),
+                  if (_picking)
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        child: _selectionBar(shown),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
         );
       },
@@ -221,69 +235,47 @@ class _DeskMyListState extends State<DeskMyList> {
     ],
   );
 
-  Widget _selectionBar(List shown) => Padding(
-    padding: const EdgeInsets.fromLTRB(deskMargin - 8, 28, deskMargin, 8),
-    child: SizedBox(
-      height: 56,
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Done',
-            onPressed: picking.busy ? null : _done,
-            icon: const Icon(Icons.close_rounded),
-          ),
-          Text(
-            '${picking.count} selected',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(width: 12),
-          TextButton(
-            onPressed: picking.busy
-                ? null
-                : () => picking.selectAll(shown.cast<Map>()),
-            child: const Text('Select all'),
-          ),
-          const Spacer(),
-          if (picking.busy)
-            const SizedBox(width: 120, child: LinearProgressIndicator())
-          else ...[
-            PopupMenuButton<String>(
-              enabled: picking.active,
-              tooltip: 'Move to',
-              onSelected: (to) => _bulk(
-                (m) => Tracker.save(m, Show(m).progress, status: to),
-                'Moved ${picking.count} to ${ListStatus.labels[to]}',
-              ),
-              itemBuilder: (_) => [
-                for (final MapEntry(:key, :value) in ListStatus.movable.entries)
-                  PopupMenuItem(value: key, child: Text(value)),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.drive_file_move_outline,
-                      color: picking.active
-                          ? scheme.onSurface
-                          : scheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('Move to'),
-                  ],
-                ),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: picking.active ? _remove : null,
-              style: TextButton.styleFrom(foregroundColor: scheme.error),
-              icon: const Icon(Icons.delete_outline_rounded),
-              label: const Text('Remove'),
-            ),
-          ],
+  /// The shared selection bar, floating over the foot of the list.
+  Widget _selectionBar(List shown) => SelectionBar(
+    count: picking.count,
+    onDone: _done,
+    busy: picking.busy,
+    onAll: () => picking.selectAll(shown.cast<Map>()),
+    actions: [
+      PopupMenuButton<String>(
+        enabled: picking.active && !picking.busy,
+        tooltip: 'Move to',
+        onSelected: (to) => _bulk(
+          (m) => Tracker.save(m, Show(m).progress, status: to),
+          'Moved ${picking.count} to ${ListStatus.labels[to]}',
+        ),
+        itemBuilder: (_) => [
+          for (final MapEntry(:key, :value) in ListStatus.movable.entries)
+            PopupMenuItem(value: key, child: Text(value)),
         ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.drive_file_move_outline,
+                color: picking.active
+                    ? scheme.onSurface
+                    : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              const Text('Move to'),
+            ],
+          ),
+        ),
       ),
-    ),
+      TextButton.icon(
+        onPressed: picking.active && !picking.busy ? _remove : null,
+        style: TextButton.styleFrom(foregroundColor: scheme.error),
+        icon: const Icon(Icons.delete_outline_rounded),
+        label: const Text('Remove'),
+      ),
+    ],
   );
 
   Widget _tabs(Map<String, List> lists) {
@@ -321,7 +313,7 @@ class _DeskMyListState extends State<DeskMyList> {
                         : hovered
                         ? scheme.onSurface.withValues(alpha: .07)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(buttonRadius),
                   ),
                   child: Text(
                     count == null ? label : '$label · $count',
@@ -362,12 +354,7 @@ class _DeskMyListState extends State<DeskMyList> {
 
   Widget _grid(List shown) => GridView.builder(
     padding: const EdgeInsets.fromLTRB(deskMargin, 12, deskMargin, 48),
-    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: deskPosterWidth + 24,
-      mainAxisExtent: deskPosterWidth * 1.5 + 72,
-      crossAxisSpacing: 20,
-      mainAxisSpacing: 12,
-    ),
+    gridDelegate: const DeskPosterGrid(),
     itemCount: shown.length,
     itemBuilder: (context, i) {
       final poster = DeskPoster(
@@ -439,22 +426,24 @@ class _Row extends StatelessWidget {
               : hovered
               ? scheme.onSurface.withValues(alpha: .06)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(nested(8, radiusMedium)),
         ),
         child: Row(
           children: [
-            if (selected != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, right: 12),
-                child: Icon(
-                  selected!
-                      ? Icons.check_circle_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                  color: selected! ? scheme.primary : scheme.onSurfaceVariant,
+            // Its room is always there, so the rows don't shift when picking starts.
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Opacity(
+                opacity: hovered || selected != null ? 1 : 0,
+                child: PickBox(
+                  picked: selected == true,
+                  onTap: onToggle,
+                  onDark: false,
                 ),
               ),
+            ),
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(radiusMedium),
               child: SizedBox(
                 width: 44,
                 height: 64,

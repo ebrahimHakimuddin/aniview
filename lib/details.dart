@@ -464,67 +464,72 @@ class _DetailsScreenState extends State<DetailsScreen> {
           (e) => EpisodePlan.isWatched(e, _progress),
         );
         void done() => picked.clear();
-        return Panel(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-            child: SelectionBar(
-              count: eps.length,
-              onDone: done,
-              onAll: season.length > eps.length
-                  ? () => picked.selectAll(season)
-                  : null,
-              actions: [
-                if (site != null && toDownload.isNotEmpty)
-                  IconButton(
-                    tooltip: 'Download ${toDownload.length}',
-                    icon: const Icon(Icons.download_rounded),
-                    onPressed: () {
-                      Downloads.instance.enqueue(
-                        media,
-                        site.name,
-                        toDownload,
-                        dub: dub,
-                        season: season,
-                      );
-                      showSuccess(
-                        context,
-                        'Downloading ${toDownload.length} ${dub ? 'dub' : 'sub'} episodes',
-                      );
+        Widget bar(Widget child) => isDesktop
+            ? child
+            : Panel(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                  child: child,
+                ),
+              );
+        return bar(
+          SelectionBar(
+            count: eps.length,
+            onDone: done,
+            onAll: season.length > eps.length
+                ? () => picked.selectAll(season)
+                : null,
+            actions: [
+              if (site != null && toDownload.isNotEmpty)
+                IconButton(
+                  tooltip: 'Download ${toDownload.length}',
+                  icon: const Icon(Icons.download_rounded),
+                  onPressed: () {
+                    Downloads.instance.enqueue(
+                      media,
+                      site.name,
+                      toDownload,
+                      dub: dub,
+                      season: season,
+                    );
+                    showSuccess(
+                      context,
+                      'Downloading ${toDownload.length} ${dub ? 'dub' : 'sub'} episodes',
+                    );
+                    done();
+                  },
+                ),
+              if (downloaded.isNotEmpty)
+                IconButton(
+                  tooltip: 'Delete ${downloaded.length} downloads',
+                  color: scheme.error,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  onPressed: () async {
+                    if (await confirmDeleteDownloads(context, downloaded) &&
+                        mounted) {
                       done();
-                    },
+                    }
+                  },
+                ),
+              if (Tracker.signedIn)
+                IconButton(
+                  tooltip: allWatched
+                      ? 'Mark unwatched'
+                      : 'Mark watched up to here',
+                  icon: Icon(
+                    allWatched
+                        ? Icons.remove_done_rounded
+                        : Icons.done_all_rounded,
                   ),
-                if (downloaded.isNotEmpty)
-                  IconButton(
-                    tooltip: 'Delete ${downloaded.length} downloads',
-                    color: scheme.error,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    onPressed: () async {
-                      if (await confirmDeleteDownloads(context, downloaded) &&
-                          mounted) {
-                        done();
-                      }
-                    },
-                  ),
-                if (Tracker.signedIn)
-                  IconButton(
-                    tooltip: allWatched
-                        ? 'Mark unwatched'
-                        : 'Mark watched up to here',
-                    icon: Icon(
-                      allWatched
-                          ? Icons.remove_done_rounded
-                          : Icons.done_all_rounded,
-                    ),
-                    onPressed: () {
-                      // Tracking is a count: unwatch from the earliest picked, or watch through the latest.
-                      _markWatched(
-                        EpisodePlan.progressAfter(eps, unwatch: allWatched),
-                      );
-                      done();
-                    },
-                  ),
-              ],
-            ),
+                  onPressed: () {
+                    // Tracking is a count: unwatch from the earliest picked, or watch through the latest.
+                    _markWatched(
+                      EpisodePlan.progressAfter(eps, unwatch: allWatched),
+                    );
+                    done();
+                  },
+                ),
+            ],
           ),
         );
       },
@@ -660,7 +665,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// The main button, as [EpisodePlan.nextUp] decides: back to the saved spot, else the next unwatched episode
   /// on the chosen site.
-  Widget _playAction() => FutureBuilder(
+  ///
+  /// With [frame], the button comes wrapped (to size it and space it on a desktop) and nothing is left in its place
+  /// when there's no button.
+  Widget _playAction({Widget Function(Widget button)? frame}) => FutureBuilder(
     future: record,
     builder: (context, saved) => FutureBuilder(
       future: episodes,
@@ -719,7 +727,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (mounted) action.onPressed();
           });
         }
-        return action;
+        final present =
+            action is PlayAction ||
+            (action is SizedBox && action.child != null);
+        return frame != null && present ? frame(action) : action;
       },
     ),
   );
@@ -855,6 +866,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
             Expanded(
               child: sitesError != null
                   ? const SizedBox.shrink()
+                  : isDesktop
+                  // One line of it all: the site, the fix for its match, and (at the end) the audio.
+                  ? Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _sourceMenu(),
+                        if (source != null) _wrongShow(),
+                      ],
+                    )
                   : Align(
                       alignment: AlignmentDirectional.centerStart,
                       child: _sourceMenu(),
@@ -866,7 +888,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         // Sites that failed to load say so across the whole width, not squeezed beside the audio.
         if (sitesError != null) ...[const SizedBox(height: 8), _sourceMenu()],
-        if (source != null) ...[const SizedBox(height: 4), _wrongShow()],
+        if (source != null && !isDesktop) ...[
+          const SizedBox(height: 4),
+          _wrongShow(),
+        ],
       ],
     ),
   );
@@ -949,6 +974,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
               length: 3,
               initialIndex: tab,
               child: TabBar(
+                // Tabs sit at the start on a desktop, rather than stretched across the whole width.
+                isScrollable: isDesktop,
+                tabAlignment: isDesktop ? TabAlignment.start : null,
                 onTap: (i) => setState(() {
                   tab = i;
                   picked.clear();

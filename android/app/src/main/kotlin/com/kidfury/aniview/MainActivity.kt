@@ -185,7 +185,8 @@ class MainActivity : FlutterActivity() {
                             startActivityForResult(intent, VOICE_REQUEST)
                             voiceResult?.success(null)
                             voiceResult = result
-                        } catch (_: ActivityNotFoundException) {
+                        } catch (_: Exception) {
+                            // Not only a missing recognizer: some TVs' ones refuse the intent outright.
                             result.error("no_voice", "Voice search isn't available on this device", null)
                         }
                     }

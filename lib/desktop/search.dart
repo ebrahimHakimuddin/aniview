@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../anilist.dart';
+import '../desktop.dart' show openMenu;
 import '../search.dart';
 import '../settings.dart';
 import '../states.dart';
@@ -140,12 +141,7 @@ class _DeskSearchState extends State<DeskSearch> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(deskMargin, 12, deskMargin, 24),
             sliver: SliverGrid.builder(
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: deskPosterWidth + 24,
-                mainAxisExtent: deskPosterWidth * 1.5 + 72,
-                crossAxisSpacing: 20,
-                mainAxisSpacing: 12,
-              ),
+              gridDelegate: const DeskPosterGrid(),
               itemCount: shown,
               itemBuilder: (context, i) {
                 final poster = DeskPoster(
@@ -424,7 +420,7 @@ class _DeskSearchState extends State<DeskSearch> {
                             Color.lerp(_tint(i), Colors.black, .35)!,
                           ],
                         ),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(radiusLarge),
                         border: Border.all(
                           color: hovered
                               ? Colors.white.withValues(alpha: .7)
@@ -461,7 +457,7 @@ class _DeskSearchState extends State<DeskSearch> {
 }
 
 /// A toolbar pill that opens its [children] as a menu under it, lit while one of its choices is in use.
-class _Dropdown extends StatelessWidget {
+class _Dropdown extends StatefulWidget {
   const _Dropdown({
     required this.label,
     required this.active,
@@ -475,8 +471,21 @@ class _Dropdown extends StatelessWidget {
   final IconData? icon;
 
   @override
+  State<_Dropdown> createState() => _DropdownState();
+}
+
+class _DropdownState extends State<_Dropdown> {
+  final _menu = MenuController();
+
+  @override
   Widget build(BuildContext context) => MenuAnchor(
-    menuChildren: children,
+    controller: _menu,
+    // Esc closes it, rather than going back a page (see [DesktopKeys]).
+    onOpen: () => openMenu = _menu,
+    onClose: () {
+      if (openMenu == _menu) openMenu = null;
+    },
+    menuChildren: widget.children,
     style: MenuStyle(
       maximumSize: const WidgetStatePropertyAll(Size(320, 420)),
       backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHigh),
@@ -488,35 +497,38 @@ class _Dropdown extends StatelessWidget {
         height: 36,
         padding: const EdgeInsets.only(left: 14, right: 8),
         decoration: BoxDecoration(
-          color: active
+          color: widget.active
               ? scheme.primary.withValues(alpha: .16)
               : hovered || controller.isOpen
               ? scheme.onSurface.withValues(alpha: .08)
               : scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(buttonRadius),
           border: Border.all(
-            color: active ? scheme.primary.withValues(alpha: .6) : hairline,
+            color: widget.active
+                ? scheme.primary.withValues(alpha: .6)
+                : hairline,
           ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (icon != null) ...[
+            if (widget.icon != null) ...[
               Icon(
-                icon,
+                widget.icon,
                 size: 18,
-                color: active ? scheme.primary : scheme.onSurfaceVariant,
+                color: widget.active ? scheme.primary : scheme.onSurfaceVariant,
               ),
               const SizedBox(width: 6),
             ],
             Text(
-              label,
-              style: Theme.of(context).textTheme.labelLarge
-                  ?.copyWith(color: active ? scheme.primary : scheme.onSurface),
+              widget.label,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: widget.active ? scheme.primary : scheme.onSurface,
+              ),
             ),
             Icon(
               Icons.arrow_drop_down_rounded,
-              color: active ? scheme.primary : scheme.onSurfaceVariant,
+              color: widget.active ? scheme.primary : scheme.onSurfaceVariant,
             ),
           ],
         ),

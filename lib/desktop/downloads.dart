@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../anilist.dart';
 import '../details.dart';
+import '../platform.dart' show AndroidApp;
 import '../downloads.dart';
 import '../downloads_view.dart';
 import '../sources.dart' show epNumber;
@@ -60,6 +61,12 @@ class _DeskDownloadsState extends State<DeskDownloads> {
                 '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
             actions: [
               TextButton.icon(
+                onPressed: () => AndroidApp.open(Downloads.instance.folder),
+                icon: const Icon(Icons.folder_open_rounded),
+                label: const Text('Show in folder'),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
                 onPressed: () => confirmDeleteDownloads(context, [...items]),
                 style: TextButton.styleFrom(foregroundColor: scheme.error),
                 icon: const Icon(Icons.delete_sweep_outlined),
@@ -89,7 +96,7 @@ class _DeskDownloadsState extends State<DeskDownloads> {
                               : hovered
                               ? scheme.onSurface.withValues(alpha: .07)
                               : Colors.transparent,
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(buttonRadius),
                         ),
                         child: Text(
                           '$name · $count',
@@ -137,7 +144,7 @@ class _ShowCard extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: scheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(nested(8)),
           boxShadow: ringShadow(),
         ),
         child: Column(
@@ -147,7 +154,7 @@ class _ShowCard extends StatelessWidget {
               child: Row(
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(radiusMedium),
                     child: SizedBox(
                       width: 44,
                       height: 64,
@@ -227,7 +234,7 @@ class _Episode extends StatelessWidget {
         child: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(radiusMedium),
               child: SizedBox(
                 width: 96,
                 height: 54,
