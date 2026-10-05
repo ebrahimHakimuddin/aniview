@@ -39,9 +39,9 @@ jobs:
         include:
           - os: ubuntu-latest
             target: apk --debug
-          - os: windows-latest
+          - os: windows-2022
             target: windows --debug
-          - os: macos-latest
+          - os: macos-15
             target: macos --debug
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -52,6 +52,9 @@ jobs:
           channel: stable
           flutter-version: 3.47.3
           cache: true
+      # Xcode 26's Swift rejects flutter_inappwebview_macos; 16.4 builds it.
+      - if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
       - run: flutter pub get
       - run: flutter build ${{ matrix.target }}
 
@@ -66,10 +69,10 @@ jobs:
           - os: ubuntu-22.04
             target: linux
             out: AniView-x86_64.AppImage
-          - os: windows-latest
+          - os: windows-2022
             target: windows
             out: build/windows/x64/runner/Release
-          - os: macos-latest
+          - os: macos-15
             target: macos
             out: build/macos/Build/Products/Release/aniview.app
     runs-on: ${{ matrix.os }}
@@ -82,7 +85,10 @@ jobs:
           flutter-version: 3.47.3
           cache: true
       - if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev mpv libfuse2 libsecret-1-dev libjsoncpp-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev mpv libfuse2 libsecret-1-dev libjsoncpp-dev libwpewebkit-1.0-dev
+      # Xcode 26's Swift rejects flutter_inappwebview_macos; 16.4 builds it.
+      - if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
       - run: flutter pub get
       - shell: bash
         run: |
