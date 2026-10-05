@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:aniview/anilist.dart';
+import 'package:flutter/widgets.dart';
 import 'package:aniview/settings.dart';
 import 'package:aniview/tracker.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,44 @@ Map<String, dynamic> _show(int id) => {
   'episodes': 12,
   'mediaListEntry': {'progress': 0, 'status': 'CURRENT'},
 };
+
+class _Account implements ListProvider {
+  _Account(this.name, this.log, {this.down = false, this.hasId = true});
+  @override
+  final String name;
+  final List<String> log;
+  bool down, hasId;
+  @override
+  bool get usable => true;
+  @override
+  bool get signedIn => true;
+  @override
+  String get pendingKey => '${name}_pending';
+  @override
+  int? idOf(Map media) => hasId ? 7 : null;
+  @override
+  Future<void> login(BuildContext context) async {}
+  @override
+  Future<void> logout() async {}
+  @override
+  Future<Map<String, dynamic>?> viewer() async => {'name': name};
+  @override
+  Future<Map<String, List>> lists({bool all = false}) async => {};
+  @override
+  Future<int> progressOf(int id) async => 0;
+  @override
+  Future<void> save(
+    int id, {
+    required String status,
+    required int progress,
+  }) async {
+    if (down) throw Exception('down');
+    log.add('$name:$progress');
+  }
+
+  @override
+  Future<void> remove(int id) async => log.add('$name:remove');
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized(); // every HTTP call fails, like being offline
@@ -131,7 +170,7 @@ void main() {
         final prefs = await SharedPreferences.getInstance();
         expect(prefs.getString('anilist_pending'), contains('"4"'));
 
-        await Tracker.signOut();
+        await Tracker.signOut(Tracker.anilist);
         expect(prefs.getString('anilist_pending'), isNull);
       },
     );
@@ -141,6 +180,41 @@ void main() {
       final show = _show(5);
       await Tracker.removeFromList(show);
       expect(show['mediaListEntry'], isNull);
+    });
+  });
+
+  group('two accounts', () {
+    tearDown(() => Tracker.accounts = const [Tracker.anilist, Tracker.mal]);
+
+    test('a save goes to the primary first, then the other', () async {
+      SharedPreferences.setMockInitialValues({});
+      final log = <String>[];
+      Tracker.accounts = [_Account('a', log), _Account('b', log)];
+      expect(await Tracker.save(_show(1), 3), isTrue);
+      expect(log, ['a:3', 'b:3']);
+    });
+
+    test('the other being down queues only its save', () async {
+      SharedPreferences.setMockInitialValues({});
+      final log = <String>[];
+      final b = _Account('b', log, down: true);
+      Tracker.accounts = [_Account('a', log), b];
+      expect(await Tracker.save(_show(2), 4), isTrue);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('a_pending') ?? '{}', '{}');
+      expect(prefs.getString('b_pending'), contains('"2"'));
+      b.down = false;
+      expect(await Tracker.syncPending(), 1);
+      expect(log, ['a:4', 'b:4']);
+    });
+
+    test('a show the other service lacks is skipped', () async {
+      SharedPreferences.setMockInitialValues({});
+      final log = <String>[];
+      Tracker.accounts = [_Account('a', log), _Account('b', log, hasId: false)];
+      final show = _show(3)..['idMal'] = 1;
+      expect(await Tracker.save(show, 2), isTrue);
+      expect(log, ['a:2']);
     });
   });
 

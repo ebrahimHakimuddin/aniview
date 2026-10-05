@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 
 import 'anilist.dart';
 import 'settings.dart';
-import 'tracker.dart';
 
 /// "New episode" notifications. An Android background job (EpisodeJob.kt) checks AniList every hour, with the app
 /// closed, for episodes that aired of the shows on your AniList watching list and the ones you watched recently.
@@ -19,7 +18,7 @@ class EpisodeNotifications {
       // The user id is cached after the first lookup; offline, the job keeps the one it has.
       final me = token == null
           ? null
-          : await Tracker.viewer().catchError((Object _) => null);
+          : await AniList.viewer().catchError((Object _) => null);
       await _channel.invokeMethod(
         'configure',
         jsonEncode({

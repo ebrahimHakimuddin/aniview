@@ -151,6 +151,8 @@ class AniList {
       final value = await signInInBrowser(
         context,
         'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
+        name: 'AniList',
+        pick: (uri) => Uri.splitQueryString(uri.fragment)['access_token'],
       );
       if (value != null && value.isNotEmpty) await useToken(value);
       return;
@@ -158,7 +160,12 @@ class AniList {
     final value = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => const _LoginPage(),
+        builder: (_) => LoginPage(
+          title: 'Sign in with AniList',
+          url:
+              'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
+          pick: (uri) => Uri.splitQueryString(uri.fragment)['access_token'],
+        ),
       ),
     );
     if (value != null && value.isNotEmpty) await useToken(value);
@@ -556,14 +563,23 @@ class AniList {
   }
 }
 
-class _LoginPage extends StatefulWidget {
-  const _LoginPage();
+/// A tracker's authorize page in-app; closes with whatever [pick] reads from the `aniview://` redirect.
+class LoginPage extends StatefulWidget {
+  const LoginPage({
+    super.key,
+    required this.title,
+    required this.url,
+    required this.pick,
+  });
+
+  final String title, url;
+  final String? Function(Uri redirect) pick;
 
   @override
-  State<_LoginPage> createState() => _LoginPageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<_LoginPage> {
+class _LoginPageState extends State<LoginPage> {
   bool _done = false;
 
   NavigationActionPolicy _intercept(WebUri? url) {
@@ -572,23 +588,16 @@ class _LoginPageState extends State<_LoginPage> {
     }
     if (!_done) {
       _done = true;
-      Navigator.pop(
-        context,
-        Uri.splitQueryString(url.fragment)['access_token'],
-      );
+      Navigator.pop(context, widget.pick(Uri.parse('$url')));
     }
     return NavigationActionPolicy.CANCEL;
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Sign in with AniList')),
+    appBar: AppBar(title: Text(widget.title)),
     body: InAppWebView(
-      initialUrlRequest: URLRequest(
-        url: WebUri(
-          'https://anilist.co/api/v2/oauth/authorize?client_id=${AniList.clientId}&response_type=token',
-        ),
-      ),
+      initialUrlRequest: URLRequest(url: WebUri(widget.url)),
       initialSettings: InAppWebViewSettings(useShouldOverrideUrlLoading: true),
       shouldOverrideUrlLoading: (_, action) async =>
           _intercept(action.request.url),

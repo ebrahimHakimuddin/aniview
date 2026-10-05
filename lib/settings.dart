@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'main.dart' show appGeneration, themeGeneration;
 
+import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
@@ -303,6 +304,12 @@ class Settings {
   static set releaseSeenAt(int v) => _prefs.setInt('release_seen_at', v);
 
   /// Android document tree picked for new offline episodes, used only while saving to the gallery is on. Empty uses app storage.
+  /// Desktop: the folder the downloads are kept in (an "AniView" folder is made inside it); empty is the app's own.
+  static String get desktopDownloadFolder =>
+      _prefs.getString('desktop_download_folder') ?? '';
+  static set desktopDownloadFolder(String v) =>
+      _prefs.setString('desktop_download_folder', v);
+
   static String get downloadFolder => _prefs.getString('download_folder') ?? '';
   static set downloadFolder(String v) => _prefs.setString('download_folder', v);
 
@@ -608,9 +615,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _pickTheme() async {
     // Your colors only where Android has a wallpaper palette to give.
+    // Following the system, only the twins for its current mode are offered; picking one still covers both.
+    final mode = WidgetsBinding.instance.platformDispatcher.platformBrightness;
     final themes = [
       for (final choice in ThemeSelection.values)
-        if (!choice.dynamic || systemAccent != null) choice,
+        if ((!choice.dynamic || systemAccent != null) &&
+            (!Settings.followSystemTheme ||
+                choice == ThemeSelection.custom ||
+                choice.brightness == mode))
+          choice,
     ];
     final picked = await showSheet<ThemeSelection>(
       context,
@@ -626,7 +639,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 itemBuilder: (context, index) {
                   final choice = themes[index];
                   final colors = themeScheme(choice);
-                  final selected = choice == Settings.themeSelection;
+                  final selected = choice == Settings.activeTheme;
                   return ScrollIntoViewOnFocus(
                     child: ListTile(
                       autofocus: selected,
@@ -682,6 +695,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     themeGeneration.value++;
   }
 
+  /// Desktop: keep the downloads in [folder] (the app's own when null), and say why when that can't be done.
+  Future<void> _moveDownloads(String? folder) async {
+    try {
+      await Downloads.instance.moveTo(folder);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<bool> _confirm(String title, String message, String action) =>
       confirmDestructive(
         context,
@@ -690,9 +713,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         action: action,
       );
 
-  Future<void> _signIn() async {
+  Future<void> _signIn(ListProvider provider) async {
     try {
-      final name = await Tracker.signIn(context);
+      final name = await Tracker.signIn(context, provider);
       if (mounted && name != null) showSuccess(context, 'Signed in as $name');
     } catch (e) {
       if (mounted) showError(context, e);
@@ -700,11 +723,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _signOut() async {
-    await Tracker.signOut();
+  Future<void> _signOut(ListProvider provider) async {
+    await Tracker.signOut(provider);
     if (!mounted) return;
     setState(() {});
-    showSuccess(context, 'Signed out of AniList');
+    showSuccess(context, 'Signed out of ${provider.name}');
   }
 
   int _page = 0;
@@ -770,13 +793,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = Tracker.signedIn;
     final sections = <Widget>[
-      _Account(signedIn: signedIn, onSignIn: _signIn, onSignOut: _signOut),
+      Column(
+        children: [
+          for (final p in [Tracker.anilist, Tracker.mal])
+            if (p.usable)
+              _Account(
+                provider: p,
+                primary: Tracker.providers.firstOrNull == p,
+                onSignIn: () => _signIn(p),
+                onSignOut: () => _signOut(p),
+              ),
+        ],
+      ),
       _Group('Appearance', [
         ListTile(
           title: const Text('Theme'),
-          subtitle: Text(Settings.themeSelection.label),
+          subtitle: Text(Settings.activeTheme.label),
           onTap: _pickTheme,
         ),
         SwitchListTile(
@@ -806,7 +839,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _Group('Tracking', [
         SwitchListTile(
           title: const Text('Update progress automatically'),
-          subtitle: const Text('Marks the episode watched on AniList'),
+          subtitle: const Text('Marks the episode watched on your tracker'),
           value: Settings.syncAniList,
           onChanged: (v) => setState(() => Settings.syncAniList = v),
         ),
@@ -837,27 +870,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => Settings.randomFrom = v,
           ),
         ),
-        ListTile(
-          title: const Text('Layout'),
-          subtitle: Text(
-            const {
-              'auto': 'Automatic · TV layout on TVs',
-              'phone': 'Phone',
-              'tv': 'TV · for a remote or keyboard, in landscape',
-            }[Settings.layout]!,
+        if (!isDesktop)
+          ListTile(
+            title: const Text('Layout'),
+            subtitle: Text(
+              const {
+                'auto': 'Automatic · TV layout on TVs',
+                'phone': 'Phone',
+                'tv': 'TV · for a remote or keyboard, in landscape',
+              }[Settings.layout]!,
+            ),
+            onTap: () async {
+              final picked = await pickOne(context, 'Layout', const {
+                'auto': 'Automatic',
+                'phone': 'Phone',
+                'tv': 'TV',
+              }, Settings.layout);
+              if (picked == null || picked == Settings.layout) return;
+              Settings.layout = picked;
+              applyLayout(picked);
+              appGeneration.value++; // rebuilt in the new layout
+            },
           ),
-          onTap: () async {
-            final picked = await pickOne(context, 'Layout', const {
-              'auto': 'Automatic',
-              'phone': 'Phone',
-              'tv': 'TV',
-            }, Settings.layout);
-            if (picked == null || picked == Settings.layout) return;
-            Settings.layout = picked;
-            applyLayout(picked);
-            appGeneration.value++; // rebuilt in the new layout
-          },
-        ),
         ListTile(
           title: const Text('Sections'),
           subtitle: const Text('Choose and reorder the rows on home'),
@@ -1018,7 +1052,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: Settings.externalPlayer,
             onChanged: (v) => setState(() => Settings.externalPlayer = v),
           ),
-        if (!isTv)
+        if (!isTv && !isDesktop)
           SwitchListTile(
             title: const Text('Swipe gestures'),
             subtitle: const Text(
@@ -1027,7 +1061,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: Settings.swipeGestures,
             onChanged: (v) => setState(() => Settings.swipeGestures = v),
           ),
-        if (!isTv)
+        if (!isTv && !isDesktop)
           _Choice(
             title: 'Hold the video to',
             value: _holdGestures[Settings.holdGesture] ?? 'Play at 2×',
@@ -1039,10 +1073,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         _Choice(
-          title: isTv ? 'Left / right seeks' : 'Double-tap to seek',
+          title: isTv || isDesktop
+              ? 'Left / right seeks'
+              : 'Double-tap to seek',
           value: '${Settings.seekSeconds}s',
           onTap: () => _choose(
-            isTv ? 'Left / right seeks' : 'Double-tap to seek',
+            isTv || isDesktop ? 'Left / right seeks' : 'Double-tap to seek',
             {
               for (final s in const [5, 10, 15, 30]) s: '$s seconds',
             },
@@ -1125,11 +1161,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => Settings.downloadQuality = v,
           ),
         ),
+        if (isDesktop)
+          ListenableBuilder(
+            listenable: Downloads.instance,
+            builder: (context, _) => ListTile(
+              leading: const Icon(Icons.folder_open_rounded),
+              title: const Text('Download folder'),
+              subtitle: Text(Downloads.instance.folder),
+              trailing: Settings.desktopDownloadFolder.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Back to the app’s own folder',
+                      icon: const Icon(Icons.restore_rounded),
+                      onPressed: () => _moveDownloads(null),
+                    ),
+              onTap: () async {
+                final folder = await getDirectoryPath(
+                  confirmButtonText: 'Keep downloads here',
+                );
+                if (folder != null) await _moveDownloads(folder);
+              },
+            ),
+          ),
         if (Platform.isAndroid)
           SwitchListTile(
             title: const Text('Save downloads to gallery'),
             subtitle: const Text(
-              'Also copies each finished episode to Movies/AniView',
+              'Also copies each finished episode to the selected folder',
             ),
             value: Settings.saveToGallery,
             onChanged: (v) => setState(() => Settings.saveToGallery = v),
@@ -1241,7 +1299,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             trailing: isBetaBuild
                 ? null
-                : const Icon(Icons.system_update_rounded, size: 18),
+                : Icon(
+                    isDesktop
+                        ? Icons.refresh_rounded
+                        : Icons.system_update_rounded,
+                    size: 18,
+                  ),
             onTap: isBetaBuild ? null : () => checkForUpdate(context),
           ),
         ),
@@ -1383,13 +1446,19 @@ class _Choice extends StatelessWidget {
 /// The AniList account at the top of Settings.
 class _Account extends StatelessWidget {
   const _Account({
-    required this.signedIn,
+    required this.provider,
+    required this.primary,
     required this.onSignIn,
     required this.onSignOut,
   });
 
-  final bool signedIn;
+  final ListProvider provider;
+
+  /// The first account signed in to: saves go to it first.
+  final bool primary;
   final VoidCallback onSignIn, onSignOut;
+
+  bool get signedIn => provider.signedIn;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -1398,7 +1467,7 @@ class _Account extends StatelessWidget {
       margin: EdgeInsets.zero,
       color: scheme.surfaceContainerHigh,
       child: FutureBuilder(
-        future: Tracker.viewer(),
+        future: provider.viewer().catchError((Object _) => null),
         builder: (context, snap) {
           final avatar = snap.data?['avatar']?['large'] as String?;
           return ListTile(
@@ -1415,13 +1484,15 @@ class _Account extends StatelessWidget {
                   : null,
             ),
             title: Text(
-              signedIn ? (snap.data?['name'] ?? 'AniList') : 'Not signed in',
+              signedIn ? (snap.data?['name'] ?? provider.name) : provider.name,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             subtitle: Text(
               signedIn
-                  ? 'Your progress syncs to AniList'
-                  : 'Sign in with AniList to track what you watch',
+                  ? primary
+                        ? 'Primary · your list comes from here and progress syncs here first'
+                        : 'Progress also syncs here'
+                  : 'Sign in to track what you watch',
             ),
             trailing: signedIn
                 ? OutlinedButton(

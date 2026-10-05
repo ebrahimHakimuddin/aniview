@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 
-import 'anilist.dart';
 import 'desktop.dart';
 import 'downloads.dart';
 import 'pairing.dart';
 import 'platform.dart';
 import 'home.dart';
 import 'settings.dart';
+import 'tracker.dart';
 import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
@@ -19,9 +19,10 @@ Future<void> main() async {
   // Build the top sites on app load; screens await it later.
   Sites.all().ignore();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // Downloads read where to keep their files from the settings.
+  await Settings.load();
   await Future.wait([
-    AniList.load(),
-    Settings.load(),
+    Tracker.load(),
     Downloads.instance.load(),
     loadSystemAccent(),
     AndroidApp.buttonNavigation().then((v) => buttonNavigation = v),
@@ -123,6 +124,10 @@ class _SolidNavigationBarState extends State<_SolidNavigationBar> {
 
   void _apply() => SystemChrome.setSystemUIOverlayStyle(
     SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: scheme.brightness == Brightness.light
+          ? Brightness.dark
+          : Brightness.light,
       systemNavigationBarColor: scheme.surface,
       systemNavigationBarDividerColor: Colors.transparent,
       systemNavigationBarContrastEnforced: false,

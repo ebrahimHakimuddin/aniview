@@ -8,16 +8,21 @@ import '../platform.dart';
 import '../ui.dart';
 import 'launcher.dart';
 
-/// Signs in with the system browser: opens [url], and waits for AniList to send the browser on to
-/// `aniview://auth#access_token=…`, which the OS hands back to this app. Returns the token, or null when it was
-/// cancelled or nothing came back in five minutes.
-Future<String?> signInInBrowser(BuildContext context, String url) async {
+/// Signs in with the system browser: opens [url], and waits for the tracker (called [name]) to send the browser on to
+/// an `aniview://` link, which the OS hands back to this app. Returns what [pick] reads from it (a token or code),
+/// or null when it was cancelled or nothing came back in five minutes.
+Future<String?> signInInBrowser(
+  BuildContext context,
+  String url, {
+  required String name,
+  required String? Function(Uri redirect) pick,
+}) async {
   await _registerScheme();
   final token = Completer<String?>();
   var dialogOpen = true;
   final sub = AppLinks().uriLinkStream.listen((uri) {
     if (uri.scheme != 'aniview' || token.isCompleted) return;
-    token.complete(Uri.splitQueryString(uri.fragment)['access_token']);
+    token.complete(pick(uri));
   });
   try {
     await AndroidApp.open(url);
@@ -28,6 +33,7 @@ Future<String?> signInInBrowser(BuildContext context, String url) async {
         context: context,
         barrierDismissible: false,
         builder: (dialog) => _Waiting(
+          name: name,
           onAgain: () => AndroidApp.open(url),
           onCancel: () {
             if (!token.isCompleted) token.complete(null);
@@ -84,13 +90,18 @@ Future<void> _registerScheme() async {
 }
 
 class _Waiting extends StatelessWidget {
-  const _Waiting({required this.onAgain, required this.onCancel});
+  const _Waiting({
+    required this.name,
+    required this.onAgain,
+    required this.onCancel,
+  });
 
+  final String name;
   final VoidCallback onAgain, onCancel;
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Sign in with AniList'),
+    title: Text('Sign in with $name'),
     content: Row(
       children: [
         const SizedBox.square(

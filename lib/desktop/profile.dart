@@ -80,9 +80,13 @@ class DeskProfile extends StatelessWidget {
                             ),
                             OutlinedButton.icon(
                               onPressed: () async {
-                                await Tracker.signOut();
+                                final account = Tracker.providers.first;
+                                await Tracker.signOut(account);
                                 if (!context.mounted) return;
-                                showSuccess(context, 'Signed out of AniList');
+                                showSuccess(
+                                  context,
+                                  'Signed out of ${account.name}',
+                                );
                                 onSignedOut();
                               },
                               icon: const Icon(Icons.logout_rounded),
@@ -93,7 +97,7 @@ class DeskProfile extends StatelessWidget {
                       );
                     },
                   ),
-                  if (Tracker.signedIn)
+                  if (Tracker.anilistSignedIn)
                     StatsView(feed.stats, onRetry: onRefresh)
                   else
                     const EmptyState(

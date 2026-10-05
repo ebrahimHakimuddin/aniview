@@ -18,6 +18,9 @@ String friendlyError(Object error) => switch (error) {
   HandshakeException() ||
   http.ClientException() => 'No connection. Check your internet and try again',
   TimeoutException() => 'The site took too long to respond',
+  HttpException(:final message, :final uri)
+      when message.contains('ERR_NAME_NOT_RESOLVED') =>
+    'Can\'t find ${uri?.host ?? 'the site'}. Check this device\'s internet or DNS and try again',
   HttpException(:final message) => 'The site returned an error ($message)',
   // Its toString() carries the native stack trace; the message is what says what went wrong.
   PlatformException(:final message) => message ?? 'Something went wrong',

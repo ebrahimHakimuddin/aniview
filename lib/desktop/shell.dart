@@ -9,6 +9,7 @@ import '../settings.dart' show SettingsScreen;
 import 'downloads.dart';
 import 'home.dart';
 import 'motion.dart';
+import 'picks.dart';
 import 'my_list.dart';
 import 'profile.dart';
 import 'search.dart';
@@ -141,6 +142,7 @@ class _DeskShellState extends State<DeskShell> {
   }
 
   void _select(DeskSection to) {
+    deskPicks.clear();
     if (to != DeskSection.search) _fieldFocus.unfocus();
     if (to == section) {
       // The place you're in, again: back to its first page.
@@ -207,6 +209,11 @@ class _DeskShellState extends State<DeskShell> {
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 1000;
     return Scaffold(
+      // Over the page's foot while shows are picked (Home's rows, Search).
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: DeskPickBar(
+        onChanged: () => widget.onReload(force: true),
+      ),
       body: Row(
         children: [
           _Sidebar(
@@ -438,7 +445,7 @@ class _NavItem extends StatelessWidget {
                   : hovered
                   ? scheme.onSurface.withValues(alpha: .07)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(buttonRadius),
             ),
             child: Row(
               mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
@@ -513,7 +520,7 @@ class _Account extends StatelessWidget {
               color: hovered
                   ? scheme.onSurface.withValues(alpha: .07)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(buttonRadius),
             ),
             child: compact
                 ? face
@@ -533,7 +540,9 @@ class _Account extends StatelessWidget {
                               style: text.labelLarge,
                             ),
                             Text(
-                              Tracker.signedIn ? 'AniList' : 'Sign in',
+                              Tracker.signedIn
+                                  ? Tracker.providers.first.name
+                                  : 'Sign in',
                               style: text.bodySmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),

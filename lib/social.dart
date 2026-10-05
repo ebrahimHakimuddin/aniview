@@ -236,7 +236,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = Tracker.signedIn;
+    final signedIn = Tracker.anilistSignedIn;
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -302,7 +302,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final replies = (c['childComments'] as List?)?.cast<Map>() ?? const [];
     final indent = depth > 0 && depth <= 4;
     final liked = c['isLiked'] == true;
-    final signedIn = Tracker.signedIn;
+    final signedIn = Tracker.anilistSignedIn;
     return Container(
       margin: EdgeInsets.only(left: indent ? 8 : 0),
       padding: EdgeInsets.only(left: indent ? 12 : 0, top: 12),
@@ -598,7 +598,7 @@ class _FriendsListState extends State<FriendsList> {
 
   @override
   Widget build(BuildContext context) {
-    if (!Tracker.signedIn) {
+    if (!Tracker.anilistSignedIn) {
       return const SliverToBoxAdapter(
         child: EmptyState(
           icon: Icons.people_outline_rounded,

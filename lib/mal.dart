@@ -1,10 +1,15 @@
 import 'dart:convert';
+import 'dart:math';
 
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
+import 'desktop/sign_in.dart';
+import 'platform.dart';
 
-/// MyAnimeList's public API v2, a read-only stand-in for AniList's browse calls when AniList is down.
+/// MyAnimeList's API v2: public browsing, a stand-in for AniList's when it is down, and (signed in) your list.
 /// Answers with AniList-shaped media maps so the rest of the app can't tell them apart.
 class MAL {
   static const clientId = String.fromEnvironment('MAL_CLIENT_ID');
@@ -13,6 +18,209 @@ class MAL {
       'status,start_season,num_episodes';
 
   static bool get usable => clientId.isNotEmpty;
+
+  static const _redirect = 'aniview://mal';
+  static String? _access, _refresh;
+  static DateTime? _expires;
+  static Map<String, dynamic>? _viewer;
+
+  static bool get signedIn => _access != null;
+
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    _access = prefs.getString('mal_access');
+    _refresh = prefs.getString('mal_refresh');
+    _expires = DateTime.tryParse(prefs.getString('mal_expires') ?? '');
+  }
+
+  /// Authorization code with PKCE (MAL has no implicit grant): the browser comes back to `aniview://mal?code=…`.
+  static Future<void> login(BuildContext context) async {
+    final random = Random.secure();
+    String token(int n) => base64Url
+        .encode([for (var i = 0; i < n; i++) random.nextInt(256)])
+        .replaceAll('=', '');
+    // MAL only supports the "plain" method, where the challenge is the verifier itself.
+    final verifier = token(48), state = token(12);
+    final url =
+        'https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=$clientId'
+        '&code_challenge=$verifier&code_challenge_method=plain&state=$state'
+        '&redirect_uri=${Uri.encodeComponent(_redirect)}';
+    String? pick(Uri uri) => uri.queryParameters['state'] == state
+        ? uri.queryParameters['code']
+        : null;
+    final code = isDesktop
+        ? await signInInBrowser(context, url, name: 'MyAnimeList', pick: pick)
+        : await Navigator.of(context).push<String>(
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => LoginPage(
+                title: 'Sign in with MyAnimeList',
+                url: url,
+                pick: pick,
+              ),
+            ),
+          );
+    if (code == null || code.isEmpty) return;
+    await _grant({
+      'grant_type': 'authorization_code',
+      'code': code,
+      'code_verifier': verifier,
+      'redirect_uri': _redirect,
+    });
+  }
+
+  static Future<void> _grant(Map<String, String> form) async {
+    final res = await http.post(
+      Uri.https('myanimelist.net', '/v1/oauth2/token'),
+      body: {'client_id': clientId, ...form},
+    );
+    if (res.statusCode != 200) {
+      // A refresh token MAL no longer honours means signing in again.
+      if (form['grant_type'] == 'refresh_token') await logout();
+      throw Exception('MyAnimeList: sign-in failed (HTTP ${res.statusCode})');
+    }
+    final json = jsonDecode(res.body);
+    _access = json['access_token'];
+    _refresh = json['refresh_token'];
+    _expires = DateTime.now().add(Duration(seconds: json['expires_in'] as int));
+    _viewer = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('mal_access', _access!);
+    await prefs.setString('mal_refresh', _refresh!);
+    await prefs.setString('mal_expires', _expires!.toIso8601String());
+  }
+
+  static Future<void> logout() async {
+    _access = _refresh = _expires = _viewer = null;
+    final prefs = await SharedPreferences.getInstance();
+    for (final key in ['mal_access', 'mal_refresh', 'mal_expires']) {
+      await prefs.remove(key);
+    }
+  }
+
+  /// The access token, renewed first when it has under a day left (they last a month).
+  static Future<String> _bearer() async {
+    if (_access == null) throw Exception('Not signed in to MyAnimeList');
+    if (_refresh != null &&
+        (_expires?.isBefore(DateTime.now().add(const Duration(days: 1))) ??
+            false)) {
+      await _grant({'grant_type': 'refresh_token', 'refresh_token': _refresh!});
+    }
+    return _access!;
+  }
+
+  static Future<Map<String, dynamic>> _mine(
+    String method,
+    String path, {
+    Map<String, String> query = const {},
+    Map<String, String>? form,
+  }) async {
+    final request = http.Request(
+      method,
+      Uri.https('api.myanimelist.net', '/v2/$path', query),
+    )..headers['Authorization'] = 'Bearer ${await _bearer()}';
+    if (form != null) request.bodyFields = form;
+    final res = await http.Response.fromStream(await request.send());
+    if (res.statusCode == 401) await logout();
+    // Deleting what isn't on the list is already done.
+    if (res.statusCode == 404 && method == 'DELETE') return {};
+    if (res.statusCode == 429) {
+      throw Exception(
+        'MyAnimeList is getting too many requests. Try again shortly',
+      );
+    }
+    if (res.statusCode ~/ 100 != 2) {
+      throw Exception('MyAnimeList: HTTP ${res.statusCode}');
+    }
+    return res.body.isEmpty ? {} : jsonDecode(res.body);
+  }
+
+  /// {name, avatar:{large}} in AniList's shape.
+  static Future<Map<String, dynamic>?> viewer() async {
+    if (!signedIn) return null;
+    return _viewer ??= await _mine('GET', 'users/@me').then(
+      (me) => {
+        'name': me['name'],
+        'avatar': {'large': me['picture']},
+      },
+    );
+  }
+
+  // AniList's list statuses and MAL's; rewatching is a flag on a watching entry there.
+  static const _toMal = {
+    'CURRENT': 'watching',
+    'REPEATING': 'watching',
+    'PLANNING': 'plan_to_watch',
+    'COMPLETED': 'completed',
+    'PAUSED': 'on_hold',
+    'DROPPED': 'dropped',
+  };
+
+  static Future<int> progressOf(int malId) async =>
+      (await _mine(
+        'GET',
+        'anime/$malId',
+        query: {'fields': 'my_list_status'},
+      ))['my_list_status']?['num_episodes_watched'] ??
+      0;
+
+  static Future<void> saveEntry(
+    int malId, {
+    required String status,
+    required int progress,
+  }) => _mine(
+    'PATCH',
+    'anime/$malId/my_list_status',
+    form: {
+      'status': _toMal[status] ?? 'watching',
+      'num_watched_episodes': '$progress',
+      'is_rewatching': '${status == 'REPEATING'}',
+    },
+  );
+
+  static Future<void> removeFromList(int malId) =>
+      _mine('DELETE', 'anime/$malId/my_list_status');
+
+  /// Your list in the shape of [AniList.lists]; each show carries its `mediaListEntry`.
+  static Future<Map<String, List>> lists({bool all = false}) async {
+    final out = <String, List>{
+      'CURRENT': [],
+      'PLANNING': [],
+      if (all) ...{'COMPLETED': [], 'PAUSED': [], 'DROPPED': []},
+    };
+    const back = {
+      'watching': 'CURRENT',
+      'plan_to_watch': 'PLANNING',
+      'completed': 'COMPLETED',
+      'on_hold': 'PAUSED',
+      'dropped': 'DROPPED',
+    };
+    for (var offset = 0; ; offset += 1000) {
+      final json = await _mine(
+        'GET',
+        'users/@me/animelist',
+        query: {
+          'fields': '$_fields,list_status',
+          'sort': 'list_updated_at',
+          'nsfw': 'true',
+          'limit': '1000',
+          'offset': '$offset',
+        },
+      );
+      for (final e in json['data'] as List? ?? const []) {
+        final entry = e['list_status'] as Map;
+        final key = back[entry['status']];
+        final repeating = entry['is_rewatching'] == true;
+        final m = media(e['node'])
+          ..['mediaListEntry'] = {
+            'status': repeating ? 'REPEATING' : key,
+            'progress': entry['num_episodes_watched'] ?? 0,
+          };
+        out[key]?.add(m);
+      }
+      if (json['paging']?['next'] == null) return out;
+    }
+  }
 
   static Future<Map<String, dynamic>> _get(
     String path,
