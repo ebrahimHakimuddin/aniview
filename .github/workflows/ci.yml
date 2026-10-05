@@ -72,7 +72,7 @@ jobs:
             out: build/windows/x64/runner/Release
           - os: macos-15
             target: macos
-            out: build/macos/Build/Products/Release/aniview.app
+            out: aniview-macos.zip
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -92,6 +92,9 @@ jobs:
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env
         env:
           DART_DEFINES: ${{ secrets.DART_DEFINES }}
+      # A plain artifact upload drops the app's permissions and symlinks; ditto keeps them.
+      - if: matrix.target == 'macos'
+        run: ditto -c -k --keepParent build/macos/Build/Products/Release/aniview.app aniview-macos.zip
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aniview-${{ matrix.target }}
