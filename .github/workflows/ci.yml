@@ -69,10 +69,10 @@ jobs:
         include:
           - os: windows-2022
             target: windows
-            out: build/windows/x64/runner/Release
+            out: build/AniView-windows-x64-setup.exe
           - os: macos-15
             target: macos
-            out: aniview-macos.zip
+            out: AniView-macos.dmg
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -92,9 +92,19 @@ jobs:
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env
         env:
           DART_DEFINES: ${{ secrets.DART_DEFINES }}
-      # A plain artifact upload drops the app's permissions and symlinks; ditto keeps them.
+      - if: matrix.target == 'windows'
+        shell: bash
+        run: |
+          choco install innosetup -y --no-progress
+          version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" tool/aniview.iss
+      # ditto keeps the app's permissions and symlinks, which a plain copy or artifact upload would drop.
       - if: matrix.target == 'macos'
-        run: ditto -c -k --keepParent build/macos/Build/Products/Release/aniview.app aniview-macos.zip
+        run: |
+          mkdir dmg
+          ditto build/macos/Build/Products/Release/aniview.app dmg/AniView.app
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname AniView -srcfolder dmg -ov -format UDZO AniView-macos.dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aniview-${{ matrix.target }}
