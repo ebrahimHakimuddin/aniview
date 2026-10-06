@@ -137,9 +137,14 @@ class ExoPlayer {
     await _channel.invokeMethod(method, {'id': _id, ...args});
   }
 
+  // One mpv for the app's whole run, stopped between videos: a new instance after another has shut down can abort
+  // inside libmpv (m_config_core.c "group_index >= 0") as it opens its first file.
+  static mk.Player? _sharedMpv;
+  static VideoController? _sharedVideo;
+
   void _startMpv() {
-    final mpv = _mpv = mk.Player();
-    video = VideoController(mpv);
+    final mpv = _mpv = _sharedMpv ??= mk.Player();
+    video = _sharedVideo ??= VideoController(mpv);
     final s = mpv.stream;
     // Each [_on] key is read on its own, so the position event carries what it needs.
     void position(Duration _) => _on({
@@ -204,6 +209,8 @@ class ExoPlayer {
             );
         if (loaded == Duration.zero) return;
         for (final Map s in subtitles) {
+          // Closed meanwhile: the shared player has moved on to another video.
+          if (_disposed) return;
           await (mpv.platform as mk.NativePlayer).command([
             'sub-add',
             s['url'] as String,
@@ -301,7 +308,8 @@ class ExoPlayer {
       for (final sub in _mpvEvents) {
         sub.cancel();
       }
-      await mpv.dispose();
+      await mpv.stop();
+      await mpv.setVolume(100);
     } else {
       await _call('dispose');
       _disposed = true;
