@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0-beta.1';
+const changelogVersion = '2.5.0-beta.2';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
@@ -21,6 +21,16 @@ const changelogHighlights = <ChangelogEntry>[
     icon: Icons.desktop_windows_rounded,
     title: 'AniView on your computer',
     body: 'A new desktop app for Linux (AppImage), Windows and macOS, with its own layout, keyboard controls and player.',
+  ),
+  (
+    icon: Icons.travel_explore_rounded,
+    title: 'Two new sites',
+    body: 'ani.pm and AnimeStream, both with sub and dub. AnimeStream episodes can’t be downloaded yet.',
+  ),
+  (
+    icon: Icons.build_rounded,
+    title: 'Fixes from the first beta',
+    body: 'The Android app opens again, the Linux app plays video, and streams start sooner on desktop.',
   ),
 ];
 
