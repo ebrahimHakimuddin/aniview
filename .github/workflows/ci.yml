@@ -97,7 +97,8 @@ jobs:
         run: |
           choco install innosetup -y --no-progress
           version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" tool/aniview.iss
+          # Git Bash would turn /DAppVersion into a path.
+          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" tool/aniview.iss
       # ditto keeps the app's permissions and symlinks, which a plain copy or artifact upload would drop.
       - if: matrix.target == 'macos'
         run: |
