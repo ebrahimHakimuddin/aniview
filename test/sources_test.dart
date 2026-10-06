@@ -111,6 +111,29 @@ void main() {
     );
   });
 
+  test('numbers a season counted on from the last one from 1', () {
+    List<num> numbers(List<num> listed, Map media) => [
+      for (final e in seasonNumbered([
+        for (final n in listed) Episode(n, ref: n),
+      ], media))
+        e.number,
+    ];
+    expect(numbers([26, 27, 28], {'episodes': 12}), [1, 2, 3]);
+    // Still airing, its count unknown: what's aired so far is the bound.
+    expect(
+      numbers(
+        [26],
+        {
+          'nextAiringEpisode': {'episode': 2},
+        },
+      ),
+      [1],
+    );
+    // Only missing its first episodes, or nothing to go by: left alone.
+    expect(numbers([5, 6], {'episodes': 12}), [5, 6]);
+    expect(numbers([26, 27], {}), [26, 27]);
+  });
+
   test('cuts a master playlist to its best variant and default audio', () {
     const master =
         '#EXTM3U\n'

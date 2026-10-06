@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -184,9 +185,32 @@ Future<List<Episode>> loadEpisodes(Source source, Map media) async {
   final id =
       prefs.getString(_matchKey(source, media)) ?? await source.match(media);
   if (id == null) return [];
-  final episodes = await source.episodesOf(id);
+  final episodes = seasonNumbered(await source.episodesOf(id), media);
   final art = await info;
   return [for (final e in episodes) e.withInfo(art[epNumber(e.number)])];
+}
+
+/// [episodes] numbered from 1 when the site keeps counting across seasons (a season 2 of 12 listed as 26–37), so
+/// progress, skip times and artwork go by the season's own numbers. A list that only lacks its first few episodes
+/// stays as it is.
+List<Episode> seasonNumbered(List<Episode> episodes, Map media) {
+  final total =
+      media['episodes'] as int? ??
+      media['nextAiringEpisode']?['episode'] as int?;
+  if (episodes.isEmpty || total == null) return episodes;
+  final first = episodes.map((e) => e.number).reduce(min);
+  final last = episodes.map((e) => e.number).reduce(max);
+  if (first <= 1 || last <= total) return episodes;
+  return [
+    for (final e in episodes)
+      Episode(
+        e.number - (first.ceil() - 1),
+        title: e.title,
+        thumbnail: e.thumbnail,
+        overview: e.overview,
+        ref: e.ref,
+      ),
+  ];
 }
 
 Future<void> setMatch(Source source, Map media, String id) async =>
