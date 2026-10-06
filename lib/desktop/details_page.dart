@@ -685,62 +685,65 @@ extension _DeskDetails on _DetailsScreenState {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(nested(8, radiusLarge)),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 208,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(radiusLarge),
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        tile._still(context),
-                        AnimatedOpacity(
-                          opacity: hovered && !picking ? 1 : 0,
-                          duration: motionMs(context, 120),
-                          child: const ColoredBox(
-                            color: Color(0x66000000),
-                            child: Center(
-                              child: CircleAvatar(
-                                radius: 22,
-                                backgroundColor: Colors.white,
-                                child: Icon(
-                                  Icons.play_arrow_rounded,
-                                  color: Colors.black,
-                                  size: 30,
+          child: LayoutBuilder(
+            builder: (context, box) => Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  // Narrower in a narrow window, so the title keeps room beside the buttons.
+                  width: (box.maxWidth * .35).clamp(120, 208),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(radiusLarge),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          tile._still(context),
+                          AnimatedOpacity(
+                            opacity: hovered && !picking ? 1 : 0,
+                            duration: motionMs(context, 120),
+                            child: const ColoredBox(
+                              color: Color(0x66000000),
+                              child: Center(
+                                child: CircleAvatar(
+                                  radius: 22,
+                                  backgroundColor: Colors.white,
+                                  child: Icon(
+                                    Icons.play_arrow_rounded,
+                                    color: Colors.black,
+                                    size: 30,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                        if (picking || hovered)
-                          Positioned(
-                            top: 2,
-                            left: 2,
-                            child: PickBox(
-                              picked: isPicked,
-                              onTap: () => _togglePick(episode),
+                          if (picking || hovered)
+                            Positioned(
+                              top: 2,
+                              left: 2,
+                              child: PickBox(
+                                picked: isPicked,
+                                onTap: () => _togglePick(episode),
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
                               'Episode ${epNumber(episode.number)}',
                               style: text.titleSmall?.copyWith(
                                 color: watched
@@ -748,104 +751,102 @@ extension _DeskDetails on _DetailsScreenState {
                                     : scheme.onSurface,
                               ),
                             ),
+                            if (tile._badge case final badge?)
+                              Text(
+                                badge.toUpperCase(),
+                                style: text.labelSmall?.copyWith(
+                                  color: scheme.primary,
+                                  letterSpacing: .8,
+                                ),
+                              ),
+                          ],
+                        ),
+                        // Not when it only repeats the number above it.
+                        if (episode.title != null &&
+                            episode.title!.trim().toLowerCase() !=
+                                'episode ${epNumber(episode.number)}')
+                          Text(
+                            episode.title!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: text.bodyMedium?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
-                          if (tile._badge case final badge?) ...[
-                            const SizedBox(width: 8),
-                            Text(
-                              badge.toUpperCase(),
-                              style: text.labelSmall?.copyWith(
-                                color: scheme.primary,
-                                letterSpacing: .8,
+                        if (episode.overview != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              episode.overview!,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: text.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant.withValues(
+                                  alpha: .8,
+                                ),
                               ),
                             ),
-                          ],
-                        ],
-                      ),
-                      // Not when it only repeats the number above it.
-                      if (episode.title != null &&
-                          episode.title!.trim().toLowerCase() !=
-                              'episode ${epNumber(episode.number)}')
-                        Text(
-                          episode.title!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: text.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Always there, so the row doesn't shift as the pointer moves across it.
+                if (!picking)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (Tracker.signedIn)
+                        IconButton(
+                          tooltip: watched
+                              ? 'Mark as unwatched'
+                              : 'Mark watched up to here',
+                          color: watched
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                          onPressed: () => _markWatched(
+                            watched
+                                ? EpisodePlan.progressUnwatching(episode)
+                                : EpisodePlan.progressWatching(episode),
+                          ),
+                          icon: Icon(
+                            watched
+                                ? Icons.check_circle_rounded
+                                : Icons.check_circle_outline_rounded,
                           ),
                         ),
-                      if (episode.overview != null)
+                      if (show.onAniList)
+                        IconButton(
+                          tooltip: 'Episode discussion',
+                          color: scheme.onSurfaceVariant,
+                          onPressed: () => openEpisodeDiscussion(
+                            context,
+                            media,
+                            episode.number,
+                            progress: _progress,
+                          ),
+                          icon: const Icon(Icons.forum_outlined),
+                        ),
+                      if (site != null)
+                        _DownloadButton(
+                          media: media,
+                          source: site,
+                          episode: episode,
+                          season: list,
+                          dub: dub,
+                        )
+                      else if (saved)
                         Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            episode.overview!,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: text.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant.withValues(
-                                alpha: .8,
-                              ),
-                            ),
+                          padding: const EdgeInsets.all(12),
+                          child: Icon(
+                            Icons.download_done_rounded,
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                     ],
                   ),
-                ),
-              ),
-              // Always there, so the row doesn't shift as the pointer moves across it.
-              if (!picking)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (Tracker.signedIn)
-                      IconButton(
-                        tooltip: watched
-                            ? 'Mark as unwatched'
-                            : 'Mark watched up to here',
-                        color: watched
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
-                        onPressed: () => _markWatched(
-                          watched
-                              ? EpisodePlan.progressUnwatching(episode)
-                              : EpisodePlan.progressWatching(episode),
-                        ),
-                        icon: Icon(
-                          watched
-                              ? Icons.check_circle_rounded
-                              : Icons.check_circle_outline_rounded,
-                        ),
-                      ),
-                    if (show.onAniList)
-                      IconButton(
-                        tooltip: 'Episode discussion',
-                        color: scheme.onSurfaceVariant,
-                        onPressed: () => openEpisodeDiscussion(
-                          context,
-                          media,
-                          episode.number,
-                          progress: _progress,
-                        ),
-                        icon: const Icon(Icons.forum_outlined),
-                      ),
-                    if (site != null)
-                      _DownloadButton(
-                        media: media,
-                        source: site,
-                        episode: episode,
-                        season: list,
-                        dub: dub,
-                      )
-                    else if (saved)
-                      Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Icon(
-                          Icons.download_done_rounded,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
