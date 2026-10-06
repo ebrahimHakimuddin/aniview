@@ -68,6 +68,27 @@ class HttpNet implements Net {
 Future<String> fetch(String url, {Map<String, String>? headers}) =>
     const HttpNet().text(url, headers: headers);
 
+/// [url]'s body as it arrives, once the host has answered 200, for the relay to pass on before a large segment has
+/// finished downloading; HTTP/2 (all at once) for the hosts that refuse HTTP/1.1.
+Future<Stream<List<int>>> streamBytes(
+  String url, {
+  Map<String, String>? headers,
+}) async {
+  final uri = Uri.parse(url);
+  if (!_h2Hosts.contains(uri.host)) {
+    final res = await httpClient.send(
+      http.Request('GET', uri)
+        ..headers.addAll({'User-Agent': userAgent, ...?headers}),
+    );
+    if (res.statusCode == 200) return res.stream;
+    await res.stream.drain<void>();
+    if (res.statusCode != 403) {
+      throw HttpException('HTTP ${res.statusCode}', uri: uri);
+    }
+  }
+  return Stream.value(await fetchBytes(url, headers: headers));
+}
+
 Future<Uint8List> fetchBytes(String url, {Map<String, String>? headers}) =>
     const HttpNet().bytes(url, headers: headers);
 

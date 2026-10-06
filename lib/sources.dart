@@ -128,14 +128,20 @@ class VideoStream {
     this.headers, {
     this.subtitles = const [],
     this.skips = const [],
+    this._hls = false,
+    this.key,
   });
   final String label, url;
   final Map<String, String> headers;
   final List<Subtitle> subtitles; // soft subs, picked in the player
   final List<SkipTime> skips; // intro/outro times the site itself provides
+  final bool _hls; // a playlist whose address doesn't end in .m3u8
+
+  /// The AES-128 key the segments open with, when the site's own player works it out rather than fetching it.
+  final Uint8List? key;
 
   bool get isLocal => !url.startsWith('http'); // a downloaded episode on disk
-  bool get isHls => Uri.parse(url).path.endsWith('.m3u8');
+  bool get isHls => _hls || Uri.parse(url).path.endsWith('.m3u8');
 }
 
 /// A show as listed on a site, used to fix a wrong automatic match.
@@ -205,6 +211,8 @@ Future<List<Source>> topSources() async => [
       final h when h.contains('anikoto') => Anikoto(name, origin),
       final h when h.contains('animepahe') => AnimePahe(name, origin),
       final h when h.contains('reanime') => ReAnime(name, origin),
+      'ani.pm' => AniPm(name, origin),
+      final h when h.contains('uniquestream') => AnimeStream(name, origin),
       _ => null,
     },
 ];
@@ -530,6 +538,262 @@ class ReAnime extends Source {
         ).catchError((Object _) => <VideoStream>[]),
     ]);
     return found.expand((s) => s).toList();
+  }
+}
+
+/// ani.pm lists shows with their AniList and MAL ids; an episode plays through a settlar.io embed session, whose HLS
+/// address doesn't end in .m3u8 and carries the subtitles as renditions.
+class AniPm extends Source {
+  AniPm(super.name, super.base, {this.net = const HttpNet()});
+
+  final Net net;
+
+  @override
+  Future<List<SearchResult>> search(String query) async {
+    final json = jsonDecode(
+      await net.text(
+        '$base/api/anime/search?q=${Uri.encodeQueryComponent(query)}',
+      ),
+    );
+    return [
+      for (final r in json['items'] as List? ?? const [])
+        // The id keeps the site and both trackers' ids, so match can check them without another call.
+        SearchResult(
+          '${r['source']}/${r['routeId']}|${r['anilistId'] ?? ''}|${r['malId'] ?? ''}',
+          '${r['title']}',
+          image: r['poster'] == null ? null : '$base${r['poster']}',
+          info: _info([
+            r['type'],
+            r['year'],
+            if (r['episodeCount'] != null) '${r['episodeCount']} eps',
+          ]),
+        ),
+    ];
+  }
+
+  @override
+  Future<String?> match(Map media) async {
+    for (final title in _searchTitles(media)) {
+      for (final r in await search(title)) {
+        final [_, anilist, mal] = r.id.split('|');
+        if (anilist == '${media['id']}' ||
+            (media['idMal'] != null && mal == '${media['idMal']}')) {
+          return r.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    final show = id.split('|').first;
+    final json = jsonDecode(
+      await net.text('$base/api/anime/series/${show.split('-').last}'),
+    );
+    return [
+      for (final e in json['episodes'] as List? ?? const [])
+        Episode(
+          e['number'] as num,
+          title: (e['title'] as String?)?.nullIfEmpty,
+          thumbnail: e['thumbnail'] == null ? null : '$base${e['thumbnail']}',
+          ref: show,
+        ),
+    ];
+  }
+
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    final lang = dub ? 'dub' : 'sub', number = epNumber(episode.number);
+    final boot = jsonDecode(
+      await net.text(
+        '$base/api/anime/playback-bootstrap/${episode.ref}?ep=$number&lang=$lang&core=0',
+      ),
+    );
+    // Asked for the dub of an episode only subbed, it answers the sub.
+    if (boot['effectiveLanguage'] != lang || boot['settlarSelection'] == null) {
+      return [];
+    }
+    final preview = jsonDecode(
+      await net.text(
+        '$base/api/anime/settlar/preview-session?selection=${Uri.encodeQueryComponent(boot['settlarSelection'])}'
+        '&provider=anipm&ep=$number&channel=$lang&telemetry=0',
+      ),
+    );
+    final embed = Uri.parse(preview['embedUrl'] as String);
+    final session = jsonDecode(
+      await net.text(
+        '${embed.origin}/api/embed/session?t=${Uri.encodeQueryComponent(embed.queryParameters['t']!)}',
+      ),
+    );
+    if (session['source'] is! String) return [];
+    Duration at(Object? s) =>
+        Duration(milliseconds: ((s as num) * 1000).round());
+    return [
+      VideoStream(
+        'Settlar',
+        session['source'],
+        {'User-Agent': userAgent},
+        hls: session['kind'] == 'hls',
+        skips: [
+          for (final (key, type) in [
+            ('op', SkipType.intro),
+            ('ed', SkipType.outro),
+          ])
+            if (boot['skip']?[key] case {'start': num s, 'end': num e})
+              SkipTime(type, at(s), at(e)),
+        ],
+      ),
+    ];
+  }
+}
+
+/// Names for AnimeStream's subtitle locales, starting with the language as the subtitle setting picks by.
+const _languages = {
+  'en-US': 'English',
+  'es-419': 'Spanish (Latin America)',
+  'es-ES': 'Spanish (Spain)',
+  'pt-BR': 'Portuguese (Brazil)',
+  'fr-FR': 'French',
+  'de-DE': 'German',
+  'it-IT': 'Italian',
+  'ar-SA': 'Arabic',
+  'ru-RU': 'Russian',
+  'zh-CN': 'Chinese (Simplified)',
+  'zh-HK': 'Chinese (Traditional)',
+  'th-TH': 'Thai',
+  'id-ID': 'Indonesian',
+  'ms-MY': 'Malay',
+  'vi-VN': 'Vietnamese',
+  'pl-PL': 'Polish',
+  'hi-IN': 'Hindi',
+  'ta-IN': 'Tamil',
+  'te-IN': 'Telugu',
+};
+
+/// AnimeStream (uniquestream) keeps a show's seasons in one series; a season is picked by its MAL id where the site
+/// has one, else season 1 for a series of the same title. Its CDN wants the site as Referer, and the key its playlists
+/// name is wrapped for its own player: the real one is the media id.
+class AnimeStream extends Source {
+  AnimeStream(super.name, super.base, {this.net = const HttpNet()});
+
+  final Net net;
+
+  Future<dynamic> _api(String path) async =>
+      jsonDecode(await net.text('$base/api/v1/$path'));
+
+  @override
+  Future<List<SearchResult>> search(String query) async => [
+    for (final r
+        in (await _api(
+                  'search?query=${Uri.encodeQueryComponent(query)}',
+                ))['series']
+                as List? ??
+            const [])
+      SearchResult(
+        '${r['content_id']}',
+        '${r['title']}',
+        image: r['image'],
+        info: _info([
+          if (r['subbed'] == true) 'Sub',
+          if (r['dubbed'] == true) 'Dub',
+        ]),
+      ),
+  ];
+
+  @override
+  Future<String?> match(Map media) async {
+    final titles = {for (final t in _searchTitles(media)) t.toLowerCase()};
+    // Its search knows a series by the first season's title; "… 2nd Season" finds nothing.
+    final suffix = RegExp(
+      r'[\s:]*(\d+(st|nd|rd|th) Season|Season \d+|Part \d+)$',
+      caseSensitive: false,
+    );
+    for (final title in {
+      for (final t in _searchTitles(media)) ...[t, t.replaceFirst(suffix, '')],
+    }) {
+      for (final r in (await search(title)).take(3)) {
+        final seasons =
+            (await _api('series/${r.id}'))['seasons'] as List? ?? const [];
+        // ponytail: a later season the site has no MAL id for is only found by a manual pick
+        final season =
+            seasons
+                .where(
+                  (s) =>
+                      media['idMal'] != null &&
+                      s['mal_id'] == '${media['idMal']}',
+                )
+                .firstOrNull ??
+            (titles.contains(r.title.toLowerCase())
+                ? seasons.where((s) => s['season_number'] == 1).firstOrNull
+                : null);
+        if (season != null) return '${r.id}/${season['content_id']}';
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) async {
+    // A manual pick is the series alone: its first season.
+    final season = id.contains('/')
+        ? id.split('/').last
+        : ((await _api('series/$id'))['seasons'] as List).first['content_id'];
+    final episodes = [];
+    for (var page = 1; ; page++) {
+      final list = await _api(
+        'season/$season/episodes?page=$page&limit=20&order_by=asc',
+      ) as List;
+      episodes.addAll(list);
+      if (list.length < 20) break; // its most per page
+    }
+    return [
+      for (final e in episodes)
+        if (e['is_clip'] != true)
+          Episode(
+            e['episode_number'] as num,
+            title: (e['title'] as String?)?.nullIfEmpty,
+            thumbnail: e['image'],
+            ref: e['content_id'],
+          ),
+    ];
+  }
+
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    final locale = dub ? 'en-US' : 'ja-JP';
+    final play = await _api('episode/${episode.ref}/media/dash/$locale');
+    final hls = play['hls'];
+    // Without the audio asked for, it answers another one.
+    if (hls?['locale'] != locale ||
+        hls['playlist'] is! String ||
+        play['media_id'] is! String) {
+      return [];
+    }
+    final id = play['media_id'] as String;
+    return [
+      VideoStream(
+        'AnimeStream',
+        hls['playlist'],
+        {'Referer': '$base/', 'User-Agent': userAgent},
+        key: Uint8List.fromList([
+          for (var i = 0; i + 1 < id.length; i += 2)
+            int.parse(id.substring(i, i + 2), radix: 16),
+        ]),
+        subtitles: [
+          for (final s in hls['subtitles'] as List? ?? const [])
+            Subtitle(_languages[s['language']] ?? '${s['language']}', s['url']),
+        ],
+      ),
+    ];
   }
 }
 

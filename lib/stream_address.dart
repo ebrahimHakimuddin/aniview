@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'hls_proxy.dart';
 import 'sources.dart';
@@ -59,8 +60,14 @@ class PlayableAddress {
 
 /// The localhost relay [StreamAddress] routes through ([HlsProxy] in the app).
 abstract interface class Relay {
-  /// A remote file, fetched with [headers]; [ext] is its own extension.
-  Future<String> remote(String url, Map<String, String> headers, String ext);
+  /// A remote file, fetched with [headers]; [ext] is its own extension. A playlist's segments open with [key] when
+  /// given, instead of the one it names.
+  Future<String> remote(
+    String url,
+    Map<String, String> headers,
+    String ext, {
+    Uint8List? key,
+  });
 
   /// [file] in the app-storage folder [dir].
   Future<String> localFile(String dir, String file);
@@ -72,8 +79,12 @@ class _HlsRelay implements Relay {
   const _HlsRelay();
 
   @override
-  Future<String> remote(String url, Map<String, String> headers, String ext) =>
-      HlsProxy.url(url, headers, ext: ext);
+  Future<String> remote(
+    String url,
+    Map<String, String> headers,
+    String ext, {
+    Uint8List? key,
+  }) => HlsProxy.url(url, headers, ext: ext, key: key);
 
   @override
   Future<String> localFile(String dir, String file) =>
@@ -125,6 +136,7 @@ class StreamAddress {
           url,
           stream.headers,
           Uri.parse(url).path.split('.').last,
+          key: url == stream.url ? stream.key : null,
         ),
       };
 }

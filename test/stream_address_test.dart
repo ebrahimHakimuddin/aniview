@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:aniview/sources.dart';
 import 'package:aniview/stream_address.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,8 +10,10 @@ class FakeRelay implements Relay {
   Future<String> remote(
     String url,
     Map<String, String> headers,
-    String ext,
-  ) async => 'relay:$ext:$url:${headers['Referer']}';
+    String ext, {
+    Uint8List? key,
+  }) async =>
+      'relay:$ext:$url:${headers['Referer']}${key == null ? '' : ':key${key.length}'}';
 
   @override
   Future<String> localFile(String dir, String file) async => 'local:$dir:$file';
@@ -108,6 +112,23 @@ void main() {
       });
     }
   }
+
+  test('a stream\'s own key goes to its playlist, not its subtitles', () async {
+    final got = await address.forPlayer(
+      VideoStream(
+        's',
+        'https://cdn/a/master.m3u8',
+        headers,
+        key: Uint8List(16),
+        subtitles: [Subtitle('English', 'https://cdn/en.vtt')],
+      ),
+    );
+    expect(got.url, 'relay:m3u8:https://cdn/a/master.m3u8:https://site:key16');
+    expect(
+      got.subtitles.single.url,
+      'relay:vtt:https://cdn/en.vtt:https://site',
+    );
+  });
 
   group('DownloadLocation', () {
     test('a document address round-trips, tree and all', () {

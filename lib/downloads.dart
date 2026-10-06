@@ -620,6 +620,12 @@ class Downloads extends ChangeNotifier {
     var url = Uri.parse(stream.url);
     var playlist = await fetch('$url', headers: stream.headers);
     if (playlist.contains('#EXT-X-STREAM-INF')) {
+      // ponytail: audio in a rendition of its own isn't saved, so it's refused rather than saved silent; save the
+      // default rendition beside the variant, under a local master playlist, if a site needs it
+      if (RegExp(r'#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI=')
+          .hasMatch(playlist)) {
+        throw Exception("Downloads from this site aren't supported yet");
+      }
       url = url.resolve(
         bestVariant(playlist, maxHeight: Settings.downloadQuality),
       );
@@ -700,7 +706,6 @@ Future<Uint8List> _fetchWithRetry(
 
 /// URI of the highest-bandwidth variant in a master playlist no taller than [maxHeight] (0 = any). When every
 /// variant is taller, the smallest one.
-// ponytail: separate audio renditions (#EXT-X-MEDIA) aren't saved; the supported hosts mux audio into the variant
 String bestVariant(String master, {int maxHeight = 0}) {
   final lines = master.split('\n').map((l) => l.trim()).toList();
   final variants = <(int bandwidth, int height, String uri)>[];

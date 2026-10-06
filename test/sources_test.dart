@@ -111,6 +111,39 @@ void main() {
     );
   });
 
+  test('cuts a master playlist to its best variant and default audio', () {
+    const master =
+        '#EXTM3U\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="English",DEFAULT=NO,URI="en.m3u8"\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Japanese",DEFAULT=YES,URI="ja.m3u8"\n'
+        '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="English",URI="subs.m3u8"\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO="a"\nlow.m3u8\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=2400000,AUDIO="a"\nhigh.m3u8\n'
+        '#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=90000,URI="i.m3u8"\n';
+    expect(
+      oneVariant(master),
+      '#EXTM3U\n'
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="Japanese",DEFAULT=YES,URI="ja.m3u8"\n'
+      '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="English",URI="subs.m3u8"\n'
+      '#EXT-X-STREAM-INF:BANDWIDTH=2400000,AUDIO="a"\nhigh.m3u8\n',
+    );
+    const media = '#EXTM3U\n#EXTINF:6,\nseg.ts\n';
+    expect(oneVariant(media), media);
+  });
+
+  test('points every key at the one given', () {
+    expect(
+      rewritePlaylist(
+        '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="../keys/key.bin?s=1"\n#EXTINF:8,\nseg-0.png\n',
+        Uri.parse('https://cdn.test/a/v/playlist.m3u8'),
+        (url, ext) => 'P($url).$ext',
+        key: 'http://local/key/0',
+      ),
+      '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="http://local/key/0"\n#EXTINF:8,\n'
+      'P(https://cdn.test/a/v/seg-0.png).ts\n',
+    );
+  });
+
   test('strips fake image headers in front of MPEG-TS segments', () {
     final ts = Uint8List(188 * 4)
       ..[0] = 0x47
@@ -122,6 +155,24 @@ void main() {
       ts,
     );
     expect(stripToTs(Uint8List.fromList([1, 2, 3])), [1, 2, 3]);
+  });
+
+  test('strips the fake header from a segment arriving in pieces', () async {
+    final ts = Uint8List(188 * 400);
+    for (var i = 0; i < ts.length; i += 188) {
+      ts[i] = 0x47;
+    }
+    final segment = [0x89, 0x50, 0x4e, 0x47, 1, 2, 3, ...ts];
+    final pieces = [
+      for (var i = 0; i < segment.length; i += 1000)
+        segment.sublist(i, (i + 1000).clamp(0, segment.length)),
+    ];
+    final out = await stripStart(Stream.fromIterable(pieces)).toList();
+    expect(out.expand((c) => c), ts);
+    expect(
+      (await stripStart(Stream.value([1, 2, 3])).toList()).expand((c) => c),
+      [1, 2, 3],
+    );
   });
 
   test('picks the best variant and rewrites a media playlist to local files', () {

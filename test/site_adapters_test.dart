@@ -194,6 +194,193 @@ void main() {
     });
   });
 
+  group('ani.pm', () {
+    final search = jsonEncode({
+      'items': [
+        {
+          'source': 'settlar',
+          'routeId': 'other-1',
+          'title': 'Other',
+          'anilistId': '9',
+          'malId': 9,
+        },
+        {
+          'source': 'settlar',
+          'routeId': 'show-6351',
+          'title': 'Show',
+          'anilistId': '154587',
+          'malId': 52991,
+        },
+      ],
+    });
+
+    test('matches the entry carrying the show\'s AniList id', () async {
+      final site = AniPm(
+        'ani.pm',
+        'https://anipm.test',
+        net: FakeNet({'/api/anime/search': search}),
+      );
+      expect(
+        await site.match({
+          'id': 154587,
+          'idMal': 52991,
+          'title': {'romaji': 'Show'},
+        }),
+        'settlar/show-6351|154587|52991',
+      );
+    });
+
+    test(
+      'plays the embed session\'s playlist, with the episode\'s skip times',
+      () async {
+        final site = AniPm(
+          'ani.pm',
+          'https://anipm.test',
+          net: FakeNet({
+            'playback-bootstrap/settlar/show-6351?ep=1&lang=sub': jsonEncode({
+              'effectiveLanguage': 'sub',
+              'settlarSelection': '2.sel',
+              'skip': {
+                'op': {'start': 1.5, 'end': 88},
+                'ed': null,
+              },
+            }),
+            'preview-session?selection=2.sel': jsonEncode({
+              'embedUrl': 'https://embed.test/embed/v1?t=2.tok',
+            }),
+            'embed.test/api/embed/session?t=2.tok': jsonEncode({
+              'source': 'https://media.test/v1/object/abc',
+              'kind': 'hls',
+            }),
+          }),
+        );
+        final [stream] = await site.streams(
+          {},
+          const Episode(1, ref: 'settlar/show-6351'),
+          dub: false,
+        );
+        expect(stream.url, 'https://media.test/v1/object/abc');
+        expect(stream.isHls, isTrue);
+        expect(
+          [for (final s in stream.skips) (s.type, s.start, s.end)],
+          [
+            (
+              SkipType.intro,
+              const Duration(milliseconds: 1500),
+              const Duration(seconds: 88),
+            ),
+          ],
+        );
+      },
+    );
+
+    test('has no dub when it would answer the sub instead', () async {
+      final site = AniPm(
+        'ani.pm',
+        'https://anipm.test',
+        net: FakeNet({
+          'playback-bootstrap': jsonEncode({
+            'effectiveLanguage': 'sub',
+            'settlarSelection': '2.sel',
+          }),
+        }),
+      );
+      expect(
+        await site.streams(
+          {},
+          const Episode(1, ref: 'settlar/show-6351'),
+          dub: true,
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('AnimeStream', () {
+    test('plays the asked-for audio with the media id as its key', () async {
+      final site = AnimeStream(
+        'AnimeStream',
+        'https://as.test',
+        net: FakeNet({
+          'media/dash/ja-JP': jsonEncode({
+            'media_id': '00ff10',
+            'hls': {
+              'locale': 'ja-JP',
+              'playlist': 'https://cdn.test/e/master.m3u8?sign=x',
+              'subtitles': [
+                {'language': 'en-US', 'url': 'https://subs.test/en-US.vtt'},
+              ],
+            },
+          }),
+          // Asked for the dub of an episode without one, it answers another audio.
+          'media/dash/en-US': jsonEncode({
+            'media_id': 'aa',
+            'hls': {'locale': 'zh-CN', 'playlist': 'https://cdn.test/zh.m3u8'},
+          }),
+        }),
+      );
+      final [stream] = await site.streams(
+        {},
+        const Episode(1, ref: 'ep1'),
+        dub: false,
+      );
+      expect(stream.url, 'https://cdn.test/e/master.m3u8?sign=x');
+      expect(stream.key, [0x00, 0xff, 0x10]);
+      expect(stream.headers['Referer'], 'https://as.test/');
+      expect([for (final s in stream.subtitles) s.label], ['English']);
+      expect(
+        await site.streams({}, const Episode(1, ref: 'ep1'), dub: true),
+        isEmpty,
+      );
+    });
+
+    test(
+      'matches the season by MAL id, else season 1 of the same title',
+      () async {
+        final site = AnimeStream(
+          'AnimeStream',
+          'https://as.test',
+          net: FakeNet({
+            // Like the site, nothing for a later season's own title.
+            'query=Show+2nd+Season': jsonEncode({'series': []}),
+            '/search?query=': jsonEncode({
+              'series': [
+                {'content_id': 'S', 'title': 'Show'},
+              ],
+            }),
+            '/series/S': jsonEncode({
+              'seasons': [
+                {'content_id': 's1', 'season_number': 1, 'mal_id': null},
+                {'content_id': 's2', 'season_number': 2, 'mal_id': '20'},
+              ],
+            }),
+          }),
+        );
+        expect(
+          await site.match({
+            'idMal': 20,
+            'title': {'romaji': 'Show 2nd Season'},
+          }),
+          'S/s2',
+        );
+        expect(
+          await site.match({
+            'idMal': 10,
+            'title': {'romaji': 'Show'},
+          }),
+          'S/s1',
+        );
+        expect(
+          await site.match({
+            'idMal': 30,
+            'title': {'romaji': 'Other'},
+          }),
+          isNull,
+        );
+      },
+    );
+  });
+
   group('CloudflareNet', () {
     test('asks once when the clearance is good', () async {
       final asked = <String>[];
