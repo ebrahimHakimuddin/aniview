@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
@@ -9,6 +9,8 @@ import 'anilist.dart';
 import 'mal.dart';
 import 'metadata.dart';
 import 'settings.dart';
+import 'ui.dart' show sheetTitle;
+import 'states.dart' show showSheet;
 
 /// Where browsing comes from. Both catalogues answer in AniList's shape (see [Show]); MyAnimeList's adapter maps
 /// its own answers to it.
@@ -229,12 +231,36 @@ class Tracker {
   /// AniList in particular, which social, stats and notifications need.
   static bool get anilistSignedIn => anilist.signedIn;
 
-  /// Signs in to [provider] (AniList by default); returns the account name, or null when the sheet was closed without
+  /// Chooses an account when [provider] is omitted; returns the account name, or null when the sheet was closed without
   /// signing in.
   static Future<String?> signIn(
     BuildContext context, [
-    ListProvider provider = anilist,
+    ListProvider? provider,
   ]) async {
+    provider ??= await showSheet<ListProvider>(
+      context,
+      (sheet) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            sheetTitle(sheet, 'Sign in'),
+            for (final account in accounts)
+              ListTile(
+                leading: const Icon(Icons.person_outline_rounded),
+                title: Text('Sign in with ${account.name}'),
+                subtitle: account.signedIn
+                    ? const Text('Already signed in')
+                    : null,
+                onTap: account.signedIn
+                    ? null
+                    : () => Navigator.pop(sheet, account),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (provider == null || !context.mounted) return null;
     if (!provider.usable) {
       throw Exception('This build has no ${provider.name} client id');
     }

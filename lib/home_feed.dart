@@ -67,6 +67,12 @@ class HomeFeed extends ChangeNotifier {
   late Future<List> trending = source.trending();
   late Future<List> season = source.season();
 
+  final _categories = <HomeSection, Future<List>>{};
+  Future<List> category(HomeSection section) => _categories.putIfAbsent(
+    section,
+    () => Tracker.search('', section.filters!).then((result) => result.$1),
+  );
+
   /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
   late Future<List<WatchRecord>> history = source.history();
 
@@ -153,6 +159,7 @@ class HomeFeed extends ChangeNotifier {
     viewer = source.viewer();
     trending = source.trending();
     season = source.season();
+    _categories.clear();
     history = source.history();
     _fetchLists();
     if (_stats != null) _stats = source.stats();

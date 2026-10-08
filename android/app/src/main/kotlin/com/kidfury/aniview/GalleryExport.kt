@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
-import java.io.FileDescriptor
 import java.nio.ByteBuffer
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -22,30 +21,45 @@ import javax.crypto.spec.SecretKeySpec
  */
 // ponytail: MediaStore paths need Android 10+; older phones would need the storage permission flow
 object GalleryExport {
-    fun save(context: Context, dir: File, name: String) {
-        if (Build.VERSION.SDK_INT < 29) throw IllegalStateException("Saving to the gallery needs Android 10 or newer")
-        val joined = File(context.cacheDir, "gallery-${dir.name}.ts")
+    /** Completes a staged HLS download as one playable file on all supported Android versions. */
+    fun prepareVideo(dir: File) {
+        val joined = File(dir, "joined.ts")
+        val part = File(dir, "episode.mp4.part")
+        val video = File(dir, "episode.mp4")
         try {
             join(dir, joined)
-            val resolver = context.contentResolver
-            val uri = resolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/AniView")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                },
-            ) ?: throw IllegalStateException("Couldn't create the gallery file")
-            try {
-                resolver.openFileDescriptor(uri, "rw")!!.use { remux(joined, it.fileDescriptor) }
-                resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
-            } catch (e: Exception) {
-                resolver.delete(uri, null, null)
-                throw e
-            }
+            remux(joined, part.path)
+            if (part.length() == 0L) throw IllegalStateException("The MP4 video is empty")
+            if (video.exists() && !video.delete()) throw IllegalStateException("Cannot replace the MP4 video")
+            if (!part.renameTo(video)) throw IllegalStateException("Cannot finish the MP4 video")
         } finally {
             joined.delete()
+            part.delete()
+        }
+    }
+
+    fun save(context: Context, dir: File, name: String) {
+        if (Build.VERSION.SDK_INT < 29) throw IllegalStateException("Saving to the gallery needs Android 10 or newer")
+        val video = File(dir, "episode.mp4")
+        if (!video.exists()) prepareVideo(dir)
+        val resolver = context.contentResolver
+        val uri = resolver.insert(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/AniView")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            },
+        ) ?: throw IllegalStateException("Couldn't create the gallery file")
+        try {
+            resolver.openOutputStream(uri, "w")!!.use { sink ->
+                video.inputStream().use { it.copyTo(sink) }
+            }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+        } catch (e: Exception) {
+            resolver.delete(uri, null, null)
+            throw e
         }
     }
 
@@ -84,19 +98,23 @@ object GalleryExport {
         }
     }
 
-    private fun remux(input: File, output: FileDescriptor) {
-        val extractor = MediaExtractor().apply { setDataSource(input.path) }
-        val muxer = MediaMuxer(output, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    private fun remux(input: File, output: String) {
+        val extractor = MediaExtractor()
+        var muxer: MediaMuxer? = null
         try {
+            extractor.setDataSource(input.path)
+            val writer = MediaMuxer(output, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = writer
             // Audio and video only; TS files can carry ID3 metadata tracks that MP4 can't take.
             val tracks = (0 until extractor.trackCount).filter { i ->
                 val mime = extractor.getTrackFormat(i).getString(android.media.MediaFormat.KEY_MIME) ?: ""
                 mime.startsWith("video/") || mime.startsWith("audio/")
             }.associateWith { i ->
                 extractor.selectTrack(i)
-                muxer.addTrack(extractor.getTrackFormat(i))
+                writer.addTrack(extractor.getTrackFormat(i))
             }
-            muxer.start()
+            if (tracks.isEmpty()) throw IllegalStateException("The stream contains no supported video or audio tracks")
+            writer.start()
             val buffer = ByteBuffer.allocate(4 shl 20)
             val info = MediaCodec.BufferInfo()
             var start = -1L // TS timestamps rarely start at zero
@@ -111,12 +129,12 @@ object GalleryExport {
                     maxOf(0L, extractor.sampleTime - start),
                     if (keyFrame) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0,
                 )
-                muxer.writeSampleData(tracks.getValue(extractor.sampleTrackIndex), buffer, info)
+                writer.writeSampleData(tracks.getValue(extractor.sampleTrackIndex), buffer, info)
                 extractor.advance()
             }
-            muxer.stop()
+            writer.stop()
         } finally {
-            muxer.release()
+            muxer?.release()
             extractor.release()
         }
     }

@@ -62,7 +62,7 @@ class Sites {
   static Future<Source?> named(String name) async =>
       (await all()).where((s) => s.name == name).firstOrNull;
 
-  /// The one chosen in Settings, else the highest ranked.
+  /// The last site selected, else the highest ranked when it is no longer available.
   static Source? preferred(List<Source> sites) =>
       sites.where((s) => s.name == Settings.preferredSource).firstOrNull ??
       sites.firstOrNull;

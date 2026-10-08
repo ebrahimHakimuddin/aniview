@@ -207,9 +207,16 @@ class SearchSession extends ChangeNotifier {
 
 class _SearchScreenState extends State<SearchScreen> {
   final controller = TextEditingController();
+  final fieldFocus = FocusNode();
+  bool _filtersVisible = true;
+  Map? _preview;
   late final search = SearchSession(
     fetch: (query, filters, page) => Tracker.search(query, filters, page: page),
-    filters: widget.filters ?? const SearchFilters(),
+    filters:
+        widget.filters ??
+        (isTv
+            ? const SearchFilters(sort: 'POPULARITY_DESC')
+            : const SearchFilters()),
     // Never the text itself.
     onSearch: (query, filters) => Analytics.event('search', {
       'has_text': query.isNotEmpty,
@@ -227,7 +234,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void initState() {
     super.initState();
     Analytics.screen('/search', title: 'Search');
-    if (widget.filters != null) search.submit('');
+    if (widget.filters != null || isTv) search.submit('');
     // The remote's search key (see [voiceSearch]), whether it opened this page or found it open.
     if (widget.filters == null) {
       voiceSearch.addListener(_voiceRequested);
@@ -260,6 +267,7 @@ class _SearchScreenState extends State<SearchScreen> {
     remoteQuery.removeListener(_remoteTyped);
     search.dispose();
     controller.dispose();
+    fieldFocus.dispose();
     super.dispose();
   }
 
@@ -471,33 +479,75 @@ class _SearchScreenState extends State<SearchScreen> {
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
               ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                _pushed ? 4 : side,
-                isTv && _pushed ? 24 : 8,
-                side - 4,
-                8,
-              ),
-              child: Row(
-                children: [
-                  if (_pushed) const BackButton(),
-                  Expanded(child: _field()),
-                  RandomButton(
-                    tooltip: 'Watch something random from this search',
-                    pick: _randomShow,
-                    from: () => 'search',
-                  ),
-                  if (filters.count > 0 || filters.sort != null)
-                    TextButton(
-                      onPressed: () => _setFilters(const SearchFilters()),
-                      child: const Text('Clear filters'),
+            Focus(
+              canRequestFocus: false,
+              skipTraversal: true,
+              onFocusChange: (focused) {
+                if (isTv && focused && !_filtersVisible) {
+                  setState(() => _filtersVisible = true);
+                }
+              },
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  _pushed ? 4 : side,
+                  isTv && _pushed ? 24 : 8,
+                  side - 4,
+                  8,
+                ),
+                child: Row(
+                  children: [
+                    if (_pushed) const BackButton(),
+                    Expanded(child: _field()),
+                    RandomButton(
+                      tooltip: 'Watch something random from this search',
+                      pick: _randomShow,
+                      from: () => 'search',
                     ),
-                ],
+                    if (isTv)
+                      TextButton(
+                        onPressed: () =>
+                            setState(() => _filtersVisible = !_filtersVisible),
+                        child: const Text('Filters'),
+                      ),
+                    if (filters.count > 0 || filters.sort != null)
+                      TextButton(
+                        onPressed: () => _setFilters(const SearchFilters()),
+                        child: const Text('Clear filters'),
+                      ),
+                  ],
+                ),
               ),
             ),
-            _filterBar(),
+            if (!isTv || _filtersVisible) _filterBar(),
             const SizedBox(height: 8),
-            Expanded(child: _results()),
+            Expanded(
+              child: Focus(
+                canRequestFocus: false,
+                skipTraversal: true,
+                onFocusChange: (focused) {
+                  if (isTv && focused && _filtersVisible) {
+                    setState(() => _filtersVisible = false);
+                  }
+                },
+                child: isTv && search.items.isNotEmpty
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: _results()),
+                          SizedBox(
+                            width: MediaQuery.sizeOf(context).width * .32,
+                            child: _TvPreview(
+                              search.items.contains(_preview)
+                                  ? _preview!
+                                  : search.items.first,
+                            ),
+                          ),
+                          SizedBox(width: side),
+                        ],
+                      )
+                    : _results(),
+              ),
+            ),
           ],
         ),
       ),
@@ -508,6 +558,7 @@ class _SearchScreenState extends State<SearchScreen> {
   /// keyboard over everything, and speaking is quicker than typing with a remote.
   Widget _field() => TextField(
     controller: controller,
+    focusNode: fieldFocus,
     // Never on its own: opening Search may be for the filters or genres, not typing.
     autofocus: false,
     textInputAction: TextInputAction.search,
@@ -524,6 +575,20 @@ class _SearchScreenState extends State<SearchScreen> {
               icon: const Icon(Icons.mic_rounded),
             )
           : const Icon(Icons.search_rounded),
+      suffixIcon: ValueListenableBuilder(
+        valueListenable: controller,
+        builder: (context, value, _) => value.text.isEmpty
+            ? const SizedBox.shrink()
+            : IconButton(
+                tooltip: 'Clear search',
+                onPressed: () {
+                  controller.clear();
+                  search.submit('');
+                  fieldFocus.requestFocus();
+                },
+                icon: const Icon(Icons.close_rounded),
+              ),
+      ),
     ),
   );
 
@@ -662,7 +727,13 @@ class _SearchScreenState extends State<SearchScreen> {
               // Rows arrive left to right as they scroll in.
               itemBuilder: (context, i) => FadeIn(
                 index: i % 3,
-                child: PosterCard(search.items[i], onBack: _remember),
+                child: PosterCard(
+                  search.items[i],
+                  onBack: _remember,
+                  onFocused: (media) {
+                    if (mounted) setState(() => _preview = media);
+                  },
+                ),
               ),
             ),
           ),
@@ -681,6 +752,64 @@ class _SearchScreenState extends State<SearchScreen> {
                   : search.loading
                   ? const Center(child: CircularProgressIndicator())
                   : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The focused result's facts stay beside the grid, so discovery doesn't require
+/// opening each nearly identical poster just to find out what it is.
+class _TvPreview extends StatelessWidget {
+  const _TvPreview(this.media);
+  final Map media;
+
+  @override
+  Widget build(BuildContext context) {
+    final show = Show(media), text = Theme.of(context).textTheme;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(radiusLarge),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            show.title,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: text.titleLarge,
+          ),
+          const SizedBox(height: 12),
+          if (show.score case final score?) ...[
+            Pill.score(score),
+            const SizedBox(height: 12),
+          ],
+          Text(
+            mediaMeta(media, genres: 0),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            show.genres.take(4).join(' · '),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: text.bodyMedium?.copyWith(color: scheme.primary),
+          ),
+          const SizedBox(height: 12),
+          Flexible(
+            child: Text(
+              plainText(show.description),
+              maxLines: 8,
+              overflow: TextOverflow.ellipsis,
+              style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),
         ],

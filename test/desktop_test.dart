@@ -68,7 +68,7 @@ void main() {
 
     await tester.tap(find.text('My list'));
     await tester.pump();
-    expect(find.text('Sign in with AniList'), findsWidgets);
+    expect(find.text('Sign in with AniList or MyAnimeList'), findsWidgets);
   });
 
   // The window can be as small as 420 wide; nothing may overflow at any size between.

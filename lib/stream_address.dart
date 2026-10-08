@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'hls_proxy.dart';
 import 'sources.dart';
+import 'platform.dart';
 
 /// Where a download's files live: a folder in app storage, or a folder in an Android document tree picked in the
 /// system file picker. Owns the address format a [VideoStream] and its subtitles carry: a plain path, or
@@ -92,7 +93,13 @@ class _HlsRelay implements Relay {
 
   @override
   Future<String> documentFile(String tree, String id, String file) =>
-      HlsProxy.documentFile(tree, id, file);
+      file.endsWith('.mp4')
+      ? AndroidApp.downloadFileUri(tree, id, file).then(
+          (uri) =>
+              uri ??
+              (throw const FileSystemException('Downloaded video is missing')),
+        )
+      : HlsProxy.documentFile(tree, id, file);
 }
 
 /// Turns a [VideoStream] into the address a player opens: a document in a picked folder, a local file, an HLS
@@ -116,7 +123,9 @@ class StreamAddress {
     VideoStream stream, {
     required bool external,
   }) async => PlayableAddress(
-    stream.isHls ? await _route(stream, stream.url, external) : stream.url,
+    stream.isHls || stream.isLocal
+        ? await _route(stream, stream.url, external)
+        : stream.url,
     headers: stream.isHls ? null : stream.headers,
     hls: stream.isHls,
     // Loaded with the video, so switching to one later needs no reload.

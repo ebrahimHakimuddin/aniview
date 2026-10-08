@@ -118,6 +118,21 @@ class DeskHome extends StatelessWidget {
       true,
     ));
     switch (section) {
+      case HomeSection.topRated:
+      case HomeSection.popular:
+      case HomeSection.upcoming:
+      case HomeSection.action:
+      case HomeSection.comedy:
+      case HomeSection.fantasy:
+      case HomeSection.romance:
+      case HomeSection.sciFi:
+        return _row(
+          section.label,
+          feed.category(section),
+          context,
+          section: section,
+          seeAll: section.filters,
+        );
       case HomeSection.featured:
         return const SizedBox.shrink();
       case HomeSection.newEpisodes:
@@ -334,9 +349,12 @@ class _SignInBanner extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Sign in with AniList', style: text.titleMedium),
                     Text(
-                      'Track what you watch, and see your lists and stats here',
+                      'Sign in with AniList or MyAnimeList',
+                      style: text.titleMedium,
+                    ),
+                    Text(
+                      'Track what you watch, and see your lists here',
                       style: text.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),

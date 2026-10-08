@@ -301,6 +301,7 @@ class _TvInputState extends State<TvInput> {
         anchored = true;
         position.ensureVisible(
           anchor!.renderObject!,
+          alignment: (anchor!.widget as ScrollAnchor).alignment,
           duration: _glide,
           curve: Curves.easeOutCubic,
         );
@@ -325,23 +326,35 @@ class _TvInputState extends State<TvInput> {
 
   @override
   Widget build(BuildContext context) => Shortcuts(
-    shortcuts: const {
-      SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
-        TraversalDirection.up,
-        ignoreTextFields: false,
-      ),
-      SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
-        TraversalDirection.down,
-        ignoreTextFields: false,
-      ),
-      SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
-        TraversalDirection.left,
-        ignoreTextFields: false,
-      ),
-      SingleActivator(LogicalKeyboardKey.arrowRight): DirectionalFocusIntent(
-        TraversalDirection.right,
-        ignoreTextFields: false,
-      ),
+    shortcuts: {
+      // Android's IME must receive the D-pad while editing. Otherwise these
+      // shortcuts move focus into the app behind the keyboard.
+      if (MediaQuery.viewInsetsOf(context).bottom > 0)
+        for (final key in [
+          LogicalKeyboardKey.arrowUp,
+          LogicalKeyboardKey.arrowDown,
+          LogicalKeyboardKey.arrowLeft,
+          LogicalKeyboardKey.arrowRight,
+        ])
+          SingleActivator(key): const DoNothingAndStopPropagationIntent()
+      else ...{
+        SingleActivator(LogicalKeyboardKey.arrowUp): DirectionalFocusIntent(
+          TraversalDirection.up,
+          ignoreTextFields: false,
+        ),
+        SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(
+          TraversalDirection.down,
+          ignoreTextFields: false,
+        ),
+        SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(
+          TraversalDirection.left,
+          ignoreTextFields: false,
+        ),
+        SingleActivator(LogicalKeyboardKey.arrowRight): DirectionalFocusIntent(
+          TraversalDirection.right,
+          ignoreTextFields: false,
+        ),
+      },
     },
     child: FocusTraversalGroup(
       policy: ReadingOrderTraversalPolicy(requestFocusCallback: _glideTo),
@@ -361,9 +374,10 @@ const tvMargin = 48.0;
 /// On TV, a vertical list brings this to its top when focus moves into it, so a row of cards shows with its
 /// title instead of the focused card being centred.
 class ScrollAnchor extends StatelessWidget {
-  const ScrollAnchor({super.key, required this.child});
+  const ScrollAnchor({super.key, required this.child, this.alignment = 0});
 
   final Widget child;
+  final double alignment;
 
   @override
   Widget build(BuildContext context) => child;

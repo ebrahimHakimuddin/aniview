@@ -70,7 +70,9 @@ class DeskProfile extends StatelessWidget {
                                     style: text.headlineMedium,
                                   ),
                                   Text(
-                                    'AniList',
+                                    Tracker.providers
+                                        .map((p) => p.name)
+                                        .join(' · '),
                                     style: text.bodyMedium?.copyWith(
                                       color: scheme.onSurfaceVariant,
                                     ),
@@ -79,16 +81,18 @@ class DeskProfile extends StatelessWidget {
                               ),
                             ),
                             OutlinedButton.icon(
-                              onPressed: () async {
-                                final account = Tracker.providers.first;
-                                await Tracker.signOut(account);
-                                if (!context.mounted) return;
-                                showSuccess(
-                                  context,
-                                  'Signed out of ${account.name}',
-                                );
-                                onSignedOut();
-                              },
+                              onPressed: !Tracker.signedIn
+                                  ? null
+                                  : () async {
+                                      final account = Tracker.providers.first;
+                                      await Tracker.signOut(account);
+                                      if (!context.mounted) return;
+                                      showSuccess(
+                                        context,
+                                        'Signed out of ${account.name}',
+                                      );
+                                      onSignedOut();
+                                    },
                               icon: const Icon(Icons.logout_rounded),
                               label: const Text('Sign out'),
                             ),

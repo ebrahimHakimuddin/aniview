@@ -73,12 +73,21 @@ class AndroidApp {
     try {
       await _app.invokeMethod('open', url);
     } on MissingPluginException {
-      // `start` takes the first quoted argument as a window title, hence the empty one.
-      await (Platform.isWindows
-          ? Process.run('cmd', ['/c', 'start', '', url])
-          : Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [url]));
+      if (Platform.isWindows) rethrow; // The Windows runner uses ShellExecute, preserving OAuth query parameters.
+      final result = await Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [
+        url,
+      ]);
+      if (result.exitCode != 0) {
+        throw PlatformException(
+          code: 'open',
+          message: 'Could not open the browser',
+        );
+      }
     }
   }
+
+  static Future<void> registerSignInScheme() =>
+      _app.invokeMethod('registerSignInScheme');
 
   /// Installs the APK at [path] as an update (Android asks to confirm). False when Android first needs
   /// "Install unknown apps" allowed: its settings page opens, and the install goes on once you're back.
@@ -105,6 +114,14 @@ class AndroidApp {
     'file': file,
   });
 
+  /// A content URI lets Android seek within a large MP4 without copying it into Dart memory.
+  static Future<String?> downloadFileUri(String tree, String id, String file) =>
+      _folder.invokeMethod<String>('uri', {
+        'tree': tree,
+        'id': id,
+        'file': file,
+      });
+
   static Future<void> deleteDownloadFolder(String tree, String id) =>
       _folder.invokeMethod('delete', {'tree': tree, 'id': id});
 
@@ -127,6 +144,10 @@ class AndroidApp {
   /// Copies the downloaded episode in [dir] to the gallery as [name].
   static Future<void> saveToGallery(String dir, String name) =>
       _app.invokeMethod('gallery', {'dir': dir, 'name': name});
+
+  /// Remuxes staged HLS into episode.mp4 in the same directory, without re-encoding.
+  static Future<void> prepareVideo(String dir) =>
+      _app.invokeMethod('prepareVideo', {'dir': dir});
 
   /// The media volume, 0–1.
   static Future<double?> volume() => _volume.invokeMethod<double>('get');

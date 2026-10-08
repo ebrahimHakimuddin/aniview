@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or PR supersedes a run still in progress.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -23,50 +22,22 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          # Pinned so a new Flutter release can't turn the build red on its own; bump it with the local fvm version.
           flutter-version: 3.47.3
           cache: true
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
       - run: flutter analyze
-      - run: flutter test
+      - run: flutter test --concurrency=2
 
-  # Builds each target on its own OS, since none of them cross-compiles; the tests above run on Linux only.
-  build:
+  # Fork PRs get no secrets, but still validate installable packaging.
+  package:
     needs: check
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            target: apk --debug
-          - os: windows-2022
-            target: windows --debug
-          - os: macos-15
-            target: macos --debug
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-        with:
-          channel: stable
-          flutter-version: 3.47.3
-          cache: true
-      # Xcode 26's Swift rejects flutter_inappwebview_macos; 16.4 builds it.
-      - if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app
-      - run: flutter pub get
-      - run: flutter build ${{ matrix.target }}
-
-  # Linux isn't here: flutter_inappwebview_linux needs WPE WebKit 2.50+, which Ubuntu's runners don't have, so tool/appimage.sh runs on a machine that does.
-  # Release builds you can download from the run page; the defines come from the DART_DEFINES secret (the contents of dart_defines.env).
-  package:
-    needs: check
-    if: github.event_name != 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
+            target: apk
+            out: build/app/outputs/flutter-apk/*-release.apk
           - os: windows-2022
             target: windows
             out: build/AniView-windows-x64-setup.exe
@@ -77,6 +48,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: matrix.target == 'apk'
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
@@ -85,21 +61,39 @@ jobs:
       # Xcode 26's Swift rejects flutter_inappwebview_macos; 16.4 builds it.
       - if: runner.os == 'macOS'
         run: sudo xcode-select -s /Applications/Xcode_16.4.app
-      - run: flutter pub get
-      - shell: bash
+      - run: flutter pub get --enforce-lockfile
+      - name: Restore Android release signing when configured
+        if: matrix.target == 'apk'
+        shell: bash
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_PROPERTIES: ${{ secrets.ANDROID_KEY_PROPERTIES }}
         run: |
-          printf '%s\n' "$DART_DEFINES" > dart_defines.env
-          flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env
+          if [[ -n "$KEYSTORE" && -n "$KEY_PROPERTIES" ]]; then
+            printf '%s' "$KEYSTORE" | base64 --decode > android/app/aniview-release.jks
+            printf '%s\n' "$KEY_PROPERTIES" > android/key.properties
+          elif [[ -n "$KEYSTORE" || -n "$KEY_PROPERTIES" ]]; then
+            echo 'Both Android signing secrets must be configured.' >&2
+            exit 1
+          fi
+      - name: Build release
+        shell: bash
         env:
           DART_DEFINES: ${{ secrets.DART_DEFINES }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          printf '%s\n' "$DART_DEFINES" > dart_defines.env
+          args=()
+          if [[ "$TARGET" == apk ]]; then args+=(--split-per-abi); fi
+          flutter build "$TARGET" --release "${args[@]}" \
+            --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" \
+            --dart-define-from-file=dart_defines.env
       - if: matrix.target == 'windows'
         shell: bash
         run: |
           choco install innosetup -y --no-progress
           version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
-          # Git Bash would turn /DAppVersion into a path.
           MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" tool/aniview.iss
-      # ditto keeps the app's permissions and symlinks, which a plain copy or artifact upload would drop.
       - if: matrix.target == 'macos'
         run: |
           mkdir dmg
@@ -110,3 +104,40 @@ jobs:
         with:
           name: aniview-${{ matrix.target }}
           path: ${{ matrix.out }}
+          if-no-files-found: error
+
+  linux:
+    needs: check
+    runs-on: ubuntu-latest
+    # WPE WebKit 2.54 is available here. The artifact inherits its glibc minimum.
+    container:
+      image: debian:forky-slim@sha256:3c80e257eff6274d593eb33a94bda5174ccd619836e6a728a73e11c97f2213e3
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 60
+    steps:
+      - name: Bootstrap checkout
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash tool/linux-deps.sh
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.3
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - name: Build Linux release
+        env:
+          DART_DEFINES: ${{ secrets.DART_DEFINES }}
+        run: |
+          printf '%s\n' "$DART_DEFINES" > dart_defines.env
+          flutter build linux --release \
+            --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" \
+            --dart-define-from-file=dart_defines.env
+      - run: bash tool/appimage.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aniview-linux
+          path: AniView-x86_64.AppImage
+          if-no-files-found: error

@@ -13,8 +13,8 @@
   <a href="https://www.buymeacoffee.com/kidfury"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&slug=kidfury&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="48"></a>
 </p>
 
-Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
-MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
+Flutter app for watching and tracking anime on Android phones, Android TV, Windows, macOS, and Linux.
+Sign in with AniList, MyAnimeList, or both; episodes and streams come from third-party sites.
 
 ## Disclaimer
 
@@ -26,14 +26,14 @@ content. Any takedown or copyright concerns should be addressed to the site that
 ## Run
 
 1. Create an AniList API client at https://anilist.co/settings/developer with redirect URL `aniview://auth`.
-2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig (app type "android"); only its client id
-   is used, for public data.
+2. Create a MyAnimeList API client at https://myanimelist.net/apiconfig (app type "android") with redirect URL
+   `aniview://mal`. Its client id enables browsing and sign-in using PKCE; no client secret ships in the app.
 3. Optionally, add a **mobile** site in [Rybbit](https://rybbit.com) for usage analytics and note its site id.
 4. `fvm flutter run --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>`
 
 `TOP_SITES` is everythingmoe's ranking, read when the app is built; a rebuild picks up a new ranking.
 
-Any of these can be left out: without AniList's client id there's no tracking, without MyAnimeList's no fallback,
+Any of these can be left out: without a provider's client id its sign-in is unavailable; without MyAnimeList's there's no fallback,
 without a Rybbit site id no analytics. A self-hosted Rybbit is set with `--dart-define=RYBBIT_HOST=https://…`.
 
 ## Release
@@ -61,6 +61,27 @@ install over builds signed with the same key.
 
 The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
 
+### CI artifacts
+
+Every push to main, pull request, and manual CI run checks analysis and tests, then builds and uploads:
+
+- Android release APKs for arm64-v8a, armeabi-v7a, and x86_64 (phones and Android TV).
+- Windows x64 installer and macOS DMG, built on their native runners.
+- Linux x86_64 AppImage, built in the pinned Debian forky container with WPE WebKit 2.54.
+
+Configure `DART_DEFINES` as a GitHub Actions secret containing the entries in `dart_defines.env` to enable
+account integrations. Fork PRs build without these values. For production Android signing, configure both
+`ANDROID_KEYSTORE_BASE64` (the base64-encoded release keystore) and `ANDROID_KEY_PROPERTIES` (the contents of
+`android/key.properties`, with `storeFile=aniview-release.jks`). Without them, APKs use the debug key and cannot
+update a production installation signed with a different key. CI uploads artifacts; it does not publish releases.
+
+The Linux AppImage requires glibc 2.43 or newer and system WPE WebKit 2.54 or newer with the FDO backend.
+On Debian forky install `libwpewebkit-2.0-1 libwpebackend-fdo-1.0-1` and GStreamer codecs
+(`gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav`). WPE's subprocesses and injected bundles
+must match its libraries, so that runtime stays on the host. Ubuntu 24.04 and Debian 13 cannot run this artifact.
+For a local build in Debian forky, run `bash tool/linux-deps.sh` as root, then `flutter build linux --release`
+and `bash tool/appimage.sh`. Packaging verifies the downloaded linuxdeploy tool's checksum.
+
 To build a separate installable beta with the local app configuration and current streaming-source ranking, run:
 
 ```sh
@@ -80,9 +101,16 @@ The app closes when it's replaced; a notification opens it again.
 ## Tracking
 
 Home, search and related shows come from AniList, and from MyAnimeList's public data when AniList fails.
-Progress goes to AniList only. A save AniList can't take (down, or you're offline) is queued on-device and
-retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
-MyAnimeList get their AniList id from ani.zip when opened.
+The first account signed in is the primary list; progress is saved there first and then to the other signed-in
+account. Saves that fail are queued on-device and retried when the app opens or returns to the foreground,
+and after the next successful save. Shows found through MyAnimeList get their AniList id from ani.zip when opened.
+Desktop sign-in uses the default browser and an OS-registered `aniview://` callback. AniList's social features
+and detailed time-watched statistics still require an AniList account.
+
+On Android TV, discovery starts with popular shows and offers sorting and filters. Posters display English
+titles when available and ratings; the focused search result has genres and a synopsis beside the grid.
+Filters hide while browsing and return when focus moves to search. Use the clear button to erase a query.
+Settings → Home screen lets you enable and reorder additional popular, top-rated, upcoming, and genre rows.
 
 ## New episode notifications
 
@@ -107,13 +135,13 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 - If an automatic match is wrong or missing, **Wrong show?** on the details page searches the site and remembers
   your pick per show and site (reset in Settings).
 
-- Offline downloads save the HLS playlist, segments, encryption keys and preferred subtitles on-device. A
+- New Android downloads combine supported HLS streams into one MP4, or save a direct MP4, plus preferred subtitles. A
   downloaded episode is preferred during playback even when the network is available. Interrupted downloads
   resume when AniView next runs; downloads only progress while the app process is alive.
 - Settings → Storage → Download folder lets you pick a folder for new offline episodes. Existing episodes stay
-  where they were saved. The app stages a download in private storage, copies its HLS files to the selected folder,
+  where they were saved. The app stages a download in private storage, copies its completed video to the selected folder,
   then removes the staging copy; playback and deletion use the selected folder. Android's folder picker grants
-  access across reboots.
+  access across reboots. New Android episodes copy their MP4 and subtitles; older HLS downloads remain playable.
 - **Download episodes…** (⋮ next to SUB/DUB) queues a range of episodes on the chosen site and audio, starting
   at the first unwatched one, skipping ones already saved or queued and retrying failed ones. Settings → Storage
   caps the download quality.

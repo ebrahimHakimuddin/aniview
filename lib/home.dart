@@ -465,6 +465,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    // The logo and action colors are created here from the shared palette.
+    // Subscribe here as well as in the page's Material children.
+    Theme.of(context);
     if (isTv) return _tv();
     if (isDesktop) return _desktop();
     // Back leaves another page for Home before it leaves the app.
@@ -1033,6 +1036,15 @@ class _HomeFeed extends StatelessWidget {
       true,
     ));
     final first = isTv && firstRow(Settings.homeSections) == section;
+    if (section.filters case final filters?) {
+      return _row(
+        context,
+        section.label,
+        feed.category(section),
+        autofocus: first,
+        seeAll: filters,
+      );
+    }
     return switch (section) {
       HomeSection.featured => const SizedBox.shrink(), // the carousel
       HomeSection.newEpisodes => FutureBuilder(
@@ -1642,7 +1654,7 @@ class _SignInCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Sign in with AniList', style: text.titleMedium),
+                      Text('Sign in to track anime', style: text.titleMedium),
                       Text(
                         'Track what you watch, and see your lists here',
                         style: text.bodyMedium?.copyWith(
@@ -1733,7 +1745,9 @@ class _MeScreen extends StatelessWidget {
                             Text(
                               me == null
                                   ? 'Watching on this device'
-                                  : 'AniList',
+                                  : Tracker.providers
+                                        .map((p) => p.name)
+                                        .join(' · '),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: text.bodySmall?.copyWith(
@@ -1763,7 +1777,7 @@ class _MeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             // Signed out there are no stats to show: say what signing in brings, where they'd be.
-            if (Tracker.signedIn)
+            if (Tracker.anilistSignedIn)
               StatsView(feed.stats, onRetry: onRefresh)
             else
               Padding(
@@ -1784,7 +1798,7 @@ class _MeScreen extends StatelessWidget {
                         Text('Your stats', style: text.titleMedium),
                         const SizedBox(height: 4),
                         Text(
-                          'Sign in with AniList to track what you watch and see your time watched, your list and your activity here.',
+                          'Track what you watch with AniList or MyAnimeList. AniList also shows your time watched and activity here.',
                           style: text.bodyMedium?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),
@@ -1793,7 +1807,7 @@ class _MeScreen extends StatelessWidget {
                         FilledButton(
                           autofocus: isTv,
                           onPressed: onSignIn,
-                          child: const Text('Sign in with AniList'),
+                          child: const Text('Sign in'),
                         ),
                       ],
                     ),

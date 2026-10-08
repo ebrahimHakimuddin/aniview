@@ -72,6 +72,9 @@ set_target_properties(${BINARY_NAME}
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+# The current webview beta's WPEPlatform backend references settings not present
+# in WPE 2.54. Select its supported FDO backend until that dependency is updated.
+set(WEBKIT_HAS_WPE_PLATFORM_API OFF CACHE INTERNAL "Use the WPE FDO backend" FORCE)
 include(flutter/generated_plugins.cmake)
 
 

@@ -407,10 +407,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             ),
-            if (site != null && download == null)
+            if (site != null &&
+                (download == null || download.status == DownloadStatus.failed))
               ListTile(
                 leading: const Icon(Icons.download_rounded),
-                title: Text('Download ${dub ? 'dub' : 'sub'}'),
+                title: Text(
+                  download == null
+                      ? 'Download ${dub ? 'dub' : 'sub'}'
+                      : 'Retry download',
+                ),
                 onTap: () => Navigator.pop(
                   context,
                   () => Downloads.instance.enqueue(
@@ -539,7 +544,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Sets tracked progress to [progress] episodes; queued for later when offline and moving forward.
   Future<void> _markWatched(int progress) async {
     if (!Tracker.signedIn) {
-      return showError(context, 'Sign in with AniList to track episodes');
+      return showError(
+        context,
+        'Sign in with AniList or MyAnimeList to track episodes',
+      );
     }
     final synced = await Tracker.save(media, progress);
     if (!mounted) return;
@@ -775,7 +783,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final picked = await pickOne(context, 'Watch on', {
           for (final (i, s) in all.indexed) s: '#${i + 1}  ${s.label}',
         }, source);
-        if (picked != null && picked != source && mounted) _select(picked);
+        if (picked != null && mounted) {
+          Settings.preferredSource = picked.name;
+          if (picked != source) _select(picked);
+        }
       },
       icon: const Icon(Icons.dns_outlined, size: 18),
       label: Row(
@@ -1471,6 +1482,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (isTv)
               SliverToBoxAdapter(
                 child: ScrollAnchor(
+                  alignment: .5,
                   child: _EpisodeRow(
                     key: ValueKey((plan.page, newestFirst, dub)),
                     count: shown.length,
@@ -2397,8 +2409,13 @@ class _DownloadButton extends StatelessWidget {
           tooltip: d!.error ?? 'Download failed',
           icon: Icon(Icons.error_outline_rounded, color: scheme.error),
           onPressed: () {
-            showError(context, 'Retrying · ${d.error ?? 'download failed'}');
-            Downloads.instance.retry(d);
+            Downloads.instance.enqueue(
+              media,
+              source.name,
+              [episode],
+              dub: dub,
+              season: season,
+            );
           },
         ),
       };

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import 'anilist.dart';
@@ -34,6 +35,7 @@ class Download {
     this.subtitles = const [],
     this.skips = const [],
     this.storageUri,
+    this.videoFile = 'index.m3u8',
   });
 
   final Map media;
@@ -49,6 +51,7 @@ class Download {
   List<Subtitle> subtitles; // file names inside the download folder
   List<SkipTime> skips;
   String? storageUri;
+  String videoFile;
 
   String get id => '${media['id']}-${epNumber(number)}-${dub ? 'dub' : 'sub'}';
 
@@ -68,6 +71,7 @@ class Download {
     'bytes': bytes,
     'error': error,
     'storageUri': storageUri,
+    'videoFile': videoFile,
     'subtitles': [
       for (final s in subtitles) {'label': s.label, 'file': s.url},
     ],
@@ -96,6 +100,9 @@ class Download {
     bytes: json['bytes'] ?? 0,
     error: json['error'],
     storageUri: json['storageUri'],
+    videoFile: json['videoFile'] == 'episode.mp4'
+        ? 'episode.mp4'
+        : 'index.m3u8',
     subtitles: [
       for (final s in json['subtitles'] as List? ?? const [])
         Subtitle(s['label'], s['file']),
@@ -167,21 +174,24 @@ class DownloadQueue {
     required bool dub,
   }) {
     for (final episode in episodes) {
-      if (entry(media, episode.number, dub) case final existing?) {
-        retry(existing);
-        continue;
-      }
-      items.add(
-        Download(
-          media: media,
-          source: source,
-          number: episode.number,
-          dub: dub,
-          ref: episode.ref,
-          title: episode.title,
-          thumbnail: episode.thumbnail,
-        ),
+      final existing = entry(media, episode.number, dub);
+      if (!needsDownload(existing)) continue;
+      // A retry from the details page uses the source and episode reference selected now.
+      // Retrying the old entry here kept sending requests to a source that couldn't download.
+      final replacement = Download(
+        media: media,
+        source: source,
+        number: episode.number,
+        dub: dub,
+        ref: episode.ref,
+        title: episode.title,
+        thumbnail: episode.thumbnail,
       );
+      if (existing == null) {
+        items.add(replacement);
+      } else {
+        items[items.indexOf(existing)] = replacement;
+      }
     }
   }
 
@@ -189,6 +199,8 @@ class DownloadQueue {
     if (!needsDownload(d)) return;
     d
       ..status = DownloadStatus.queued
+      ..progress = 0
+      ..bytes = 0
       ..error = null;
   }
 
@@ -254,8 +266,8 @@ class DownloadStore {
   }
 }
 
-/// Episodes saved on the device. An HLS stream is stored as a local playlist plus its segment, key and subtitle
-/// files, so offline playback works exactly like streaming. Downloads run one at a time, in the background too
+/// Episodes saved on the device. Android remuxes HLS into one MP4; desktop retains its local playlist.
+/// Downloads run one at a time, in the background too
 /// (a foreground service keeps the app alive while the queue runs); unfinished segments resume on the next launch.
 class Downloads extends ChangeNotifier {
   Downloads._();
@@ -396,7 +408,7 @@ class Downloads extends ChangeNotifier {
         : DocumentFolder(d.storageUri!, d.id);
     return VideoStream(
       'Downloaded',
-      where.urlOf('index.m3u8'),
+      where.urlOf(d.videoFile),
       const {},
       subtitles: [
         for (final s in d.subtitles) Subtitle(s.label, where.urlOf(s.url)),
@@ -556,12 +568,32 @@ class Downloads extends ChangeNotifier {
       if (streams.isEmpty) {
         throw Exception('No ${d.dub ? 'dub' : 'sub'} servers for this episode');
       }
-      // Only HLS is saved; direct mp4 servers can still be streamed.
       final stream =
           streams.where((s) => s.isHls).firstOrNull ??
+          streams
+              .where(
+                (s) => Uri.parse(s.url).path.toLowerCase().endsWith('.mp4'),
+              )
+              .firstOrNull ??
           (throw Exception('No downloadable servers for this episode'));
       final dir = await _dir(d).create(recursive: true);
-      final length = await _saveHls(d, stream, dir);
+      final Duration length;
+      if (stream.isHls) {
+        length = await _saveHls(d, stream, dir);
+        d.videoFile = 'index.m3u8';
+        if (Platform.isAndroid) {
+          d.videoFile = await finishHlsVideo(
+            dir,
+            convert: AndroidApp.prepareVideo,
+          );
+          d.bytes = await File('${dir.path}/${d.videoFile}').length();
+        }
+      } else {
+        await _saveMp4(d, stream, dir);
+        length = Duration.zero;
+        d.videoFile = 'episode.mp4';
+      }
+      if (_queue.cancelled) throw _Cancelled();
       d.subtitles = await _saveSubtitles(stream, dir);
       final community = await aniSkip(d.media['idMal'], d.number, length);
       d
@@ -593,6 +625,49 @@ class Downloads extends ChangeNotifier {
       _activeDone = null;
       if (!cancelled) _notify(save: true);
       done.complete();
+    }
+  }
+
+  Future<void> _saveMp4(Download d, VideoStream stream, Directory dir) async {
+    final client = http.Client();
+    final part = File('${dir.path}/episode.mp4.part');
+    IOSink? sink;
+    try {
+      // A direct file must never reuse segments left by a failed HLS attempt.
+      for (final file in await dir.list().toList()) {
+        await file.delete(recursive: true);
+      }
+      final response = await client.send(
+        http.Request('GET', Uri.parse(stream.url))
+          ..headers.addAll({'User-Agent': userAgent, ...stream.headers}),
+      );
+      if (response.statusCode != 200) {
+        throw HttpException('HTTP ${response.statusCode}');
+      }
+      sink = part.openWrite();
+      await for (final bytes in response.stream) {
+        if (_queue.cancelled) throw _Cancelled();
+        sink.add(bytes);
+        d.bytes += bytes.length;
+        final total = response.contentLength;
+        d.progress = total == null || total <= 0
+            ? 0
+            : (d.bytes / total).clamp(0, 1);
+        _notify();
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (d.bytes == 0 ||
+          (response.contentLength != null &&
+              d.bytes != response.contentLength)) {
+        throw const FormatException('The video download is incomplete');
+      }
+      await part.rename('${dir.path}/episode.mp4');
+    } finally {
+      client.close();
+      await sink?.close();
+      if (await part.exists()) await part.delete();
     }
   }
 
@@ -632,6 +707,7 @@ class Downloads extends ChangeNotifier {
       playlist = await fetch('$url', headers: stream.headers);
     }
     final (local, files, length) = localizePlaylist(playlist, url);
+    await prepareHlsFiles(dir, files);
     final queue = files.entries.toList().iterator;
     var done = 0;
     var stop = false;
@@ -686,6 +762,43 @@ class Downloads extends ChangeNotifier {
     }
     return saved;
   }
+}
+
+/// Reuse partial segments only when they belong to this exact playlist. Another
+/// source can use the same local file names for completely different video data.
+@visibleForTesting
+Future<void> prepareHlsFiles(Directory dir, Map<String, Uri> files) async {
+  final manifest = File('${dir.path}/segments.json');
+  final fingerprint = jsonEncode({
+    for (final e in files.entries) e.key: '${e.value}',
+  });
+  String? before;
+  if (await manifest.exists()) before = await manifest.readAsString();
+  if (before == fingerprint) return;
+  for (final file in await dir.list().toList()) {
+    await file.delete(recursive: true);
+  }
+  await manifest.writeAsString(fingerprint, flush: true);
+}
+
+/// Keep a valid MP4 before removing the staged playlist and segments. Conversion
+/// failure leaves the complete HLS download available for another attempt.
+@visibleForTesting
+Future<String> finishHlsVideo(
+  Directory dir, {
+  required Future<void> Function(String) convert,
+}) async {
+  await convert(dir.path);
+  final video = File('${dir.path}/episode.mp4');
+  if (!await video.exists() || await video.length() == 0) {
+    throw const FormatException('Could not create the MP4 video');
+  }
+  for (final file in await dir.list().toList()) {
+    if (file.path != video.path && !file.path.endsWith('.vtt')) {
+      await file.delete(recursive: true);
+    }
+  }
+  return 'episode.mp4';
 }
 
 class _Cancelled implements Exception {}

@@ -33,6 +33,34 @@ void main() {
   VideoStream stream(String url, [List<Subtitle> subtitles = const []]) =>
       VideoStream('s', url, headers, subtitles: subtitles);
 
+  test(
+    'a downloaded MP4 in a document folder is resolved for both players',
+    () async {
+      final video = VideoStream(
+        'Downloaded',
+        saf.urlOf('episode.mp4'),
+        const {},
+      );
+      for (final run in [address.forPlayer, address.forExternalApp]) {
+        final got = await run(video);
+        expect(got.url, 'doc:$tree:7-1-sub:episode.mp4');
+        expect(got.hls, isFalse);
+      }
+    },
+  );
+
+  test('a private MP4 goes through the relay for an external player', () async {
+    final video = VideoStream('Downloaded', dir.urlOf('episode.mp4'), const {});
+    expect(
+      (await address.forPlayer(video)).url,
+      '/data/downloads/7-1-sub/episode.mp4',
+    );
+    expect(
+      (await address.forExternalApp(video)).url,
+      'local:/data/downloads/7-1-sub:episode.mp4',
+    );
+  });
+
   // stream, expected for our own player, expected for another app
   final cases = <(String, VideoStream, PlayableAddress, PlayableAddress)>[
     (

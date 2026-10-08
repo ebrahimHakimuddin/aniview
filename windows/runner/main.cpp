@@ -4,9 +4,13 @@
 
 #include "flutter_window.h"
 #include "utils.h"
+#include "app_links/app_links_plugin_c_api.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // Browser callbacks launch another process. Deliver its link to the window
+  // already waiting for the OAuth response instead of opening a second app.
+  if (SendAppLinkToInstance()) return EXIT_SUCCESS;
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {

@@ -454,28 +454,34 @@ class HeaderScrim extends StatelessWidget {
   const HeaderScrim({super.key});
 
   @override
-  Widget build(BuildContext context) => Positioned(
-    top: 0,
-    left: 0,
-    right: 0,
-    height: MediaQuery.paddingOf(context).top + kToolbarHeight + 56,
-    child: IgnorePointer(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: const [0, .6, 1],
-            colors: [
-              scheme.surface.withValues(alpha: .9),
-              scheme.surface.withValues(alpha: .75),
-              scheme.surface.withValues(alpha: 0),
-            ],
+  Widget build(BuildContext context) {
+    // This widget is usually const. Reading the inherited theme is what makes its
+    // background update when the system changes brightness, even while the art stays put.
+    final colors = Theme.of(context).colorScheme;
+    final toolbar = MediaQuery.paddingOf(context).top + kToolbarHeight;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      height: toolbar + 56,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0, toolbar / (toolbar + 56), 1],
+              colors: [
+                colors.surface,
+                colors.surface,
+                colors.surface.withValues(alpha: 0),
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Marquee's key art: full-bleed, darkened a little under the status bar and fading into the page at its foot.
@@ -1500,6 +1506,7 @@ class PosterCard extends StatelessWidget {
     this.onBack,
     this.autofocus = false,
     this.selected,
+    this.onFocused,
   });
 
   final Map media;
@@ -1512,6 +1519,7 @@ class PosterCard extends StatelessWidget {
 
   /// Picking several: whether this one is picked (a check on the card); null when not picking.
   final bool? selected;
+  final ValueChanged<Map>? onFocused;
 
   @override
   Widget build(BuildContext context) {
@@ -1541,6 +1549,7 @@ class PosterCard extends StatelessWidget {
       onTap: onTap ?? joined.onTap,
       onLongPress: onLongPress ?? joined.onLongPress,
       onFocus: () {
+        onFocused?.call(media);
         _backdropDelay?.cancel();
         _backdropDelay = Timer(
           const Duration(milliseconds: 200),
@@ -1553,9 +1562,9 @@ class PosterCard extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             Artwork(show.cover, color: show.color),
-            if (score != null && !isTv && selected == null)
+            if (score != null && selected == null)
               Positioned(top: 8, right: 8, child: Pill.score(score)),
-            // TV cards have no text under them, so what the row says about the show goes on the card.
+            // A row's episode/status label stays over the art; titles sit below.
             if (isTv && subtitle != null)
               Positioned(
                 left: 8,
@@ -1609,7 +1618,6 @@ class PosterCard extends StatelessWidget {
         ),
       ),
     );
-    if (isTv) return card;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1682,9 +1690,8 @@ class MediaRow extends StatelessWidget {
   /// TV: the first card takes focus when the page opens.
   final bool autofocus;
 
-  /// Poster height plus room for the title lines under it on phones, or for the focus scale on TV.
-  static double get height =>
-      posterWidth * 3 / 2 + (isTv ? posterWidth * .15 : 58);
+  /// Poster height plus title lines, with extra room for the focus scale on TV.
+  static double get height => posterWidth * 3 / 2 + (isTv ? 68 : 58);
 
   @override
   Widget build(BuildContext context) {
@@ -1808,7 +1815,7 @@ class RowSkeleton extends StatelessWidget {
 /// Tiles of other things in a grid (genres) take [gridTileExtent] so their columns line up with these.
 SliverGridDelegate get posterGrid => SliverGridDelegateWithMaxCrossAxisExtent(
   maxCrossAxisExtent: gridTileExtent,
-  childAspectRatio: isTv ? 2 / 3 : .52,
+  childAspectRatio: isTv ? .48 : .52,
   crossAxisSpacing: gutter,
   mainAxisSpacing: isTv ? gutter : 16,
 );

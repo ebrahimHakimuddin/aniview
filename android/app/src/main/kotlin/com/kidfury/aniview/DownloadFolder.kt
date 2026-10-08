@@ -20,7 +20,12 @@ object DownloadFolder {
         for (file in source.listFiles() ?: emptyArray()) {
             if (!file.isFile || file.name.endsWith(".part")) continue
             val target = folder.findFile(file.name) ?: folder.createFile(
-                if (file.name.endsWith(".m3u8")) "application/vnd.apple.mpegurl" else "application/octet-stream",
+                when (file.extension) {
+                    "mp4" -> "video/mp4"
+                    "m3u8" -> "application/vnd.apple.mpegurl"
+                    "vtt" -> "text/vtt"
+                    else -> "application/octet-stream"
+                },
                 file.name,
             ) ?: throw FileNotFoundException("Cannot save ${file.name}")
             context.contentResolver.openOutputStream(target.uri, "wt")!!.use { output ->
@@ -29,12 +34,15 @@ object DownloadFolder {
         }
     }
 
-    fun read(context: Context, tree: String, id: String, file: String): ByteArray {
+    fun fileUri(context: Context, tree: String, id: String, file: String): Uri {
         if (!Regex("^[A-Za-z0-9_.-]+$").matches(file)) throw FileNotFoundException("Invalid file")
         val target = root(context, tree).findFile(id)?.findFile(file)
             ?: throw FileNotFoundException("Downloaded file is missing")
-        return context.contentResolver.openInputStream(target.uri)!!.use { it.readBytes() }
+        return target.uri
     }
+
+    fun read(context: Context, tree: String, id: String, file: String): ByteArray =
+        context.contentResolver.openInputStream(fileUri(context, tree, id, file))!!.use { it.readBytes() }
 
     fun delete(context: Context, tree: String, id: String) {
         root(context, tree).findFile(id)?.delete()

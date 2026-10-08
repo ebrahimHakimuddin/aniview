@@ -258,7 +258,7 @@ class _MyListScreenState extends State<MyListScreen> {
                 Expanded(
                   child: EmptyState(
                     icon: Icons.bookmarks_outlined,
-                    title: 'Sign in with AniList',
+                    title: 'Sign in with AniList or MyAnimeList',
                     message: 'Your watching, planning and completed shows show up here.',
                     action: FilledButton(
                       autofocus: isTv,
