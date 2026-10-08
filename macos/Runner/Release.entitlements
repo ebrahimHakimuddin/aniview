@@ -6,5 +6,8 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- HLS streams and subtitles pass through HlsProxy's loopback HTTP server. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 </dict>
 </plist>

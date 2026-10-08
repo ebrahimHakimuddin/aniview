@@ -10,7 +10,8 @@ import '../ui.dart';
 import 'motion.dart';
 
 /// The top bar's search box: a pill in the middle of the bar that suggests shows as you type (their posters,
-/// ↑ ↓ to move, Enter to open one) and, first of all, "Search for …" for the full results page. Ctrl+F puts the
+/// ↑ ↓ to move, Enter to open one) and, first of all, "Search for …" for the full results page. Cmd+K on macOS
+/// (Ctrl+F elsewhere) puts the
 /// cursor here from anywhere.
 class DeskSearchBox extends StatefulWidget {
   const DeskSearchBox({
@@ -188,7 +189,7 @@ class _Field extends StatelessWidget {
                     padding: const EdgeInsets.only(right: 14),
                     child: Center(
                       widthFactor: 1,
-                      child: _Key('$shortcutKey F'),
+                      child: _Key(searchShortcutLabel),
                     ),
                   )
                 : IconButton(
