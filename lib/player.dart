@@ -331,6 +331,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// change the speed, N plays the next episode, T keeps the window on top, F or F11 toggles fullscreen and Esc leaves it.
   bool _onDesktopKey(KeyEvent event) {
     if (event is KeyUpEvent || !mounted) return false;
+    // Let macOS/app shortcuts reach their handlers instead of treating, for
+    // example, Cmd+[ as a playback-speed change or Cmd+M as mute.
+    if (Platform.isMacOS &&
+        (HardwareKeyboard.instance.isMetaPressed ||
+            HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isAltPressed)) {
+      return false;
+    }
     if (error != null ||
         ModalRoute.of(context)?.isCurrent != true ||
         _scaffold.currentState?.isEndDrawerOpen == true) {

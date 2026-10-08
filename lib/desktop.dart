@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +13,7 @@ import 'settings.dart';
 import 'desktop/picks.dart' show deskPicks;
 
 /// What the desktop window adds on top of the phone app: its size and place remembered, back on Esc, Alt+Left or the
-/// mouse's back button, Ctrl+F (Cmd+F on a Mac) for Search and Ctrl+Q (Cmd+Q) to quit. None of it runs on Android.
+/// mouse's back button, Ctrl+F (Cmd+K on a Mac) for Search and Ctrl+Q (Cmd+Q) to quit. None of it runs on Android.
 
 /// Set by the desktop shell: puts the cursor in its search box.
 VoidCallback? onDesktopFind;
@@ -43,6 +44,10 @@ bool Function()? desktopBack;
 
 /// Set by the desktop shell: shows Search with [filters] (and [text] in the box).
 void Function(SearchFilters filters, [String text])? onDesktopSearch;
+
+/// On macOS, show pages opened from outside the section Navigator (search
+/// suggestions, the release bell) still belong beside the sidebar.
+BuildContext? Function()? macosPageContext;
 
 /// Mouse and trackpad drag lists too, as a finger does (a row of posters has no other way to scroll sideways).
 class DesktopScroll extends MaterialScrollBehavior {
@@ -139,9 +144,11 @@ class DesktopKeys extends StatelessWidget {
         const SingleActivator(LogicalKeyboardKey.escape): _escape,
         const SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true): _back,
         SingleActivator(
-          LogicalKeyboardKey.keyF,
-          control: !Platform.isMacOS,
-          meta: Platform.isMacOS,
+          defaultTargetPlatform == TargetPlatform.macOS
+              ? LogicalKeyboardKey.keyK
+              : LogicalKeyboardKey.keyF,
+          control: defaultTargetPlatform != TargetPlatform.macOS,
+          meta: defaultTargetPlatform == TargetPlatform.macOS,
         ): () =>
             onDesktopFind?.call(),
         SingleActivator(

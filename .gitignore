@@ -11,3 +11,4 @@ android/key.properties
 # FVM Version Cache
 .fvm/
 /AniView-*.AppImage
+dart_defines.env

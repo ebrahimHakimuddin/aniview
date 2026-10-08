@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -9,6 +11,10 @@ bool isDesktop = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
 /// The desktop's shortcut key: Cmd on a Mac, Ctrl on Windows and Linux.
 String get shortcutKey => Platform.isMacOS ? 'Cmd' : 'Ctrl';
+
+/// The search shortcut advertised by the desktop search field.
+String get searchShortcutLabel =>
+    defaultTargetPlatform == TargetPlatform.macOS ? 'Cmd K' : 'Ctrl F';
 
 /// Whether the shortcut key is held, for Ctrl+click (Cmd+click on a Mac) to select several.
 bool get shortcutKeyHeld => Platform.isMacOS

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../anilist.dart';
@@ -114,6 +115,9 @@ class _DeskShellState extends State<DeskShell> {
     onDesktopFind = () => _fieldFocus.requestFocus();
     desktopBack = _back;
     onDesktopSearch = _openSearch;
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      macosPageContext = () => _nav?.context;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _retitle();
       if (mounted) maybeShowWhatsNew(context);
@@ -125,6 +129,9 @@ class _DeskShellState extends State<DeskShell> {
     onDesktopFind = null;
     desktopBack = null;
     onDesktopSearch = null;
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      macosPageContext = null;
+    }
     _search.dispose();
     _field.dispose();
     _fieldFocus.dispose();
@@ -593,7 +600,9 @@ class _TopBar extends StatelessWidget {
     child: Row(
       children: [
         IconButton(
-          tooltip: 'Back  (Alt+←)',
+          tooltip: defaultTargetPlatform == TargetPlatform.macOS
+              ? 'Back  (Cmd+[)'
+              : 'Back  (Alt+←)',
           onPressed: canGoBack ? onBack : null,
           icon: const Icon(Icons.arrow_back_rounded),
         ),

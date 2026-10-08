@@ -29,6 +29,7 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      - run: python3 tool/check_macos_bundle.py
 
   # Builds each target on its own OS, since none of them cross-compiles; the tests above run on Linux only.
   build:
@@ -104,6 +105,7 @@ jobs:
         run: |
           mkdir dmg
           ditto build/macos/Build/Products/Release/aniview.app dmg/AniView.app
+          python3 tool/check_macos_bundle.py dmg/AniView.app
           ln -s /Applications dmg/Applications
           hdiutil create -volname AniView -srcfolder dmg -ov -format UDZO AniView-macos.dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
