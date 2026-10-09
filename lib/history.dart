@@ -237,27 +237,6 @@ class EpisodePlan {
     return i == -1 ? episodes.length - 1 : i;
   }
 
-  /// What the list plays: everything from a [online] site, else only the [downloaded] episodes.
-  static List<Episode> playable(
-    List<Episode> episodes, {
-    required bool online,
-    required bool Function(Episode) downloaded,
-  }) => online
-      ? episodes
-      : [
-          for (final e in episodes)
-            if (downloaded(e)) e,
-        ];
-
-  /// Where playing [episode] starts in [playable], and the site it's remembered under: the [site] streaming it,
-  /// else the one [downloadedFrom] holds its download from.
-  static ({int index, String? sourceName}) startAt(
-    Episode episode,
-    List<Episode> playable, {
-    String? site,
-    String? downloadedFrom,
-  }) => (index: playable.indexOf(episode), sourceName: site ?? downloadedFrom);
-
   /// This show's [WatchHistory] entry, if any.
   final WatchRecord? record;
 

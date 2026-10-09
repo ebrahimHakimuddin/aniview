@@ -157,34 +157,6 @@ void main() {
     );
   });
 
-  test('offline, only episodes downloaded in either audio play', () {
-    final episodes = _episodes(4);
-    final dubbed = {2}, subbed = {4};
-    bool downloaded(Episode e) =>
-        dubbed.contains(e.number) || subbed.contains(e.number);
-    final offline = EpisodePlan.playable(
-      episodes,
-      online: false,
-      downloaded: downloaded,
-    );
-    expect(offline.map((e) => e.number), [2, 4]);
-    expect(
-      EpisodePlan.playable(episodes, online: true, downloaded: (_) => false),
-      episodes,
-    );
-
-    final start = EpisodePlan.startAt(
-      episodes[3],
-      offline,
-      downloadedFrom: 'Site',
-    );
-    expect((start.index, start.sourceName), (1, 'Site'));
-    expect(
-      EpisodePlan.startAt(episodes[0], episodes, site: 'Live').sourceName,
-      'Live',
-    );
-  });
-
   test('tracked progress after picking episodes, .5 episodes included', () {
     List<Episode> eps(List<num> numbers) => [
       for (final n in numbers) Episode(n, ref: '$n'),

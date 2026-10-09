@@ -14,6 +14,12 @@ the **resume point** is a record's position for the episode it names. Distinct f
 the **up next** episode (lowest-numbered one not yet watched), and each episode's watched state and resume point.
 It also decides a show's **main action** (`nextUp`): resume the saved spot, else play the up next episode.
 
+**Show episodes** (`lib/episode_actions.dart`, `ShowEpisodes`): a show's episodes as its page has them open from one
+site (or offline): which of them **play** (offline, only downloaded ones), where playing one starts and the site it's
+remembered under (its own download's, offline), and the **episode actions** each offers (play, mark watched, download
+or retry from the site open now, delete, discussion, select). Every layout of the details page asks here and only picks
+which actions it shows.
+
 **Playback session** (`lib/playback.dart`, `PlaybackSession`): the player's decisions about the episode playing,
 apart from painting it: **opening** it (its download, else the site's servers, from the resume point), server
 fallback when a server never loads, which subtitles to show, when it counts as watched, when to save the spot, which skip applies,

@@ -512,13 +512,7 @@ extension _DeskDetails on _DetailsScreenState {
 
   /// [site] is null offline, when only downloaded episodes play.
   Widget _deskEpisodeSliver(List<Episode> list, Source? site) {
-    final playable = EpisodePlan.playable(
-      list,
-      online: site != null,
-      downloaded: (e) =>
-          Downloads.instance.toPlay(media, e.number, dub: dub, online: false) !=
-          null,
-    );
+    final eps = _showEpisodes(list, site);
     return FutureBuilder(
       future: record,
       builder: (context, saved) {
@@ -545,7 +539,7 @@ extension _DeskDetails on _DetailsScreenState {
               itemExtent: _deskRowExtent,
               itemCount: plan.shown.length,
               itemBuilder: (context, i) =>
-                  _deskEpisode(plan.shown[i], plan, list, playable, site),
+                  _deskEpisode(plan.shown[i], plan, eps),
             ),
           ],
         );
@@ -553,105 +547,30 @@ extension _DeskDetails on _DetailsScreenState {
     );
   }
 
-  Widget _deskEpisode(
-    Episode episode,
-    EpisodePlan plan,
-    List<Episode> list,
-    List<Episode> playable,
-    Source? site,
-  ) {
+  Widget _deskEpisode(Episode episode, EpisodePlan plan, ShowEpisodes eps) {
     final text = Theme.of(context).textTheme;
+    final site = eps.site;
+    final list = eps.episodes;
     final watched = plan.watched(episode);
-    final saved = site != null || playable.contains(episode);
+    final saved = eps.canPlay(episode);
     final upNext = episode == plan.upNext;
     final part = plan.resumedPart(episode);
     final picking = picked.active;
     final isPicked = picking && picked.has(episode);
-    final download = Downloads.instance.entry(media, episode.number, dub);
 
-    Future<void> play() async {
-      if (!saved) {
-        showError(
-          context,
-          "Episode ${epNumber(episode.number)} isn't downloaded",
-        );
-        return;
-      }
-      final start = EpisodePlan.startAt(
-        episode,
-        playable,
-        site: site?.name,
-        downloadedFrom: Downloads.instance.forMedia(media).firstOrNull?.source,
-      );
-      await _openPlayer(
-        context,
-        media: media,
-        source: site,
-        sourceName: start.sourceName,
-        episodes: playable,
-        index: start.index,
-        dub: dub,
-      );
-      _reloadRecord(); // progress and resume point changed
-    }
+    Future<void> play() => _playEpisode(eps, episode);
 
     Future<void> menu(Offset at) async {
-      final choice = await showMenu<String>(
+      final choice = await showMenu<EpisodeAction>(
         context: context,
         position: menuAt(context, at),
         items: [
-          const PopupMenuItem(value: 'play', child: Text('Play')),
-          if (Tracker.signedIn)
-            PopupMenuItem(
-              value: 'watched',
-              child: Text(
-                watched ? 'Mark as unwatched' : 'Mark watched up to here',
-              ),
-            ),
-          if (site != null && download == null)
-            PopupMenuItem(
-              value: 'download',
-              child: Text('Download ${dub ? 'dub' : 'sub'}'),
-            ),
-          if (download?.status == DownloadStatus.done)
-            const PopupMenuItem(
-              value: 'delete',
-              child: Text('Delete download'),
-            ),
-          if (show.onAniList)
-            const PopupMenuItem(value: 'discuss', child: Text('Discussion')),
-          const PopupMenuItem(value: 'select', child: Text('Select')),
+          for (final a in eps.actionsFor(episode, watched: watched))
+            PopupMenuItem(value: a, child: Text(eps.label(a))),
         ],
       );
-      if (!mounted) return;
-      switch (choice) {
-        case 'play':
-          await play();
-        case 'watched':
-          await _markWatched(
-            watched
-                ? EpisodePlan.progressUnwatching(episode)
-                : EpisodePlan.progressWatching(episode),
-          );
-        case 'download':
-          Downloads.instance.enqueue(
-            media,
-            site!.name,
-            [episode],
-            dub: dub,
-            season: list,
-          );
-        case 'delete':
-          await confirmDeleteDownload(context, download!);
-        case 'discuss':
-          await openEpisodeDiscussion(
-            context,
-            media,
-            episode.number,
-            progress: _progress,
-          );
-        case 'select':
-          _togglePick(episode);
+      if (choice != null && mounted) {
+        await _runEpisodeAction(choice, episode, eps);
       }
     }
 

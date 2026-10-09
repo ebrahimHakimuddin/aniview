@@ -11,6 +11,7 @@ import 'desktop.dart' show deskPageContext;
 import 'desktop/motion.dart';
 import 'desktop/widgets.dart';
 import 'downloads.dart';
+import 'episode_actions.dart';
 import 'history.dart';
 import 'playback.dart';
 import 'pairing.dart';
@@ -372,18 +373,90 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (mounted) setState(() => record = _held(WatchHistory.of(media)));
   }
 
-  /// Long-press on an episode: watched state and its download.
-  Future<void> _episodeActions(
-    Episode episode, {
+  /// The episodes of [list] as this page has them open from [site].
+  ShowEpisodes _showEpisodes(List<Episode> list, Source? site) => ShowEpisodes(
+    media,
+    list,
+    site: site,
+    dub: dub,
+    signedIn: Tracker.signedIn,
+  );
+
+  /// Plays [episode] from this page, or says why it can't.
+  Future<void> _playEpisode(ShowEpisodes eps, Episode episode) async {
+    final start = eps.start(episode);
+    if (start == null) {
+      return showError(
+        context,
+        "Episode ${epNumber(episode.number)} isn't downloaded",
+      );
+    }
+    await _openPlayer(
+      context,
+      media: media,
+      source: eps.site,
+      sourceName: start.sourceName,
+      episodes: start.episodes,
+      index: start.index,
+      dub: dub,
+    );
+    _reloadRecord(); // progress and resume point changed
+  }
+
+  /// Does [action] (one of [ShowEpisodes.actionsFor]) for [episode].
+  Future<void> _runEpisodeAction(
+    EpisodeAction action,
+    Episode episode,
+    ShowEpisodes eps,
+  ) async {
+    switch (action) {
+      case EpisodeAction.play:
+        await _playEpisode(eps, episode);
+      case EpisodeAction.markWatched:
+        await _markWatched(EpisodePlan.progressWatching(episode));
+      case EpisodeAction.markUnwatched:
+        await _markWatched(EpisodePlan.progressUnwatching(episode));
+      case EpisodeAction.download || EpisodeAction.retryDownload:
+        Downloads.instance.enqueue(
+          media,
+          eps.site!.name,
+          [episode],
+          dub: dub,
+          season: eps.episodes,
+        );
+      case EpisodeAction.deleteDownload:
+        final download = Downloads.instance.entry(media, episode.number, dub);
+        if (download != null) await confirmDeleteDownload(context, download);
+      case EpisodeAction.discuss:
+        await openEpisodeDiscussion(
+          context,
+          media,
+          episode.number,
+          progress: _progress,
+        );
+      case EpisodeAction.select:
+        _togglePick(episode);
+    }
+  }
+
+  /// TV, holding OK on an episode: its watched state and its download.
+  Future<void> _episodeSheet(
+    Episode episode,
+    ShowEpisodes eps, {
     required bool watched,
-    required Source? site,
-    required List<Episode> season,
   }) async {
     if (!Settings.episodeTipSeen) {
       setState(() => Settings.episodeTipSeen = true);
     }
-    final download = Downloads.instance.entry(media, episode.number, dub);
-    final action = await showSheet<VoidCallback>(
+    final actions = [
+      for (final a in eps.actionsFor(episode, watched: watched))
+        if (a != EpisodeAction.play &&
+            a != EpisodeAction.discuss &&
+            a != EpisodeAction.select)
+          a,
+    ];
+    if (actions.isEmpty) return;
+    final picked = await showSheet<EpisodeAction>(
       context,
       (context) => SafeArea(
         child: Column(
@@ -395,58 +468,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
               'Episode ${epNumber(episode.number)}',
               subtitle: episode.title,
             ),
-            ListTile(
-              autofocus: isTv,
-              leading: Icon(
-                watched ? Icons.remove_done_rounded : Icons.done_all_rounded,
-              ),
-              title: Text(
-                watched ? 'Mark as unwatched' : 'Mark watched up to here',
-              ),
-              onTap: () => Navigator.pop(
-                context,
-                () => _markWatched(
-                  watched
-                      ? EpisodePlan.progressUnwatching(episode)
-                      : EpisodePlan.progressWatching(episode),
+            for (final (i, a) in actions.indexed)
+              if (a == EpisodeAction.deleteDownload)
+                DestructiveTile(
+                  icon: Icons.delete_outline_rounded,
+                  title: eps.label(a),
+                  onTap: () => Navigator.pop(context, a),
+                )
+              else
+                ListTile(
+                  autofocus: i == 0,
+                  leading: Icon(switch (a) {
+                    EpisodeAction.markUnwatched => Icons.remove_done_rounded,
+                    EpisodeAction.markWatched => Icons.done_all_rounded,
+                    _ => Icons.download_rounded,
+                  }),
+                  title: Text(eps.label(a)),
+                  onTap: () => Navigator.pop(context, a),
                 ),
-              ),
-            ),
-            if (site != null &&
-                (download == null || download.status == DownloadStatus.failed))
-              ListTile(
-                leading: const Icon(Icons.download_rounded),
-                title: Text(
-                  download == null
-                      ? 'Download ${dub ? 'dub' : 'sub'}'
-                      : 'Retry download',
-                ),
-                onTap: () => Navigator.pop(
-                  context,
-                  () => Downloads.instance.enqueue(
-                    media,
-                    site.name,
-                    [episode],
-                    dub: dub,
-                    season: season,
-                  ),
-                ),
-              ),
-            if (download?.status == DownloadStatus.done)
-              DestructiveTile(
-                icon: Icons.delete_outline_rounded,
-                title: 'Delete download',
-                onTap: () => Navigator.pop(
-                  context,
-                  () => confirmDeleteDownload(this.context, download!),
-                ),
-              ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
-    action?.call();
+    if (picked != null && mounted) {
+      await _runEpisodeAction(picked, episode, eps);
+    }
   }
 
   /// Phones, while picking episodes: download them, delete their downloads, or mark them (un)watched.
@@ -712,17 +759,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
             title:
                 '${first ? 'Play' : 'Continue'} Episode ${epNumber(episode.number)}',
             subtitle: '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
-            onPressed: () async {
-              await _openPlayer(
-                context,
-                media: media,
-                source: source,
-                episodes: list!,
-                index: list.indexOf(episode),
-                dub: dub,
-              );
-              _reloadRecord();
-            },
+            onPressed: () =>
+                _playEpisode(_showEpisodes(list!, source), episode),
           ),
           // Holds the button's place while things load.
           null =>
@@ -1457,13 +1495,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// [site] is null offline, when only downloaded episodes play. Shown [_pageSize] at a time; the player always
   /// gets them in order.
   Widget _episodeSliver(List<Episode> list, Source? site) {
-    final playable = EpisodePlan.playable(
-      list,
-      online: site != null,
-      downloaded: (e) =>
-          Downloads.instance.toPlay(media, e.number, dub: dub, online: false) !=
-          null,
-    );
+    final eps = _showEpisodes(list, site);
     return FutureBuilder(
       future: record,
       builder: (context, saved) {
@@ -1478,7 +1510,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         );
         final shown = plan.shown;
         Widget tile(BuildContext _, int i) =>
-            _episode(plan.shown[i], plan, list, playable, site);
+            _episode(plan.shown[i], plan, eps);
         return SliverMainAxisGroup(
           slivers: [
             if (isTv)
@@ -1592,15 +1624,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Widget _episode(
-    Episode episode,
-    EpisodePlan plan,
-    List<Episode> list,
-    List<Episode> playable,
-    Source? site,
-  ) {
+  Widget _episode(Episode episode, EpisodePlan plan, ShowEpisodes eps) {
+    final site = eps.site;
     final watched = plan.watched(episode);
-    final saved = site != null || playable.contains(episode);
+    final saved = eps.canPlay(episode);
     // Phones pick several to act on at once; TV keeps one episode's actions sheet.
     final picking = picked.active && !isTv;
     return _EpisodeTile(
@@ -1618,12 +1645,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               progress: _progress,
             ),
       onLongPress: isTv
-          ? () => _episodeActions(
-              episode,
-              watched: watched,
-              site: site,
-              season: list,
-            )
+          ? () => _episodeSheet(episode, eps, watched: watched)
           : () => _togglePick(episode),
       trailing: picking
           ? null
@@ -1641,37 +1663,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
               media: media,
               source: site,
               episode: episode,
-              season: list,
+              season: eps.episodes,
               dub: dub,
             ),
-      onTap: () async {
+      onTap: () {
         if (picking) return _togglePick(episode);
-        if (!saved) {
-          showError(
-            context,
-            "Episode ${epNumber(episode.number)} isn't downloaded",
-          );
-          return;
-        }
-        final start = EpisodePlan.startAt(
-          episode,
-          playable,
-          site: site?.name,
-          downloadedFrom: Downloads.instance
-              .forMedia(media)
-              .firstOrNull
-              ?.source,
-        );
-        await _openPlayer(
-          context,
-          media: media,
-          source: site,
-          sourceName: start.sourceName,
-          episodes: playable,
-          index: start.index,
-          dub: dub,
-        );
-        _reloadRecord(); // progress and resume point changed
+        _playEpisode(eps, episode);
       },
     );
   }

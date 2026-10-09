@@ -424,6 +424,8 @@ class Downloads extends ChangeNotifier {
     saveSeason(media, season);
   }
 
+  /// Retries [d] from the site it came from. The Downloads screens have no other site open; a show page retries
+  /// through [enqueue] instead, with the site it has open now.
   void retry(Download d) {
     _queue.retry(d);
     _notify(save: true);
