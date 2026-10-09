@@ -286,6 +286,7 @@ class Extensions(private val context: Context, engine: FlutterEngine) {
         "url" to video.videoUrl,
         "headers" to video.headers?.toMap(),
         "subtitles" to video.subtitleTracks.map { mapOf("url" to it.url, "lang" to it.lang) },
+        "audios" to video.audioTracks.map { mapOf("url" to it.url, "lang" to it.lang) },
         "timestamps" to video.timestamps.map {
             mapOf("start" to it.start, "end" to it.end, "name" to it.name, "type" to it.type.name)
         },

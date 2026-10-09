@@ -207,6 +207,9 @@ void main() {
             'subtitles': [
               {'url': 'https://cdn.test/en.vtt', 'lang': 'English'},
             ],
+            'audios': [
+              {'url': 'https://cdn.test/ja.m4a', 'lang': 'Japanese'},
+            ],
             'timestamps': [
               {'start': 5.0, 'end': 95.5, 'name': 'Opening', 'type': 'Opening'},
               {
@@ -234,6 +237,8 @@ void main() {
       expect(dub.map((s) => s.url), ['https://cdn.test/dub.m3u8']);
       expect(dub.single.headers, {'Referer': 'https://t.test/'});
       expect(dub.single.subtitles.single.label, 'English');
+      expect(dub.single.audios.single.url, 'https://cdn.test/ja.m4a');
+      expect(dub.single.audios.single.label, 'Japanese');
       expect(dub.single.skips, hasLength(2)); // "Other" isn't a skip
       expect(dub.single.skips.first.end, const Duration(milliseconds: 95500));
 

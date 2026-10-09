@@ -24,6 +24,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -53,6 +54,7 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                         call.argument<Boolean>("hls") ?: false,
                         call.argument<Number>("start")?.toLong() ?: 0L,
                         call.argument<List<Map<String, String>>>("subtitles") ?: emptyList(),
+                        call.argument<List<Map<String, String>>>("audios") ?: emptyList(),
                     )
                     result.success(null)
                 }
@@ -62,6 +64,7 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 "seek" -> done(result) { entry?.player?.seekTo(call.argument<Number>("ms")!!.toLong()) }
                 "rate" -> done(result) { entry?.player?.setPlaybackSpeed(call.argument<Double>("rate")!!.toFloat()) }
                 "subtitle" -> done(result) { entry?.subtitle(call.argument<String>("track")!!) }
+                "audio" -> done(result) { entry?.audio(call.argument<String>("track")!!) }
                 "quality" -> done(result) {
                     entry?.quality(call.argument<Number>("height")!!.toInt(), call.argument<Boolean>("exact") ?: false)
                 }
@@ -179,7 +182,13 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 }
 
                 override fun onTracksChanged(tracks: Tracks) =
-                    send(mapOf("tracks" to textTracks(tracks), "heights" to videoHeights(tracks)))
+                    send(
+                        mapOf(
+                            "tracks" to textTracks(tracks),
+                            "audios" to audioTracks(tracks),
+                            "heights" to videoHeights(tracks),
+                        ),
+                    )
 
                 override fun onCues(cues: CueGroup) {
                     send(mapOf("cues" to cues.cues.mapNotNull { it.text?.toString() }.joinToString("\n")))
@@ -191,7 +200,17 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
             })
         }
 
-        fun open(url: String, headers: Map<String, String>, hls: Boolean, startMs: Long, subtitles: List<Map<String, String>>) {
+        /** The labels of the audio files opened beside the video, in order (see [audioTracks]). */
+        private var audioLabels = emptyList<String?>()
+
+        fun open(
+            url: String,
+            headers: Map<String, String>,
+            hls: Boolean,
+            startMs: Long,
+            subtitles: List<Map<String, String>>,
+            audios: List<Map<String, String>>,
+        ) {
             val http = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setDefaultRequestProperties(headers)
@@ -210,7 +229,18 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                     },
                 )
                 .build()
-            player.setMediaSource(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)).createMediaSource(item), startMs)
+            val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http))
+            val video = sources.createMediaSource(item)
+            // Audio that comes as files of its own plays alongside the picture, one at a time (see [audio]).
+            audioLabels = audios.map { it["label"] }
+            player.setMediaSource(
+                if (audios.isEmpty()) {
+                    video
+                } else {
+                    MergingMediaSource(video, *audios.map { sources.createMediaSource(MediaItem.fromUri(it["url"]!!)) }.toTypedArray())
+                },
+                startMs,
+            )
             player.prepare()
             player.playWhenReady = true
         }
@@ -227,6 +257,18 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 }
             } else if (track == "auto") {
                 builder.setSelectUndeterminedTextLanguage(true)
+            }
+            player.trackSelectionParameters = builder.build()
+        }
+
+        /** "auto" (the player's pick), or a track id from [audioTracks]. */
+        fun audio(track: String) {
+            val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            if (track != "auto") {
+                val (group, index) = track.split(":").map(String::toInt)
+                player.currentTracks.groups.getOrNull(group)?.let {
+                    builder.setOverrideForType(TrackSelectionOverride(it.mediaTrackGroup, index))
+                }
             }
             player.trackSelectionParameters = builder.build()
         }
@@ -258,6 +300,24 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                     mapOf(
                         "id" to "$g:$i",
                         "title" to format.label,
+                        "language" to format.language,
+                        "selected" to group.isTrackSelected(i),
+                    )
+                }
+            }
+
+        /** The stream's own audio tracks, and the files opened beside it, labelled as they were given. */
+        private fun audioTracks(tracks: Tracks) = tracks.groups.withIndex()
+            .filter { it.value.type == C.TRACK_TYPE_AUDIO }
+            .flatMap { (g, group) ->
+                // A merged source's track groups are numbered by source: "1:…" is the first audio file.
+                val file = group.mediaTrackGroup.id.substringBefore(':').toIntOrNull()
+                    ?.takeIf { audioLabels.isNotEmpty() && it > 0 }
+                (0 until group.length).filter(group::isTrackSupported).map { i ->
+                    val format = group.getTrackFormat(i)
+                    mapOf(
+                        "id" to "$g:$i",
+                        "title" to (file?.let { audioLabels.getOrNull(it - 1) } ?: format.label),
                         "language" to format.language,
                         "selected" to group.isTrackSelected(i),
                     )

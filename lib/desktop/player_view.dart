@@ -84,6 +84,7 @@ extension _DeskPlayer on _PlayerScreenState {
                     _skipButton(position),
                     const Spacer(),
                     if (_hasSubtitles) _subtitleMenu(),
+                    if (_hasAudios) _audioMenu(),
                     if (streams.length > 1 && streams.contains(current))
                       _serverMenu(),
                     if (_qualities.length > 1) _qualityMenu(),
@@ -227,6 +228,19 @@ extension _DeskPlayer on _PlayerScreenState {
             await _setSubtitle(SubtitleTrack.off, 'Off');
         }
       },
+    );
+  }
+
+  Widget _audioMenu() {
+    final options = {for (final t in player.state.audios) t: _audioName(t)};
+    return _choiceMenu<SubtitleTrack>(
+      tooltip: 'Audio · ${audio ?? 'Auto'}',
+      icon: Icons.audiotrack_outlined,
+      options: options,
+      selected:
+          options.entries.where((e) => e.value == audio).firstOrNull?.key ??
+          player.state.audios.first,
+      onSelected: _setAudio,
     );
   }
 

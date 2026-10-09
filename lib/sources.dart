@@ -128,6 +128,7 @@ class VideoStream {
     this.url,
     this.headers, {
     this.subtitles = const [],
+    this.audios = const [],
     this.skips = const [],
     this._hls = false,
     this.key,
@@ -135,6 +136,7 @@ class VideoStream {
   final String label, url;
   final Map<String, String> headers;
   final List<Subtitle> subtitles; // soft subs, picked in the player
+  final List<Subtitle> audios; // audio as files of their own (label and url, like a subtitle), picked in the player
   final List<SkipTime> skips; // intro/outro times the site itself provides
   final bool _hls; // a playlist whose address doesn't end in .m3u8
 
@@ -929,6 +931,10 @@ class ChannelExtensionHost implements ExtensionHost {
           {...?(v['headers'] as Map?)?.cast<String, String>()},
           subtitles: [
             for (final t in v['subtitles']) Subtitle(t['lang'], t['url']),
+          ],
+          audios: [
+            for (final t in v['audios'] ?? const [])
+              Subtitle(t['lang'], t['url']),
           ],
           skips: [
             for (final t in v['timestamps'])

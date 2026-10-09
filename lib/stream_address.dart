@@ -48,6 +48,7 @@ class PlayableAddress {
     this.headers,
     this.hls = false,
     this.subtitles = const [],
+    this.audios = const [],
   });
 
   final String url;
@@ -55,7 +56,7 @@ class PlayableAddress {
   /// Sent with the request; null when the address needs none (HLS goes through the relay, which sends them).
   final Map<String, String>? headers;
   final bool hls;
-  final List<({String url, String label})> subtitles;
+  final List<({String url, String label})> subtitles, audios;
 }
 
 /// The localhost relay [StreamAddress] routes through ([HlsProxy] in the app).
@@ -123,6 +124,10 @@ class StreamAddress {
     subtitles: [
       for (final s in stream.subtitles)
         (url: await _route(stream, s.url, external), label: s.label),
+    ],
+    audios: [
+      for (final a in stream.audios)
+        (url: await _route(stream, a.url, external), label: a.label),
     ],
   );
 

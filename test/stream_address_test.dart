@@ -130,6 +130,24 @@ void main() {
     );
   });
 
+  test(
+    'audio files beside the video go through the relay with its headers',
+    () async {
+      final got = await address.forPlayer(
+        VideoStream(
+          's',
+          'https://cdn/v.mp4',
+          headers,
+          audios: [Subtitle('Japanese', 'https://cdn/ja.m4a')],
+        ),
+      );
+      expect(got.audios.single, (
+        url: 'relay:m4a:https://cdn/ja.m4a:https://site',
+        label: 'Japanese',
+      ));
+    },
+  );
+
   group('DownloadLocation', () {
     test('a document address round-trips, tree and all', () {
       final url = saf.urlOf('index.m3u8');

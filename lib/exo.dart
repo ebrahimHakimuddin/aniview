@@ -8,7 +8,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import 'platform.dart';
 
-/// A subtitle track the stream or a subtitle file brings; [id] picks it in [ExoPlayer.setSubtitleTrack].
+/// A subtitle or audio track the stream or a file beside it brings; [id] picks it in [ExoPlayer.setSubtitleTrack]
+/// or [ExoPlayer.setAudioTrack].
 class SubtitleTrack {
   const SubtitleTrack(this.id, {this.title, this.language});
 
@@ -26,7 +27,8 @@ class SubtitleTrack {
   int get hashCode => id.hashCode;
 }
 
-/// A subtitle file to load alongside the video: it shows up in [ExoPlayerState.subtitles] titled [label].
+/// A subtitle or audio file to load alongside the video: it shows up in [ExoPlayerState.subtitles] or
+/// [ExoPlayerState.audios] titled [label].
 typedef SubtitleFile = ({String url, String label});
 
 class ExoPlayerState {
@@ -34,7 +36,7 @@ class ExoPlayerState {
       duration = Duration.zero,
       buffer = Duration.zero;
   bool playing = false, buffering = true, completed = false;
-  List<SubtitleTrack> subtitles = const [];
+  List<SubtitleTrack> subtitles = const [], audios = const [];
 
   /// The stream's video heights (1080, 720, …), tallest first.
   List<int> heights = const [];
@@ -112,20 +114,24 @@ class ExoPlayer {
     if (e['heights'] case final List heights) {
       state.heights = heights.cast<int>();
     }
+    // Before the tracks: their event tells the player to look at both.
+    if (e['audios'] case final List audios) state.audios = _tracks(audios);
     if (e['tracks'] case final List tracks) {
-      state.subtitles = [
-        for (final t in tracks.cast<Map>())
-          SubtitleTrack(
-            t['id'] as String,
-            title: t['title'] as String?,
-            language: t['language'] as String?,
-          ),
-      ];
+      state.subtitles = _tracks(tracks);
       stream._tracks.add(state.subtitles);
     }
     if (e['cues'] case final String text) cues.value = text;
     if (e['error'] case final String error) stream._error.add(error);
   }
+
+  static List<SubtitleTrack> _tracks(List tracks) => [
+    for (final t in tracks.cast<Map>())
+      SubtitleTrack(
+        t['id'] as String,
+        title: t['title'] as String?,
+        language: t['language'] as String?,
+      ),
+  ];
 
   Future<void> _call(
     String method, [
@@ -162,6 +168,11 @@ class ExoPlayer {
       s.subtitle.listen((lines) => _on({'cues': lines.join('\n').trim()})),
       s.tracks.listen(
         (t) => _on({
+          'audios': [
+            for (final t in t.audio)
+              if (t.id != 'auto' && t.id != 'no')
+                {'id': t.id, 'title': t.title, 'language': t.language},
+          ],
           'tracks': [
             for (final t in t.subtitle)
               if (t.id != 'auto' && t.id != 'no')
@@ -199,8 +210,9 @@ class ExoPlayer {
           ),
         );
         final subtitles = args['subtitles']! as List;
-        if (subtitles.isEmpty) return;
-        // A subtitle file can only join once the stream has loaded.
+        final audios = args['audios']! as List;
+        if (subtitles.isEmpty && audios.isEmpty) return;
+        // A subtitle or audio file can only join once the stream has loaded.
         final loaded = await mpv.stream.duration
             .firstWhere((d) => d > Duration.zero)
             .timeout(
@@ -216,6 +228,16 @@ class ExoPlayer {
             s['url'] as String,
             'auto',
             s['label'] as String,
+          ]);
+        }
+        for (final Map a in audios) {
+          if (_disposed) return;
+          await (mpv.platform as mk.NativePlayer).command([
+            'audio-add',
+            a['url'] as String,
+            // The first plays, as the stream's own would; the rest wait to be picked.
+            a == audios.first ? 'select' : 'auto',
+            a['label'] as String,
           ]);
         }
       case 'stop':
@@ -236,25 +258,33 @@ class ExoPlayer {
           'auto' => mk.SubtitleTrack.auto(),
           final id => mpv.state.tracks.subtitle.firstWhere((t) => t.id == id),
         });
+      case 'audio':
+        await mpv.setAudioTrack(switch (args['track']) {
+          'auto' => mk.AudioTrack.auto(),
+          final id => mpv.state.tracks.audio.firstWhere((t) => t.id == id),
+        });
       // 'quality': mpv takes the stream's own pick, there's no cap to set yet.
     }
   }
 
   /// Plays [url] from [start]: a local file path, or a URL fetched with [headers]. [hls] says it's a playlist
-  /// when the URL doesn't. [subtitles] load alongside, offered as tracks.
+  /// when the URL doesn't. [subtitles] and [audios] (audio that comes as files of its own) load alongside, offered
+  /// as tracks.
   Future<void> open(
     String url, {
     Map<String, String>? headers,
     bool hls = false,
     Duration? start,
     List<SubtitleFile> subtitles = const [],
+    List<SubtitleFile> audios = const [],
   }) {
     state
       ..position = start ?? Duration.zero
       ..duration = Duration.zero
       ..completed = false
       ..buffering = true
-      ..subtitles = const [];
+      ..subtitles = const []
+      ..audios = const [];
     cues.value = '';
     return _call('open', {
       'url': url,
@@ -263,6 +293,9 @@ class ExoPlayer {
       'start': start?.inMilliseconds ?? 0,
       'subtitles': [
         for (final s in subtitles) {'url': s.url, 'label': s.label},
+      ],
+      'audios': [
+        for (final a in audios) {'url': a.url, 'label': a.label},
       ],
     });
   }
@@ -296,6 +329,9 @@ class ExoPlayer {
     if (track == SubtitleTrack.off) cues.value = '';
     return _call('subtitle', {'track': track.id});
   }
+
+  Future<void> setAudioTrack(SubtitleTrack track) =>
+      _call('audio', {'track': track.id});
 
   /// The player's own volume, 0–1 (Android moves the phone's media volume instead).
   Future<void> setVolume(double level) => _mpv == null

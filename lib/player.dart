@@ -84,6 +84,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   );
   int? _skipsRequested;
   String subtitle = 'Auto';
+
+  /// The audio track picked, by name; null for the stream's own pick. The next episode or server keeps it when it
+  /// has one named alike.
+  String? audio;
   Object? error;
   String? hint;
   IconData? hintIcon;
@@ -529,6 +533,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       hls: address.hls,
       start: resume,
       subtitles: address.subtitles,
+      audios: address.audios,
     );
     // open() returns before the stream has loaded, and picking a subtitle track before that is dropped.
     if (player.state.duration == Duration.zero) {
@@ -543,6 +548,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await player.seek(resume);
     }
     await _applySubtitle(stream);
+    await _applyAudio();
     await player.setRate(rate);
   }
 
@@ -591,6 +597,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
             .firstWhere((t) => t != null)
             .timeout(const Duration(seconds: 15), onTimeout: () => null);
     if (track != null) await _setSubtitle(track, s.label);
+  }
+
+  String _audioName(SubtitleTrack t) =>
+      t.title ?? t.language ?? 'Track ${t.id}';
+
+  bool get _hasAudios => player.state.audios.length > 1;
+
+  Future<void> _setAudio(SubtitleTrack track) async {
+    await player.setAudioTrack(track);
+    if (mounted) setState(() => audio = _audioName(track));
+  }
+
+  /// The audio picked before, when this stream has a track named alike.
+  Future<void> _applyAudio() async {
+    final track = player.state.audios
+        .where((t) => _audioName(t) == audio)
+        .firstOrNull;
+    if (track != null) await player.setAudioTrack(track);
+  }
+
+  Future<void> _openAudio() async {
+    final options = {for (final t in player.state.audios) t: _audioName(t)};
+    final picked = await _pick(
+      'Audio',
+      options,
+      options.entries.where((e) => e.value == audio).firstOrNull?.key ??
+          player.state.audios.first,
+    );
+    if (picked != null) await _setAudio(picked);
   }
 
   Future<void> _setSubtitle(SubtitleTrack track, String label) async {
@@ -1412,6 +1447,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
           onPressed: _openSubtitles,
         ),
+      if (_hasAudios)
+        IconButton(
+          tooltip: 'Audio · ${audio ?? 'Auto'}',
+          icon: const Icon(Icons.audiotrack_outlined),
+          onPressed: _openAudio,
+        ),
       IconButton(
         tooltip: 'Open in another app',
         icon: const Icon(Icons.open_in_new_rounded),
@@ -1706,6 +1747,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       : Icons.subtitles_outlined,
                   'Subtitles · $subtitle',
                   _openSubtitles,
+                ),
+              if (_hasAudios)
+                control(
+                  Icons.audiotrack_outlined,
+                  'Audio · ${audio ?? 'Auto'}',
+                  _openAudio,
                 ),
               if (_canSwitchServer)
                 control(
