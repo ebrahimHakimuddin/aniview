@@ -9,7 +9,7 @@ import 'anilist.dart';
 import 'mal.dart';
 import 'metadata.dart';
 import 'settings.dart';
-import 'ui.dart' show sheetTitle;
+import 'ui.dart' show confirmDestructive, sheetTitle;
 import 'states.dart' show showSheet;
 
 /// Where browsing comes from. Both catalogues answer in AniList's shape (see [Show]); MyAnimeList's adapter maps
@@ -111,8 +111,6 @@ enum ListStatus {
 /// What the player's automatic sync did with a watched episode.
 enum SyncResult { skipped, saved, queued }
 
-/// Browsing and AniList tracking. Reads prefer AniList and fall back to MyAnimeList's public data
-/// when it errors; saves go to AniList only and are kept on-device for the next app open when it fails.
 /// A list-keeping account: where saves go and your list comes from.
 abstract interface class ListProvider {
   String get name;
@@ -194,14 +192,11 @@ class _MalProvider implements ListProvider {
   Future<void> remove(int id) => MAL.removeFromList(id);
 }
 
-/// Browsing, and list tracking on AniList and/or MyAnimeList. The one signed in to first is the primary: your
-/// list is read from it and saves go to it first, then to the other. Browsing and social stay on AniList (reads
-/// fall back to MyAnimeList's public data when it errors).
+/// Browsing, and list tracking on AniList or MyAnimeList: one account at a time, where your list is read from and
+/// saves go. Browsing and social stay on AniList (reads fall back to MyAnimeList's public data when it errors).
 class Tracker {
   static const anilist = _AniListProvider();
   static const mal = _MalProvider();
-  static const _orderKey = 'tracker_order';
-  static List<String> _order = [];
 
   /// Every account that can be signed in to; replaced in tests.
   @visibleForTesting
@@ -209,24 +204,27 @@ class Tracker {
 
   static Future<void> load() async {
     await Future.wait([AniList.load(), MAL.load()]);
-    _order =
-        (await SharedPreferences.getInstance()).getStringList(_orderKey) ?? [];
-  }
-
-  /// The accounts signed in to, primary first.
-  static List<ListProvider> get providers {
-    int rank(ListProvider p) {
-      final i = _order.indexOf(p.name);
-      return i < 0 ? 99 : i;
+    // Before accounts were exclusive both could be signed in: keep the one signed in to first.
+    final prefs = await SharedPreferences.getInstance();
+    final order = prefs.getStringList('tracker_order') ?? const [];
+    final both = accounts.where((p) => p.signedIn).toList();
+    if (both.length > 1) {
+      final keep = both.firstWhere(
+        (p) => p.name == order.firstOrNull,
+        orElse: () => both.first,
+      );
+      for (final p in both) {
+        if (p != keep) await signOut(p);
+      }
     }
-
-    return [
-      for (final p in accounts)
-        if (p.signedIn) p,
-    ]..sort((a, b) => rank(a).compareTo(rank(b)));
+    await prefs.remove('tracker_order');
   }
 
-  static bool get signedIn => providers.isNotEmpty;
+  /// The account signed in to, if any.
+  static ListProvider? get account =>
+      accounts.where((p) => p.signedIn).firstOrNull;
+
+  static bool get signedIn => account != null;
 
   /// AniList in particular, which social, stats and notifications need.
   static bool get anilistSignedIn => anilist.signedIn;
@@ -264,15 +262,23 @@ class Tracker {
     if (!provider.usable) {
       throw Exception('This build has no ${provider.name} client id');
     }
+    // One account at a time: switching signs the other out, once this one has signed in.
+    final other = account;
+    if (other != null &&
+        other != provider &&
+        !await confirmDestructive(
+          context,
+          title: 'Switch to ${provider.name}?',
+          message:
+              'You\'ll be signed out of ${other.name}. Your list and progress then come from ${provider.name}.',
+          action: 'Switch',
+        )) {
+      return null;
+    }
+    if (!context.mounted) return null;
     await provider.login(context);
     if (!provider.signedIn) return null;
-    if (!_order.contains(provider.name)) {
-      _order = [..._order, provider.name];
-      await (await SharedPreferences.getInstance()).setStringList(
-        _orderKey,
-        _order,
-      );
-    }
+    if (other != null && other != provider) await signOut(other);
     Analytics.event('sign_in', {'tracker': provider.name});
     final me = await provider.viewer().catchError((Object _) => null);
     return me?['name'] as String? ?? '${provider.name} user';
@@ -281,12 +287,7 @@ class Tracker {
   /// Signs out and drops its saves still queued, so the next account never sends the last one's.
   static Future<void> signOut(ListProvider provider) async {
     await provider.logout();
-    _order = [
-      for (final n in _order)
-        if (n != provider.name) n,
-    ];
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_orderKey, _order);
     await prefs.remove(provider.pendingKey);
     Settings.welcomeName = null; // the next greeting asks whoever is left
   }
@@ -332,8 +333,7 @@ class Tracker {
     }
   }
 
-  static Future<Map<String, dynamic>?> viewer() async =>
-      providers.firstOrNull?.viewer();
+  static Future<Map<String, dynamic>?> viewer() async => account?.viewer();
 
   static Future<List> trending() => _browse((c) => c.trending()).then(_safe);
 
@@ -373,9 +373,9 @@ class Tracker {
       ? fallback.relations(media)
       : _browse((c) => c.relations(media));
 
-  /// The primary account's watching (incl. rewatching) and planning entries; with [all], every list.
+  /// The account's watching (incl. rewatching) and planning entries; with [all], every list.
   static Future<Map<String, List>> lists({bool all = false}) async =>
-      await providers.firstOrNull?.lists(all: all) ?? {};
+      await account?.lists(all: all) ?? {};
 
   /// The list status after watching up to [progress]: completed on the last episode, otherwise
   /// watching (or still rewatching).
@@ -386,9 +386,9 @@ class Tracker {
       ? 'REPEATING'
       : 'CURRENT';
 
-  /// Saves progress to the primary account, then to the other; each one that can't take it (down, or you're
-  /// offline) keeps it queued on-device for [syncPending]. Returns false when the primary's was queued.
-  /// [forwardOnly] (the player's automatic sync) never lowers an account's progress. A [status] of COMPLETED counts
+  /// Saves progress to the account; when it can't take it (down, or you're offline) it's queued on-device for
+  /// [syncPending]. Returns false when it was queued. [forwardOnly] (the player's automatic sync) never lowers the
+  /// account's progress. A [status] of COMPLETED counts
   /// every episode watched.
   static Future<bool> save(
     Map media,
@@ -402,20 +402,18 @@ class Tracker {
       'media': media,
       'progress': progress,
       'status': status,
-      // MAL-sourced shows (browsed while AniList was down) don't know your AniList progress.
-      'forwardOnly': forwardOnly && media['mediaListEntry'] == null,
+      // Checked against the account's progress: the show's entry may be stale (watched on another device since).
+      'forwardOnly': forwardOnly,
     };
     media['mediaListEntry'] = {'progress': progress, 'status': status};
-    var primaryDone = true;
-    for (final (i, p) in providers.indexed) {
-      final done = await _push(p, job);
-      if (!done) await _queue(p, job);
-      if (i == 0) primaryDone = done;
+    final p = account;
+    if (p == null) return true;
+    if (!await _push(p, job)) {
+      await _queue(p, job);
+      return false;
     }
-    if (primaryDone) {
-      syncPending().ignore(); // answering again: send what was queued
-    }
-    return primaryDone;
+    syncPending().ignore(); // answering again: send what was queued
+    return true;
   }
 
   /// Sends one save to [p]. True when it's done or can never apply (signed out, a show [p] doesn't have); false
@@ -474,17 +472,11 @@ class Tracker {
     return shows.isEmpty ? null : shows[pick.nextInt(shows.length)];
   }
 
-  /// Removes the show from every account signed in to; the primary's failure is reported, the other's isn't.
+  /// Removes the show from the account's list; a failure is reported.
   static Future<void> removeFromList(Map media) async {
     await resolveIds(media);
-    for (final (i, p) in providers.indexed) {
-      final id = p.idOf(media);
-      if (id == null) continue;
-      try {
-        await p.remove(id);
-      } catch (_) {
-        if (i == 0) rethrow;
-      }
+    if (account case final p?) {
+      if (p.idOf(media) case final id?) await p.remove(id);
     }
     media['mediaListEntry'] = null;
   }

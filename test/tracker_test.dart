@@ -16,36 +16,35 @@ Map<String, dynamic> _show(int id) => {
 };
 
 class _Account implements ListProvider {
-  _Account(this.name, this.log, {this.down = false, this.hasId = true});
+  _Account(this.name, this.log, {this.remote = 0});
   @override
   final String name;
   final List<String> log;
-  bool down, hasId;
+  @override
+  bool signedIn = true;
+  final int remote;
   @override
   bool get usable => true;
   @override
-  bool get signedIn => true;
-  @override
   String get pendingKey => '${name}_pending';
   @override
-  int? idOf(Map media) => hasId ? 7 : null;
+  int? idOf(Map media) => 7;
   @override
   Future<void> login(BuildContext context) async {}
   @override
-  Future<void> logout() async {}
+  Future<void> logout() async => signedIn = false;
   @override
   Future<Map<String, dynamic>?> viewer() async => {'name': name};
   @override
   Future<Map<String, List>> lists({bool all = false}) async => {};
   @override
-  Future<int> progressOf(int id) async => 0;
+  Future<int> progressOf(int id) async => remote;
   @override
   Future<void> save(
     int id, {
     required String status,
     required int progress,
   }) async {
-    if (down) throw Exception('down');
     log.add('$name:$progress');
   }
 
@@ -183,39 +182,41 @@ void main() {
     });
   });
 
-  group('two accounts', () {
+  group('one account at a time', () {
     tearDown(() => Tracker.accounts = const [Tracker.anilist, Tracker.mal]);
 
-    test('a save goes to the primary first, then the other', () async {
+    test('saves go only to the account signed in to', () async {
       SharedPreferences.setMockInitialValues({});
       final log = <String>[];
-      Tracker.accounts = [_Account('a', log), _Account('b', log)];
+      Tracker.accounts = [
+        _Account('a', log)..signedIn = false,
+        _Account('b', log),
+      ];
       expect(await Tracker.save(_show(1), 3), isTrue);
-      expect(log, ['a:3', 'b:3']);
+      expect(log, ['b:3']);
     });
 
-    test('the other being down queues only its save', () async {
+    test('a forward-only save never lowers the account\'s progress', () async {
       SharedPreferences.setMockInitialValues({});
       final log = <String>[];
-      final b = _Account('b', log, down: true);
-      Tracker.accounts = [_Account('a', log), b];
-      expect(await Tracker.save(_show(2), 4), isTrue);
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('a_pending') ?? '{}', '{}');
-      expect(prefs.getString('b_pending'), contains('"2"'));
-      b.down = false;
-      expect(await Tracker.syncPending(), 1);
-      expect(log, ['a:4', 'b:4']);
+      Tracker.accounts = [_Account('a', log, remote: 9)];
+      expect(await Tracker.save(_show(4), 4, forwardOnly: true), isTrue);
+      expect(log, isEmpty);
     });
 
-    test('a show the other service lacks is skipped', () async {
-      SharedPreferences.setMockInitialValues({});
-      final log = <String>[];
-      Tracker.accounts = [_Account('a', log), _Account('b', log, hasId: false)];
-      final show = _show(3)..['idMal'] = 1;
-      expect(await Tracker.save(show, 2), isTrue);
-      expect(log, ['a:2']);
-    });
+    test(
+      'signed in to both from before, the first one signed in to stays',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'tracker_order': ['b', 'a'],
+        });
+        final a = _Account('a', []), b = _Account('b', []);
+        Tracker.accounts = [a, b];
+        await Tracker.load();
+        expect(Tracker.account, b);
+        expect(a.signedIn, isFalse);
+      },
+    );
   });
 
   test('an entry draft completes at the last episode and counts them all', () {

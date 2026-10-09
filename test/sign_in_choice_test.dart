@@ -75,11 +75,46 @@ void main() {
       await tester.tap(find.text('Sign in with $chosen'));
       await tester.pumpAndSettle();
       expect(name, '$chosen viewer');
-      expect(
-        (await SharedPreferences.getInstance()).getStringList('tracker_order'),
-        [chosen],
-      );
+      expect(Tracker.account?.name, chosen);
       expect(chosen == 'AniList' ? mal.logins : ani.logins, 0);
     });
   }
+
+  testWidgets('signing in to the other account switches, once confirmed', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    final old = Tracker.accounts;
+    final ani = _Account('AniList')..signedIn = true;
+    final mal = _Account('MyAnimeList');
+    Tracker.accounts = [ani, mal];
+    addTearDown(() => Tracker.accounts = old);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Tracker.signIn(context, mal),
+              child: const Text('Sign in'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Sign in'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(Tracker.account, ani);
+    expect(mal.logins, 0);
+
+    await tester.tap(find.text('Sign in'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Switch'));
+    await tester.pumpAndSettle();
+    expect(Tracker.account, mal);
+    expect(ani.signedIn, isFalse);
+  });
 }

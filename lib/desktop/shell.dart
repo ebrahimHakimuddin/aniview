@@ -554,7 +554,7 @@ class _Account extends StatelessWidget {
                             ),
                             Text(
                               Tracker.signedIn
-                                  ? Tracker.providers.first.name
+                                  ? Tracker.account!.name
                                   : 'Sign in',
                               style: text.bodySmall?.copyWith(
                                 color: scheme.onSurfaceVariant,

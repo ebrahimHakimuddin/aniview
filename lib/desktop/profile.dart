@@ -70,9 +70,7 @@ class DeskProfile extends StatelessWidget {
                                     style: text.headlineMedium,
                                   ),
                                   Text(
-                                    Tracker.providers
-                                        .map((p) => p.name)
-                                        .join(' · '),
+                                    Tracker.account?.name ?? '',
                                     style: text.bodyMedium?.copyWith(
                                       color: scheme.onSurfaceVariant,
                                     ),
@@ -84,7 +82,7 @@ class DeskProfile extends StatelessWidget {
                               onPressed: !Tracker.signedIn
                                   ? null
                                   : () async {
-                                      final account = Tracker.providers.first;
+                                      final account = Tracker.account!;
                                       await Tracker.signOut(account);
                                       if (!context.mounted) return;
                                       showSuccess(

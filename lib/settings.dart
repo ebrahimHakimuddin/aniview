@@ -847,7 +847,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (p.usable)
               _Account(
                 provider: p,
-                primary: Tracker.providers.firstOrNull == p,
+                other: Tracker.account == p ? null : Tracker.account,
                 onSignIn: () => _signIn(p),
                 onSignOut: () => _signOut(p),
               ),
@@ -1515,19 +1515,19 @@ class _Choice extends StatelessWidget {
   );
 }
 
-/// The AniList account at the top of Settings.
+/// An account at the top of Settings: AniList or MyAnimeList, one signed in at a time.
 class _Account extends StatelessWidget {
   const _Account({
     required this.provider,
-    required this.primary,
+    required this.other,
     required this.onSignIn,
     required this.onSignOut,
   });
 
   final ListProvider provider;
 
-  /// The first account signed in to: saves go to it first.
-  final bool primary;
+  /// The other account, when it's the one signed in: signing in here switches from it.
+  final ListProvider? other;
   final VoidCallback onSignIn, onSignOut;
 
   bool get signedIn => provider.signedIn;
@@ -1561,9 +1561,9 @@ class _Account extends StatelessWidget {
             ),
             subtitle: Text(
               signedIn
-                  ? primary
-                        ? 'Primary · your list comes from here and progress syncs here first'
-                        : 'Progress also syncs here'
+                  ? 'Your list and progress are kept here'
+                  : other != null
+                  ? 'Switching signs you out of ${other!.name}'
                   : 'Sign in to track what you watch',
             ),
             trailing: signedIn
@@ -1571,6 +1571,11 @@ class _Account extends StatelessWidget {
                     style: destructiveButton,
                     onPressed: onSignOut,
                     child: const Text('Sign out'),
+                  )
+                : other != null
+                ? OutlinedButton(
+                    onPressed: onSignIn,
+                    child: const Text('Switch'),
                   )
                 : FilledButton(
                     onPressed: onSignIn,

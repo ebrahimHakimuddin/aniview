@@ -1745,9 +1745,7 @@ class _MeScreen extends StatelessWidget {
                             Text(
                               me == null
                                   ? 'Watching on this device'
-                                  : Tracker.providers
-                                        .map((p) => p.name)
-                                        .join(' · '),
+                                  : Tracker.account?.name ?? '',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: text.bodySmall?.copyWith(
