@@ -24,5 +24,10 @@ Name: "{autodesktop}\AniView"; Filename: "{app}\aniview.exe"; Tasks: desktopicon
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\aniview"; ValueType: string; ValueName: ""; ValueData: "URL:AniView sign-in"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\aniview"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\aniview\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\aniview.exe"" ""%1"""
+
 [Run]
 Filename: "{app}\aniview.exe"; Description: "Start AniView"; Flags: nowait postinstall skipifsilent

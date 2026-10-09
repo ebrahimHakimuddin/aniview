@@ -60,6 +60,10 @@ Future<String?> signInInBrowser(
 /// Tells the desktop to open `aniview://` links with this app: its menu entry, which also registers the scheme, as a
 /// Linux package would install (kept pointing at where the app is now); a hidden one when it isn't in the menu.
 Future<void> _registerScheme() async {
+  if (Platform.isWindows) {
+    await AndroidApp.registerSignInScheme();
+    return;
+  }
   if (!Platform.isLinux) return;
   try {
     if (await launcherInstalled()) {

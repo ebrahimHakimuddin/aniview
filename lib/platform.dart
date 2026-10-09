@@ -73,12 +73,22 @@ class AndroidApp {
     try {
       await _app.invokeMethod('open', url);
     } on MissingPluginException {
-      // `start` takes the first quoted argument as a window title, hence the empty one.
-      await (Platform.isWindows
-          ? Process.run('cmd', ['/c', 'start', '', url])
-          : Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [url]));
+      if (Platform.isWindows) rethrow; // The Windows runner uses ShellExecute, preserving OAuth query parameters.
+      final result = await Process.run(Platform.isMacOS ? 'open' : 'xdg-open', [
+        url,
+      ]);
+      if (result.exitCode != 0) {
+        throw PlatformException(
+          code: 'open',
+          message: 'Could not open the browser',
+        );
+      }
     }
   }
+
+  /// Windows: makes `aniview://` links (the browser's way back after signing in) open this app.
+  static Future<void> registerSignInScheme() =>
+      _app.invokeMethod('registerSignInScheme');
 
   /// Installs the APK at [path] as an update (Android asks to confirm). False when Android first needs
   /// "Install unknown apps" allowed: its settings page opens, and the install goes on once you're back.
