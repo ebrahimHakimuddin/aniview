@@ -412,10 +412,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               ),
             ),
-            if (site != null && download == null)
+            if (site != null &&
+                (download == null || download.status == DownloadStatus.failed))
               ListTile(
                 leading: const Icon(Icons.download_rounded),
-                title: Text('Download ${dub ? 'dub' : 'sub'}'),
+                title: Text(
+                  download == null
+                      ? 'Download ${dub ? 'dub' : 'sub'}'
+                      : 'Retry download',
+                ),
                 onTap: () => Navigator.pop(
                   context,
                   () => Downloads.instance.enqueue(
@@ -2402,8 +2407,13 @@ class _DownloadButton extends StatelessWidget {
           tooltip: d!.error ?? 'Download failed',
           icon: Icon(Icons.error_outline_rounded, color: scheme.error),
           onPressed: () {
-            showError(context, 'Retrying · ${d.error ?? 'download failed'}');
-            Downloads.instance.retry(d);
+            Downloads.instance.enqueue(
+              media,
+              source.name,
+              [episode],
+              dub: dub,
+              season: season,
+            );
           },
         ),
       };
