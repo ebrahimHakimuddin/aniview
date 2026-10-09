@@ -1289,107 +1289,134 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           ),
           CustomScrollView(
+            controller: scroll,
             clipBehavior: Clip.none,
             slivers: [
               SliverToBoxAdapter(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: size.height * .62),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      tvMargin,
-                      24,
-                      tvMargin,
-                      0,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        SizedBox(
-                          width: size.width * .5,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_eyebrow case final eyebrow?) ...[
-                                Eyebrow(eyebrow),
-                                const SizedBox(height: 8),
-                              ],
-                              Text(
-                                titleOf(media),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: text.headlineLarge?.copyWith(
-                                  fontSize: 40,
-                                  height: 1.05,
-                                  letterSpacing: -.8,
+                // Back up to anything up here (from the episodes, say) brings the whole top back, not just the
+                // button scrolled to the edge.
+                child: Focus(
+                  canRequestFocus: false,
+                  skipTraversal: true,
+                  onFocusChange: (inside) {
+                    if (inside && scroll.hasClients && scroll.offset > 0) {
+                      scroll.animateTo(
+                        0,
+                        duration: motionMs(context, 300),
+                        curve: Curves.easeOutCubic,
+                      );
+                    }
+                  },
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: size.height * .62),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        tvMargin,
+                        24,
+                        tvMargin,
+                        0,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          SizedBox(
+                            width: size.width * .5,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (_eyebrow case final eyebrow?) ...[
+                                  Eyebrow(eyebrow),
+                                  const SizedBox(height: 8),
+                                ],
+                                Text(
+                                  titleOf(media),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: text.headlineLarge?.copyWith(
+                                    fontSize: 40,
+                                    height: 1.05,
+                                    letterSpacing: -.8,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  if (score != null) ...[
-                                    Pill.score(score),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  if (airing != null) ...[
-                                    Pill(
-                                      'Next $airing',
-                                      icon: Icons.schedule_rounded,
-                                    ),
-                                    const SizedBox(width: 8),
-                                  ],
-                                  Flexible(
-                                    child: Text(
-                                      mediaMeta(media, genres: 3),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: text.bodyMedium?.copyWith(
-                                        color: scheme.onSurfaceVariant,
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    if (score != null) ...[
+                                      Pill.score(score),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    if (airing != null) ...[
+                                      Pill(
+                                        'Next $airing',
+                                        icon: Icons.schedule_rounded,
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    Flexible(
+                                      child: Text(
+                                        mediaMeta(media, genres: 3),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: text.bodyMedium?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              if (description.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                _about(description),
-                              ],
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        TvRow(
-                          child: Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              _playAction(),
-                              _audio,
-                              _sourceMenu(),
-                              if (source != null) _wrongShow(),
-                              FutureBuilder(
-                                future: record,
-                                builder: (context, saved) =>
-                                    _orderButton(_newestFirst(saved.data)),
-                              ),
-                              if (Tracker.signedIn)
-                                FilledButton.tonalIcon(
-                                  onPressed: _editEntry,
-                                  icon: Icon(
-                                    !show.inList
-                                        ? Icons.bookmark_add_outlined
-                                        : Icons.bookmark_rounded,
-                                  ),
-                                  label: Text(
-                                    '${ListStatus.labels[show.listStatus] ?? 'Add to list'} · $_progress/${total ?? '?'}',
-                                  ),
+                                  ],
                                 ),
-                              _moreMenu(),
-                            ],
+                                if (description.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  _about(description),
+                                ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 24),
+                          // The actions on one line, ⋮ at its end; fixing the match and the order on a quieter one
+                          // under it (all on one wrapped onto a line of its own, ⋮ alone on the next).
+                          TvRow(
+                            child: Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                _playAction(),
+                                _audio,
+                                _sourceMenu(),
+                                if (Tracker.signedIn)
+                                  FilledButton.tonalIcon(
+                                    onPressed: _editEntry,
+                                    icon: Icon(
+                                      !show.inList
+                                          ? Icons.bookmark_add_outlined
+                                          : Icons.bookmark_rounded,
+                                    ),
+                                    label: Text(
+                                      '${ListStatus.labels[show.listStatus] ?? 'Add to list'} · $_progress/${total ?? '?'}',
+                                    ),
+                                  ),
+                                _moreMenu(),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TvRow(
+                            child: Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                if (source != null) _wrongShow(),
+                                FutureBuilder(
+                                  future: record,
+                                  builder: (context, saved) =>
+                                      _orderButton(_newestFirst(saved.data)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
