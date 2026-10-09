@@ -24,7 +24,7 @@ Future<void> installLauncher() async {
   final data = Directory('$home/.local/share/$launcherId');
   await data.create(recursive: true);
   final icon = File('${data.path}/icon.png');
-  final bytes = await rootBundle.load('assets/icon/aniview_icon.png');
+  final bytes = await rootBundle.load('assets/icon/aniview_app_icon.png');
   await icon.writeAsBytes(
     bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
   );

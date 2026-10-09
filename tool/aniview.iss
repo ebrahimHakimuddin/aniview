@@ -12,6 +12,7 @@ OutputBaseFilename=AniView-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\aniview.exe
 
 [Files]

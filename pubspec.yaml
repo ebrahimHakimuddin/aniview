@@ -34,6 +34,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/icon/aniview_app_icon.png
     - assets/icon/aniview_icon.png
     - assets/icon/aniview_wordmark.png
     - assets/icon/aniview_wordmark_light.png
