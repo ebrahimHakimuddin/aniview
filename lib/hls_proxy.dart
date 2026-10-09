@@ -97,7 +97,42 @@ class HlsProxy {
         if (kind == 'local') {
           final local = File('${_dirs[int.parse(id)]}/$file');
           if (!await local.exists()) throw const FileSystemException();
-          await response.addStream(local.openRead());
+          final length = await local.length();
+          response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+          if (file.endsWith('.mp4')) {
+            response.headers.contentType = ContentType('video', 'mp4');
+          }
+          var start = 0, end = length - 1;
+          final range = request.headers.value(HttpHeaders.rangeHeader);
+          if (range != null) {
+            final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range);
+            if (match != null &&
+                (match[1]!.isNotEmpty || match[2]!.isNotEmpty)) {
+              if (match[1]!.isEmpty) {
+                start = max(0, length - int.parse(match[2]!));
+              } else {
+                start = int.parse(match[1]!);
+                if (match[2]!.isNotEmpty) end = min(end, int.parse(match[2]!));
+              }
+              if (start >= length || start > end) {
+                response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+                response.headers.set(
+                  HttpHeaders.contentRangeHeader,
+                  'bytes */$length',
+                );
+                return await response.close();
+              }
+              response.statusCode = HttpStatus.partialContent;
+              response.headers.set(
+                HttpHeaders.contentRangeHeader,
+                'bytes $start-$end/$length',
+              );
+            }
+          }
+          response.contentLength = end - start + 1;
+          if (request.method != 'HEAD') {
+            await response.addStream(local.openRead(start, end + 1));
+          }
         } else {
           final (tree, folder) = _documents[int.parse(id)];
           final bytes = await AndroidApp.readDownloadFile(tree, folder, file);

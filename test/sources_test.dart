@@ -89,6 +89,33 @@ void main() {
     expect(await status(guessed), 403);
   });
 
+  test('the player can seek within a downloaded file', () async {
+    final dir = await Directory.systemTemp.createTemp();
+    addTearDown(() => dir.delete(recursive: true));
+    await File('${dir.path}/episode.mp4')
+        .writeAsBytes(List.generate(100, (i) => i));
+    final url = await HlsProxy.localFile(dir.path, 'episode.mp4');
+    final client = HttpClient();
+    addTearDown(client.close);
+    final request = await client.getUrl(Uri.parse(url));
+    request.headers.set(HttpHeaders.rangeHeader, 'bytes=20-29');
+    final response = await request.close();
+    expect(response.statusCode, HttpStatus.partialContent);
+    expect(
+      response.headers.value(HttpHeaders.contentRangeHeader),
+      'bytes 20-29/100',
+    );
+    expect(
+      await response.expand((bytes) => bytes).toList(),
+      List.generate(10, (i) => i + 20),
+    );
+    final beyond = await client.getUrl(Uri.parse(url));
+    beyond.headers.set(HttpHeaders.rangeHeader, 'bytes=100-');
+    final invalid = await beyond.close();
+    expect(invalid.statusCode, HttpStatus.requestedRangeNotSatisfiable);
+    await invalid.drain<void>();
+  });
+
   test('rewrites HLS playlists through the proxy', () {
     String proxy(String url, String ext) => 'P($url).$ext';
     final base = Uri.parse('https://cdn.test/a/master.m3u8');
