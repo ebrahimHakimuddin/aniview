@@ -123,6 +123,15 @@ TextTheme get typeScale {
   );
 }
 
+/// Holds a segmented button's segments to [buttonHeight] around a [TextTheme.labelLarge] label.
+EdgeInsets get _segmentPadding {
+  final label = typeScale.labelLarge!;
+  return EdgeInsets.symmetric(
+    horizontal: 12,
+    vertical: (buttonHeight - label.fontSize! * label.height!) / 2,
+  );
+}
+
 ThemeData buildTheme() {
   if (Settings.activeTheme != ThemeSelection.custom) {
     return _buildMaterialTheme();
@@ -321,6 +330,12 @@ ThemeData buildTheme() {
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(48, buttonHeight)),
+        // Segments ignore minimumSize: each is its label's line plus this padding, so this holds them to the
+        // outline. Left to the defaults they came out 40 tall (48 behind a phone's tap target), short of it on
+        // desktop and TV with their labels high.
+        textStyle: WidgetStatePropertyAll(typeScale.labelLarge),
+        padding: WidgetStatePropertyAll(_segmentPadding),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         shape: WidgetStatePropertyAll(
           RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(buttonRadius),
@@ -403,6 +418,12 @@ ThemeData _buildMaterialTheme() {
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(48, buttonHeight)),
+        // Segments ignore minimumSize: each is its label's line plus this padding, so this holds them to the
+        // outline. Left to the defaults they came out 40 tall (48 behind a phone's tap target), short of it on
+        // desktop and TV with their labels high.
+        textStyle: WidgetStatePropertyAll(typeScale.labelLarge),
+        padding: WidgetStatePropertyAll(_segmentPadding),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         shape: WidgetStatePropertyAll(controlShape),
       ),
     ),
