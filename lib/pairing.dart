@@ -9,7 +9,6 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' hide Padding, State;
 
 import 'anilist.dart';
-import 'mal.dart';
 import 'tracker.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -154,8 +153,8 @@ class TvLink {
     } catch (_) {}
   }
 
-  /// Waits for a phone to pair as a remote; completes with its sign-in ({token}: AniList's, or {mal}: see
-  /// [MAL.shareable]), empty when it isn't signed in. Phones can only pair while this is waiting.
+  /// Waits for a phone to pair as a remote; completes with its sign-in (see [Tracker.shareable]), empty when it
+  /// isn't signed in. Phones can only pair while this is waiting.
   static Future<Map> pair() {
     stopPairing();
     return (_paired = Completer()).future;
@@ -375,15 +374,7 @@ class _TvPairScreenState extends State<TvPairScreen> {
   void initState() {
     super.initState();
     TvLink.pair().then((sent) async {
-      final signIn =
-          !Tracker.signedIn && (sent['token'] != null || sent['mal'] != null);
-      if (signIn) {
-        if (sent['token'] case final String token) {
-          await AniList.useToken(token);
-        } else {
-          await MAL.useShared(sent['mal'] as Map);
-        }
-      }
+      final signIn = !Tracker.signedIn && await Tracker.useShared(sent);
       if (!mounted) return;
       showSuccess(
         context,
@@ -667,7 +658,6 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     });
     try {
       final base = target.toString();
-      final token = AniList.token, mal = MAL.shareable;
       final agreed = await _handshake(
         context,
         base,
@@ -679,7 +669,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
             Uri.parse('$base/remote'),
             body: jsonEncode({
               'data': base64.encode(
-                seal(agreed.key, jsonEncode({'token': ?token, 'mal': ?mal})),
+                seal(agreed.key, jsonEncode(Tracker.shareable)),
               ),
             }),
           )

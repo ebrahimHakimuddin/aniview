@@ -52,6 +52,15 @@ class _Account implements ListProvider {
 
   @override
   Future<void> remove(int id) async => log.add('$name:remove');
+  @override
+  String get shareKey => name;
+  @override
+  Object? shareable;
+  @override
+  Future<void> useShared(Object shared) async {
+    shareable = shared;
+    signedIn = true;
+  }
 }
 
 void main() {
@@ -219,6 +228,21 @@ void main() {
         expect(a.signedIn, isFalse);
       },
     );
+
+    test('a paired TV signs in to the account the phone shared', () async {
+      final phoneA = _Account('a', [])..signedIn = false;
+      final phoneB = _Account('b', [])..shareable = 'secret';
+      Tracker.accounts = [phoneA, phoneB];
+      final sent = Tracker.shareable;
+      expect(sent, {'b': 'secret'});
+
+      final tvA = _Account('a', [])..signedIn = false;
+      final tvB = _Account('b', [])..signedIn = false;
+      Tracker.accounts = [tvA, tvB];
+      expect(await Tracker.useShared(sent), isTrue);
+      expect((tvA.signedIn, tvB.shareable), (false, 'secret'));
+      expect(await Tracker.useShared({}), isFalse);
+    });
   });
 
   test('an entry draft completes at the last episode and counts them all', () {

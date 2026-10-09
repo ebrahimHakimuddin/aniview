@@ -134,6 +134,15 @@ abstract interface class ListProvider {
   Future<int> progressOf(int id);
   Future<void> save(int id, {required String status, required int progress});
   Future<void> remove(int id);
+
+  /// The field of a pairing message that carries this account's sign-in (see [Tracker.shareable]).
+  String get shareKey;
+
+  /// The sign-in a paired TV can use; null when signed out.
+  Object? get shareable;
+
+  /// Signs in with what a paired phone shared.
+  Future<void> useShared(Object shared);
 }
 
 class _AniListProvider implements ListProvider {
@@ -166,6 +175,12 @@ class _AniListProvider implements ListProvider {
       AniList.saveEntry(id, status: status, progress: progress);
   @override
   Future<void> remove(int id) => AniList.removeFromList(id);
+  @override
+  String get shareKey => 'token';
+  @override
+  Object? get shareable => AniList.token;
+  @override
+  Future<void> useShared(Object shared) => AniList.useToken(shared as String);
 }
 
 class _MalProvider implements ListProvider {
@@ -197,6 +212,12 @@ class _MalProvider implements ListProvider {
       MAL.saveEntry(id, status: status, progress: progress);
   @override
   Future<void> remove(int id) => MAL.removeFromList(id);
+  @override
+  String get shareKey => 'mal';
+  @override
+  Object? get shareable => MAL.shareable;
+  @override
+  Future<void> useShared(Object shared) => MAL.useShared(shared as Map);
 }
 
 /// Browsing, and list tracking on AniList or MyAnimeList: one account at a time, where your list is read from and
@@ -232,6 +253,22 @@ class Tracker {
       accounts.where((p) => p.signedIn).firstOrNull;
 
   static bool get signedIn => account != null;
+
+  /// The account's sign-in for a paired TV, under its [ListProvider.shareKey]; empty when signed out.
+  static Map<String, Object> get shareable => {
+    if (account case final p?) p.shareKey: ?p.shareable,
+  };
+
+  /// Signs in with what a paired phone sent as [shareable]; false when it sent no sign-in.
+  static Future<bool> useShared(Map sent) async {
+    for (final p in accounts) {
+      if (sent[p.shareKey] case final Object shared) {
+        await p.useShared(shared);
+        return true;
+      }
+    }
+    return false;
+  }
 
   /// AniList in particular, which social, stats and notifications need.
   static bool get anilistSignedIn => anilist.signedIn;

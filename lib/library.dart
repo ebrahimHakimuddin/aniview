@@ -199,7 +199,8 @@ class _MyListScreenState extends State<MyListScreen> {
     final ok = await confirmDestructive(
       context,
       title: 'Remove $count from your list?',
-      message: 'Their progress and status on AniList are deleted too.',
+      message:
+          'Their progress and status on ${Tracker.account?.name ?? 'AniList'} are deleted too.',
       action: 'Remove',
     );
     if (!ok || !mounted) return;

@@ -125,7 +125,7 @@ Future<void> setListStatus(
       context,
       saved
           ? '${titleOf(media)} · ${ListStatus.labels[status]}'
-          : 'Saved on this device · syncs when AniList is back',
+          : 'Saved on this device · syncs when ${Tracker.account?.name ?? 'AniList'} is back',
     );
     onChanged?.call();
   } catch (e) {

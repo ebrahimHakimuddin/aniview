@@ -42,6 +42,15 @@ class _Account implements ListProvider {
   }) async {}
   @override
   Future<void> remove(int id) async {}
+  @override
+  String get shareKey => name;
+  @override
+  Object? shareable;
+  @override
+  Future<void> useShared(Object shared) async {
+    shareable = shared;
+    signedIn = true;
+  }
 }
 
 void main() {
