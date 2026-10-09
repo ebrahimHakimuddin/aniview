@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:aniview/anilist.dart';
 import 'package:aniview/changelog.dart';
 import 'package:aniview/desktop.dart';
@@ -10,7 +12,6 @@ import 'package:aniview/settings.dart';
 import 'package:aniview/sources.dart';
 import 'package:aniview/tracker.dart';
 import 'package:aniview/ui.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -39,119 +40,99 @@ void main() {
   setUp(() => Tracker.primary = _Empty());
   tearDown(() => Tracker.primary = const AniListCatalog());
 
-  for (final platform in [
-    TargetPlatform.macOS,
-    TargetPlatform.windows,
-    TargetPlatform.linux,
-  ]) {
-    testWidgets('search shortcut and hint on $platform', (tester) async {
-      debugDefaultTargetPlatformOverride = platform;
-      final focus = FocusNode();
-      final controller = TextEditingController();
-      onDesktopFind = focus.requestFocus;
-      addTearDown(() {
-        onDesktopFind = null;
-        debugDefaultTargetPlatformOverride = null;
-        focus.dispose();
-        controller.dispose();
-      });
-      await tester.pumpWidget(
-        MaterialApp(
-          builder: (context, child) => DesktopKeys(child: child!),
-          home: Scaffold(
-            body: DeskSearchBox(
-              controller: controller,
-              focus: focus,
-              onSearch: (_) {},
-            ),
+  testWidgets('the shortcut key and F put the cursor in the search box', (
+    tester,
+  ) async {
+    final focus = FocusNode();
+    final controller = TextEditingController();
+    onDesktopFind = focus.requestFocus;
+    addTearDown(() {
+      onDesktopFind = null;
+      focus.dispose();
+      controller.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => DesktopKeys(child: child!),
+        home: Scaffold(
+          body: DeskSearchBox(
+            controller: controller,
+            focus: focus,
+            onSearch: (_) {},
           ),
         ),
-      );
-      final mac = platform == TargetPlatform.macOS;
-      expect(find.text(mac ? 'Cmd K' : 'Ctrl F'), findsOneWidget);
-      expect(focus.hasFocus, isFalse);
-      final modifier = mac
-          ? LogicalKeyboardKey.metaLeft
-          : LogicalKeyboardKey.controlLeft;
-      await tester.sendKeyDownEvent(modifier);
-      await tester.sendKeyEvent(
-        mac ? LogicalKeyboardKey.keyK : LogicalKeyboardKey.keyF,
-      );
-      await tester.sendKeyUpEvent(modifier);
-      await tester.pump();
-      expect(focus.hasFocus, isTrue);
-      await tester.pumpWidget(const SizedBox());
-    });
+      ),
+    );
+    expect(find.text('$shortcutKey F'), findsOneWidget);
+    final modifier = Platform.isMacOS
+        ? LogicalKeyboardKey.metaLeft
+        : LogicalKeyboardKey.controlLeft;
+    await tester.sendKeyDownEvent(modifier);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(modifier);
+    await tester.pump();
+    expect(focus.hasFocus, isTrue);
+  });
 
-    testWidgets('show opened from the top bar on $platform', (tester) async {
-      debugDefaultTargetPlatformOverride = platform;
-      isDesktop = true;
-      addTearDown(() {
-        debugDefaultTargetPlatformOverride = null;
-        isDesktop = false;
-      });
-      tester.view.physicalSize = const Size(1600, 1000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      SharedPreferences.setMockInitialValues({
-        'changelog_seen': changelogVersion,
-      });
-      await Settings.load();
-      Sites.load = () async => [];
+  testWidgets('a show opened from the top bar opens beside the sidebar', (
+    tester,
+  ) async {
+    isDesktop = true;
+    addTearDown(() => isDesktop = false);
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    SharedPreferences.setMockInitialValues({
+      'changelog_seen': changelogVersion,
+    });
+    await Settings.load();
+    Sites.load = () async => [];
+    Sites.reload();
+    addTearDown(() {
+      Sites.load = topSources;
       Sites.reload();
-      addTearDown(() {
-        Sites.load = topSources;
-        Sites.reload();
-      });
-      final root = GlobalKey<NavigatorState>();
-      await tester.pumpWidget(
-        MaterialApp(
-          navigatorKey: root,
-          theme: buildTheme(),
-          home: const HomeScreen(),
-        ),
-      );
-      await tester.pump();
-
-      // This is the same context used when choosing a search suggestion: the
-      // top bar is outside every section's Navigator.
-      final closed = openDetails(tester.element(find.byType(DeskSearchBox)), {
-        'id': 7,
-        'idMal': 7,
-        'title': {'userPreferred': 'Example show'},
-        'coverImage': {'extraLarge': null},
-        'episodes': 10,
-      });
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(find.byType(DetailsScreen), findsOneWidget);
-
-      if (platform == TargetPlatform.macOS) {
-        expect(root.currentState!.canPop(), isFalse);
-        expect(find.text('Home').hitTestable(), findsOneWidget);
-        expect(find.byType(DeskSearchBox).hitTestable(), findsOneWidget);
-        await tester.tap(find.text('Schedule'));
-        await tester.pump();
-        expect(find.text('This week'), findsOneWidget);
-        await tester.tap(find.text('Home'));
-        await tester.pump();
-        expect(find.byType(DetailsScreen), findsOneWidget);
-        expect(desktopBack!(), isTrue);
-      } else {
-        // Preserve Windows/Linux's current outer-route behavior.
-        expect(root.currentState!.canPop(), isTrue);
-        root.currentState!.pop();
-      }
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-      await closed;
-      expect(find.byType(DetailsScreen), findsNothing);
-      expect(tester.takeException(), isNull);
-      // Dispose the shell while the platform override still matches its setup.
-      await tester.pumpWidget(const SizedBox());
-      expect(macosPageContext, isNull);
     });
-  }
+    final root = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: root,
+        theme: buildTheme(),
+        home: const HomeScreen(),
+      ),
+    );
+    await tester.pump();
+
+    // A search suggestion opens the show from here, outside every section's Navigator.
+    final closed = openDetails(tester.element(find.byType(DeskSearchBox)), {
+      'id': 7,
+      'idMal': 7,
+      'title': {'userPreferred': 'Example show'},
+      'coverImage': {'extraLarge': null},
+      'episodes': 10,
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(DetailsScreen), findsOneWidget);
+    expect(root.currentState!.canPop(), isFalse);
+    expect(find.text('Home').hitTestable(), findsOneWidget);
+    expect(find.byType(DeskSearchBox).hitTestable(), findsOneWidget);
+
+    // It belongs to Home: another section and back again finds it still there.
+    await tester.tap(find.text('Schedule'));
+    await tester.pump();
+    expect(find.text('This week'), findsOneWidget);
+    await tester.tap(find.text('Home'));
+    await tester.pump();
+    expect(find.byType(DetailsScreen), findsOneWidget);
+
+    expect(desktopBack!(), isTrue);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await closed;
+    expect(find.byType(DetailsScreen), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    expect(deskPageContext, isNull);
+  });
 
   testWidgets('the desktop has a sidebar of places, each opening its page', (
     tester,

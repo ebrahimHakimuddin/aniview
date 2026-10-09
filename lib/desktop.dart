@@ -45,9 +45,9 @@ bool Function()? desktopBack;
 /// Set by the desktop shell: shows Search with [filters] (and [text] in the box).
 void Function(SearchFilters filters, [String text])? onDesktopSearch;
 
-/// On macOS, show pages opened from outside the section Navigator (search
-/// suggestions, the release bell) still belong beside the sidebar.
-BuildContext? Function()? macosPageContext;
+/// Set by the desktop shell: its open section's Navigator, so a show opened from outside it (a search suggestion, the
+/// release bell) still opens beside the sidebar.
+BuildContext? Function()? deskPageContext;
 
 /// Mouse and trackpad drag lists too, as a finger does (a row of posters has no other way to scroll sideways).
 class DesktopScroll extends MaterialScrollBehavior {

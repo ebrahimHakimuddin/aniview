@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -8,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
-import 'desktop.dart' show macosPageContext;
+import 'desktop.dart' show deskPageContext;
 import 'desktop/motion.dart';
 import 'desktop/widgets.dart';
 import 'downloads.dart';
@@ -37,11 +36,10 @@ Future<void> openDetails(
   bool autoplay = false,
 }) async {
   await pushSettled(
-    // The top bar sits outside the section Navigator. Pushing from its context
-    // would cover the entire Mac shell, including the sidebar and back button.
-    // Keep other platforms' existing routing unchanged.
-    isDesktop && defaultTargetPlatform == TargetPlatform.macOS
-        ? macosPageContext?.call() ?? context
+    // The top bar sits outside the section's Navigator: pushed from there the show would cover the sidebar too. Not
+    // while something (the player) covers the shell, though, or the show would open behind it.
+    isDesktop && ModalRoute.of(context)?.isCurrent != false
+        ? deskPageContext?.call() ?? context
         : context,
     MaterialPageRoute(
       // The desktop's window title follows the show (see DeskShell).
