@@ -454,28 +454,34 @@ class HeaderScrim extends StatelessWidget {
   const HeaderScrim({super.key});
 
   @override
-  Widget build(BuildContext context) => Positioned(
-    top: 0,
-    left: 0,
-    right: 0,
-    height: MediaQuery.paddingOf(context).top + kToolbarHeight + 56,
-    child: IgnorePointer(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: const [0, .6, 1],
-            colors: [
-              scheme.surface.withValues(alpha: .9),
-              scheme.surface.withValues(alpha: .75),
-              scheme.surface.withValues(alpha: 0),
-            ],
+  Widget build(BuildContext context) {
+    // This widget is usually const. Reading the inherited theme is what makes its
+    // background update when the system changes brightness, even while the art stays put.
+    final colors = Theme.of(context).colorScheme;
+    final toolbar = MediaQuery.paddingOf(context).top + kToolbarHeight;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      height: toolbar + 56,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0, toolbar / (toolbar + 56), 1],
+              colors: [
+                colors.surface,
+                colors.surface,
+                colors.surface.withValues(alpha: 0),
+              ],
+            ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// Marquee's key art: full-bleed, darkened a little under the status bar and fading into the page at its foot.

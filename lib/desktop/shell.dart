@@ -215,6 +215,9 @@ class _DeskShellState extends State<DeskShell> {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(
+      context,
+    ); // Rebuild the sidebar logo and shared colors with the theme.
     final compact = MediaQuery.sizeOf(context).width < 1000;
     return Scaffold(
       // Over the page's foot while shows are picked (Home's rows, Search).
@@ -371,51 +374,53 @@ class _Sidebar extends StatelessWidget {
   );
 
   @override
-  Widget build(BuildContext context) => AnimatedContainer(
-    duration: motionMs(context, 220),
-    curve: deskEaseInOut,
-    width: width,
-    color: scheme.surfaceContainerLow,
-    padding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: compact
-                ? Image.asset(
-                    'assets/icon/aniview_icon.png',
-                    width: 36,
-                    height: 36,
-                    cacheWidth: 108,
-                  )
-                : Image.asset(
-                    scheme.brightness == Brightness.light
-                        ? 'assets/icon/aniview_wordmark_light.png'
-                        : 'assets/icon/aniview_wordmark.png',
-                    width: 132,
-                  ),
+  Widget build(BuildContext context) => ColoredBox(
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: AnimatedContainer(
+      duration: motionMs(context, 220),
+      curve: deskEaseInOut,
+      width: width,
+      padding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: compact
+                  ? Image.asset(
+                      'assets/icon/aniview_icon.png',
+                      width: 36,
+                      height: 36,
+                      cacheWidth: 108,
+                    )
+                  : Image.asset(
+                      scheme.brightness == Brightness.light
+                          ? 'assets/icon/aniview_wordmark_light.png'
+                          : 'assets/icon/aniview_wordmark.png',
+                      width: 132,
+                    ),
+            ),
           ),
-        ),
-        for (final s in const [
-          DeskSection.home,
-          DeskSection.schedule,
-          DeskSection.list,
-          DeskSection.downloads,
-        ])
-          _item(s),
-        const Spacer(),
-        _item(DeskSection.settings),
-        const SizedBox(height: 8),
-        _Account(
-          feed: feed,
-          compact: compact,
-          onSignIn: onSignIn,
-          onProfile: onProfile,
-        ),
-      ],
+          for (final s in const [
+            DeskSection.home,
+            DeskSection.schedule,
+            DeskSection.list,
+            DeskSection.downloads,
+          ])
+            _item(s),
+          const Spacer(),
+          _item(DeskSection.settings),
+          const SizedBox(height: 8),
+          _Account(
+            feed: feed,
+            compact: compact,
+            onSignIn: onSignIn,
+            onProfile: onProfile,
+          ),
+        ],
+      ),
     ),
   );
 }

@@ -465,6 +465,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    // The logo and action colors are created here from the shared palette.
+    // Subscribe here as well as in the page's Material children.
+    Theme.of(context);
     if (isTv) return _tv();
     if (isDesktop) return _desktop();
     // Back leaves another page for Home before it leaves the app.
