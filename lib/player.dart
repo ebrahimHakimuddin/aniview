@@ -525,31 +525,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _play(VideoStream stream, {Duration? at}) async {
     _startAt = at;
     setState(() => session.playing(stream));
-    final resume = at != null && at > Duration.zero ? at : null;
     final address = await StreamAddress.instance.forPlayer(stream);
-    await player.open(
+    final pick = session.subtitleFor(stream);
+    final shown = await player.load(
       address.url,
       headers: address.headers,
       hls: address.hls,
-      start: resume,
+      start: at,
       subtitles: address.subtitles,
       audios: address.audios,
+      subtitlesOff: pick.off,
+      subtitleFile: pick.track?.label,
+      audio:
+          audio, // the one picked before, when this stream has one named alike
+      rate: rate,
     );
-    // open() returns before the stream has loaded, and picking a subtitle track before that is dropped.
-    if (player.state.duration == Duration.zero) {
-      await player.stream.duration
-          .firstWhere((d) => d > Duration.zero)
-          .timeout(const Duration(seconds: 20), onTimeout: () => Duration.zero);
+    if (shown != null && mounted && current == stream) {
+      setState(() => subtitle = shown);
     }
-    if (!mounted || current != stream) return;
-    // Some streams ignore the start position; land there anyway.
-    if (resume != null &&
-        player.state.position < resume - const Duration(seconds: 3)) {
-      await player.seek(resume);
-    }
-    await _applySubtitle(stream);
-    await _applyAudio();
-    await player.setRate(rate);
   }
 
   /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that
@@ -577,56 +570,89 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  Future<void> _applySubtitle(VideoStream stream) async {
-    final pick = session.subtitleFor(stream);
-    if (pick.off) return _setSubtitle(SubtitleTrack.off, 'Off');
-    if (pick.track case final track?) return _setExternal(stream, track);
-    return _setSubtitle(
-      SubtitleTrack.auto,
-      'Auto',
-    ); // embedded or burned-in subs
-  }
-
-  /// A subtitle file loaded with the stream (see [_play]), picked once its track shows up.
-  Future<void> _setExternal(VideoStream stream, Subtitle s) async {
-    bool isIt(SubtitleTrack t) => t.title == s.label;
-    final track =
-        player.state.subtitles.where(isIt).firstOrNull ??
-        await player.stream.tracks
-            .map((tracks) => tracks.where(isIt).firstOrNull)
-            .firstWhere((t) => t != null)
-            .timeout(const Duration(seconds: 15), onTimeout: () => null);
-    if (track != null) await _setSubtitle(track, s.label);
-  }
-
-  String _audioName(SubtitleTrack t) =>
-      t.title ?? t.language ?? 'Track ${t.id}';
-
   bool get _hasAudios => player.state.audios.length > 1;
 
-  Future<void> _setAudio(SubtitleTrack track) async {
-    await player.setAudioTrack(track);
-    if (mounted) setState(() => audio = _audioName(track));
-  }
-
-  /// The audio picked before, when this stream has a track named alike.
-  Future<void> _applyAudio() async {
-    final track = player.state.audios
-        .where((t) => _audioName(t) == audio)
-        .firstOrNull;
-    if (track != null) await player.setAudioTrack(track);
-  }
-
-  Future<void> _openAudio() async {
-    final options = {for (final t in player.state.audios) t: _audioName(t)};
-    final picked = await _pick(
-      'Audio',
-      options,
-      options.entries.where((e) => e.value == audio).firstOrNull?.key ??
-          player.state.audios.first,
+  /// Subtitles: off, the stream's own files, then the player's tracks.
+  _Choice<Object> get _subtitleChoice {
+    final options = PlaybackSession.subtitleOptions(
+      current?.subtitles ?? const [],
+      player.state.subtitles,
     );
-    if (picked != null) await _setAudio(picked);
+    return _Choice(
+      'Subtitles',
+      options,
+      options.entries.where((e) => e.value == subtitle).firstOrNull?.key ??
+          'off',
+      (picked) async {
+        switch (picked) {
+          case Subtitle s:
+            if (await player.showSubtitleFile(s.label) && mounted) {
+              setState(() => subtitle = s.label);
+            }
+          case SubtitleTrack t:
+            await _setSubtitle(t, t.name);
+          case 'off':
+            await _setSubtitle(SubtitleTrack.off, 'Off');
+        }
+      },
+    );
   }
+
+  _Choice<SubtitleTrack> get _audioChoice {
+    final tracks = player.state.audios;
+    return _Choice(
+      'Audio',
+      {for (final t in tracks) t: t.name},
+      tracks.where((t) => t.name == audio).firstOrNull ?? tracks.first,
+      (t) async {
+        await player.setAudioTrack(t);
+        if (mounted) setState(() => audio = t.name);
+      },
+    );
+  }
+
+  /// The servers, switchable in place (keeps the position).
+  _Choice<VideoStream> get _serverChoice => _Choice(
+    'Server',
+    {for (final s in streams) s: s.label},
+    current!,
+    (s) async {
+      if (s != current && mounted) await _play(s, at: player.state.position);
+    },
+  );
+
+  _Choice<int> get _qualityChoice => _Choice(
+    'Quality',
+    {0: 'Auto', for (final h in _qualities) h: '${h}p'},
+    quality,
+    (q) async {
+      if (!mounted) return;
+      setState(() => quality = q);
+      await player.setQuality(
+        q == 0 ? Settings.streamQuality : q,
+        exact: q != 0,
+      );
+    },
+  );
+
+  _Choice<double> get _speedChoice =>
+      _Choice('Speed', {for (final r in _speeds) r: '$r×'}, rate, (r) async {
+        if (!mounted) return;
+        setState(() => rate = r);
+        await player.setRate(r);
+      });
+
+  /// [choice] as a sheet (a panel on TV).
+  Future<void> _open<T>(_Choice<T> choice) async {
+    final picked = await _pick(choice.title, choice.options, choice.selected);
+    if (picked != null && mounted) await choice.pick(picked);
+  }
+
+  Future<void> _openSubtitles() => _open(_subtitleChoice);
+  Future<void> _openAudio() => _open(_audioChoice);
+  Future<void> _pickServer() => _open(_serverChoice);
+  Future<void> _pickQuality() => _open(_qualityChoice);
+  Future<void> _pickSpeed() => _open(_speedChoice);
 
   Future<void> _setSubtitle(SubtitleTrack track, String label) async {
     await player.setSubtitleTrack(track);
@@ -1268,37 +1294,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  Future<void> _openSubtitles() async {
-    final external = current?.subtitles ?? const <Subtitle>[];
-    final embedded = player.state.subtitles
-        .where(
-          (t) =>
-              t.id != 'auto' &&
-              t.id != 'no' &&
-              !external.any((s) => s.label == t.title),
-        )
-        .toList();
-    String name(SubtitleTrack t) => t.title ?? t.language ?? 'Track ${t.id}';
-    final options = <Object, String>{
-      'off': 'Off',
-      for (final s in external) s: s.label,
-      for (final t in embedded) t: name(t),
-    };
-    final selected = options.entries
-        .where((e) => e.value == subtitle)
-        .firstOrNull
-        ?.key;
-    final picked = await _pick<Object>('Subtitles', options, selected ?? 'off');
-    switch (picked) {
-      case Subtitle s:
-        await _setExternal(current!, s);
-      case SubtitleTrack t:
-        await _setSubtitle(t, name(t));
-      case 'off':
-        await _setSubtitle(SubtitleTrack.off, 'Off');
-    }
-  }
-
   /// A choice from a sheet (a panel on TV), with the controls kept up meanwhile.
   Future<T?> _pick<T>(String title, Map<T, String> options, T current) async {
     _hideTimer?.cancel();
@@ -1334,7 +1329,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// The server playing, switchable in place (keeps the position).
   Widget? _serverButton() {
-    if (streams.length < 2 || !streams.contains(current)) return null;
+    if (!_canSwitchServer) return null;
     return TextButton.icon(
       style: _onVideo(TextButton.styleFrom(foregroundColor: Colors.white)),
       onPressed: _pickServer,
@@ -1345,22 +1340,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool get _canSwitchServer => streams.length > 1 && streams.contains(current);
 
-  Future<void> _pickServer() async {
-    final s = await _pick('Server', {
-      for (final s in streams) s: s.label,
-    }, current!);
-    if (s != null && s != current && mounted) {
-      await _play(s, at: player.state.position);
-    }
-  }
-
-  Future<void> _pickSpeed() async {
-    final r = await _pick('Speed', {for (final r in _speeds) r: '$r×'}, rate);
-    if (r == null || !mounted) return;
-    setState(() => rate = r);
-    await player.setRate(r);
-  }
-
   /// The stream's qualities from 480p up. Auto (0) lets the connection pick, under the Settings cap.
   List<int> get _qualities => [
     for (final h in player.state.heights)
@@ -1368,16 +1347,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   ];
 
   String get _qualityLabel => quality == 0 ? 'Auto' : '${quality}p';
-
-  Future<void> _pickQuality() async {
-    final q = await _pick('Quality', {
-      0: 'Auto',
-      for (final h in _qualities) h: '${h}p',
-    }, quality);
-    if (q == null || !mounted) return;
-    setState(() => quality = q);
-    await player.setQuality(q == 0 ? Settings.streamQuality : q, exact: q != 0);
-  }
 
   Widget? _qualityButton() => _qualities.length < 2
       ? null
@@ -2458,4 +2427,13 @@ String formatDuration(Duration d) {
   return d.inHours > 0
       ? '${d.inHours}:${m.toString().padLeft(2, '0')}:$s'
       : '$m:$s';
+}
+
+/// One of the player's choices: a sheet on phones and TV, a menu on desktop.
+class _Choice<T> {
+  const _Choice(this.title, this.options, this.selected, this.pick);
+  final String title;
+  final Map<T, String> options;
+  final T selected;
+  final Future<void> Function(T) pick;
 }

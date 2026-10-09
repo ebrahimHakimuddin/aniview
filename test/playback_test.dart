@@ -1,3 +1,4 @@
+import 'package:aniview/exo.dart';
 import 'package:aniview/history.dart';
 import 'package:aniview/metadata.dart';
 import 'package:aniview/playback.dart';
@@ -35,6 +36,23 @@ void main() {
     ); // auto-next on, skip button, 85%
     await Settings.load();
   });
+
+  test(
+    'subtitles offer off, the stream\'s files, then the player\'s other tracks',
+    () {
+      final en = Subtitle('English', 'https://subs.test/en.vtt');
+      final options = PlaybackSession.subtitleOptions(
+        [en],
+        const [
+          SubtitleTrack('auto'),
+          SubtitleTrack('1', title: 'English'), // the file, loaded as a track
+          SubtitleTrack('2', language: 'jpn'),
+        ],
+      );
+      expect(options.values, ['Off', 'English', 'jpn']);
+      expect(options.keys.elementAt(1), en);
+    },
+  );
 
   test('falls back through the servers, then gives up', () {
     final session = _session();

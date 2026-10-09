@@ -1,4 +1,5 @@
 import 'downloads.dart';
+import 'exo.dart' show SubtitleTrack;
 import 'history.dart';
 import 'metadata.dart';
 import 'settings.dart';
@@ -139,6 +140,21 @@ class PlaybackSession {
           stream.subtitles.firstOrNull,
     );
   }
+
+  /// The subtitles on offer, by what each reads: off, the stream's [files], then the player's own [tracks] that
+  /// aren't one of those files.
+  static Map<Object, String> subtitleOptions(
+    List<Subtitle> files,
+    List<SubtitleTrack> tracks,
+  ) => {
+    'off': 'Off',
+    for (final s in files) s: s.label,
+    for (final t in tracks)
+      if (t.id != 'auto' &&
+          t.id != 'no' &&
+          !files.any((s) => s.label == t.title))
+        t: t.name,
+  };
 
   /// Where another video app left the episode, from what it reported back: the end when it played through.
   static ({Duration position, Duration duration}) externalStop(Map? result) {

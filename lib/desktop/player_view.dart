@@ -85,8 +85,7 @@ extension _DeskPlayer on _PlayerScreenState {
                     const Spacer(),
                     if (_hasSubtitles) _subtitleMenu(),
                     if (_hasAudios) _audioMenu(),
-                    if (streams.length > 1 && streams.contains(current))
-                      _serverMenu(),
+                    if (_canSwitchServer) _serverMenu(),
                     if (_qualities.length > 1) _qualityMenu(),
                     _speedMenu(),
                     _fitButton(),
@@ -160,13 +159,11 @@ extension _DeskPlayer on _PlayerScreenState {
     ],
   );
 
-  /// A drop-down of [options] over an [icon], [selected] ticked.
-  Widget _choiceMenu<T>({
+  /// A drop-down of [choice]'s options over an [icon], the selected one ticked.
+  Widget _choiceMenu<T>(
+    _Choice<T> choice, {
     required String tooltip,
     required IconData icon,
-    required Map<T, String> options,
-    required T selected,
-    required ValueChanged<T> onSelected,
   }) => PopupMenuButton<T>(
     tooltip: tooltip,
     icon: Icon(icon),
@@ -180,99 +177,47 @@ extension _DeskPlayer on _PlayerScreenState {
     onCanceled: _scheduleHide,
     onSelected: (value) {
       _scheduleHide();
-      onSelected(value);
+      choice.pick(value);
     },
     itemBuilder: (_) => [
-      for (final MapEntry(:key, :value) in options.entries)
+      for (final MapEntry(:key, :value) in choice.options.entries)
         CheckedPopupMenuItem<T>(
           value: key,
-          checked: key == selected,
+          checked: key == choice.selected,
           child: Text(value),
         ),
     ],
   );
 
-  Widget _subtitleMenu() {
-    final external = current?.subtitles ?? const <Subtitle>[];
-    final embedded = player.state.subtitles
-        .where(
-          (t) =>
-              t.id != 'auto' &&
-              t.id != 'no' &&
-              !external.any((s) => s.label == t.title),
-        )
-        .toList();
-    String name(SubtitleTrack t) => t.title ?? t.language ?? 'Track ${t.id}';
-    final options = <Object, String>{
-      'off': 'Off',
-      for (final s in external) s: s.label,
-      for (final t in embedded) t: name(t),
-    };
-    final selected =
-        options.entries.where((e) => e.value == subtitle).firstOrNull?.key ??
-        'off';
-    return _choiceMenu<Object>(
-      tooltip: 'Subtitles · $subtitle',
-      icon: subtitle == 'Off'
-          ? Icons.subtitles_off_outlined
-          : Icons.subtitles_outlined,
-      options: options,
-      selected: selected,
-      onSelected: (picked) async {
-        switch (picked) {
-          case Subtitle s:
-            await _setExternal(current!, s);
-          case SubtitleTrack t:
-            await _setSubtitle(t, name(t));
-          case 'off':
-            await _setSubtitle(SubtitleTrack.off, 'Off');
-        }
-      },
-    );
-  }
+  Widget _subtitleMenu() => _choiceMenu(
+    _subtitleChoice,
+    tooltip: 'Subtitles · $subtitle',
+    icon: subtitle == 'Off'
+        ? Icons.subtitles_off_outlined
+        : Icons.subtitles_outlined,
+  );
 
-  Widget _audioMenu() {
-    final options = {for (final t in player.state.audios) t: _audioName(t)};
-    return _choiceMenu<SubtitleTrack>(
-      tooltip: 'Audio · ${audio ?? 'Auto'}',
-      icon: Icons.audiotrack_outlined,
-      options: options,
-      selected:
-          options.entries.where((e) => e.value == audio).firstOrNull?.key ??
-          player.state.audios.first,
-      onSelected: _setAudio,
-    );
-  }
+  Widget _audioMenu() => _choiceMenu(
+    _audioChoice,
+    tooltip: 'Audio · ${audio ?? 'Auto'}',
+    icon: Icons.audiotrack_outlined,
+  );
 
-  Widget _serverMenu() => _choiceMenu<VideoStream>(
+  Widget _serverMenu() => _choiceMenu(
+    _serverChoice,
     tooltip: 'Server · ${current!.label}',
     icon: Icons.dns_outlined,
-    options: {for (final s in streams) s: s.label},
-    selected: current!,
-    onSelected: (s) {
-      if (s != current) _play(s, at: player.state.position);
-    },
   );
 
-  Widget _qualityMenu() => _choiceMenu<int>(
+  Widget _qualityMenu() => _choiceMenu(
+    _qualityChoice,
     tooltip: 'Quality · $_qualityLabel',
     icon: Icons.high_quality_rounded,
-    options: {0: 'Auto', for (final h in _qualities) h: '${h}p'},
-    selected: quality,
-    onSelected: (q) {
-      _set(() => quality = q);
-      player.setQuality(q == 0 ? Settings.streamQuality : q, exact: q != 0);
-    },
   );
 
-  Widget _speedMenu() => _choiceMenu<double>(
+  Widget _speedMenu() => _choiceMenu(
+    _speedChoice,
     tooltip: 'Speed · $rate×  ( [ and ] )',
     icon: Icons.speed_rounded,
-    options: {for (final r in _PlayerScreenState._speeds) r: '$r×'},
-    selected: rate,
-    onSelected: (r) {
-      _set(() => rate = r);
-      player.setRate(r);
-    },
   );
 }

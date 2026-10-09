@@ -25,6 +25,10 @@ apart from painting it: **opening** it (its download, else the site's servers, f
 fallback when a server never loads, which subtitles to show, when it counts as watched, when to save the spot, which skip applies,
 when to offer or start the next episode (**up next**), what OK on a TV remote does, and where a held seek lands.
 
+**Video player** (`lib/exo.dart`, `ExoPlayer`): plays a stream and **settles** it once loaded (`load`): lands on the
+resume point when the stream ignored it, shows the picked subtitles, keeps the audio track picked before. Its
+**backend** (`PlayerBackend`) is Media3 ExoPlayer on Android, libmpv on desktop, or a fake in tests.
+
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
 sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's
 adapter (Anikoto, animepahe, ani.pm, AnimeStream, or an extension's `ExtensionSource`); history and downloads remember it by name.
