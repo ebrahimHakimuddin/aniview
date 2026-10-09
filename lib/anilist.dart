@@ -11,11 +11,12 @@ import 'pairing.dart';
 import 'platform.dart';
 import 'tv.dart';
 
-String titleOf(Map media) =>
-    media['title']['userPreferred'] ??
-    media['title']['romaji'] ??
-    media['title']['english'] ??
-    '';
+String titleOf(Map media) {
+  final titles = media['title'] as Map? ?? const {};
+  final english = titles['english'] as String?;
+  if (isTv && english != null && english.trim().isNotEmpty) return english;
+  return titles['userPreferred'] ?? titles['romaji'] ?? english ?? '';
+}
 
 /// A show as AniList describes it (MyAnimeList's answers are mapped to the same shape), read through the facts
 /// screens need instead of the JSON. A view over the map, not a copy: [Tracker] still updates the map itself.

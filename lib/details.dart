@@ -1487,6 +1487,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (isTv)
               SliverToBoxAdapter(
                 child: ScrollAnchor(
+                  alignment: .5,
                   child: _EpisodeRow(
                     key: ValueKey((plan.page, newestFirst, dub)),
                     count: shown.length,
