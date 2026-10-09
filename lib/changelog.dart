@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0-beta.5';
+const changelogVersion = '2.5.0-beta.6';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
@@ -40,7 +40,7 @@ const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.build_rounded,
     title: 'Fixes from the last beta',
-    body: 'Extension videos load the way Aniyomi loads them, Re:Anime is gone for good, and the desktop search shortcut can be changed in Settings.',
+    body: 'What’s new shows once, the TV sidebar opens from the left edge again, the computer app opens full size, and a failed download can be retried from an episode’s menu on a computer.',
   ),
 ];
 
