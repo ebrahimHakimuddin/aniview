@@ -49,7 +49,13 @@ class MAL {
         ? uri.queryParameters['code']
         : null;
     final code = isDesktop
-        ? await signInInBrowser(context, url, name: 'MyAnimeList', pick: pick)
+        ? await signInInBrowser(
+            context,
+            url,
+            name: 'MyAnimeList',
+            callbackHost: 'mal',
+            pick: pick,
+          )
         : await Navigator.of(context).push<String>(
             MaterialPageRoute(
               fullscreenDialog: true,

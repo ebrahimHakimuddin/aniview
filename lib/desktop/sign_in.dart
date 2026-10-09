@@ -15,18 +15,30 @@ Future<String?> signInInBrowser(
   BuildContext context,
   String url, {
   required String name,
+  required String callbackHost,
   required String? Function(Uri redirect) pick,
 }) async {
   await _registerScheme();
   final token = Completer<String?>();
-  var dialogOpen = true;
+  var dialogOpen = false;
   final sub = AppLinks().uriLinkStream.listen((uri) {
-    if (uri.scheme != 'aniview' || token.isCompleted) return;
-    token.complete(pick(uri));
+    if (uri.scheme != 'aniview' ||
+        uri.host != callbackHost ||
+        token.isCompleted) {
+      return;
+    }
+    try {
+      final value = pick(uri);
+      if (value != null && value.isNotEmpty) token.complete(value);
+    } catch (error, stack) {
+      token.completeError(error, stack);
+    }
   });
   try {
     await AndroidApp.open(url);
     if (!context.mounted) return null;
+    if (token.isCompleted) return await token.future;
+    dialogOpen = true;
     // However the dialog goes (Cancel, Esc), no answer is coming.
     unawaited(
       showDialog<void>(
@@ -48,11 +60,11 @@ Future<String?> signInInBrowser(
       const Duration(minutes: 5),
       onTimeout: () => null,
     );
+    return value;
+  } finally {
     if (dialogOpen && context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
     }
-    return value;
-  } finally {
     await sub.cancel();
   }
 }

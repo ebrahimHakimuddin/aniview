@@ -152,6 +152,7 @@ class AniList {
         context,
         'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
         name: 'AniList',
+        callbackHost: 'auth',
         pick: (uri) => Uri.splitQueryString(uri.fragment)['access_token'],
       );
       if (value != null && value.isNotEmpty) await useToken(value);
