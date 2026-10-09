@@ -331,12 +331,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// change the speed, N plays the next episode, T keeps the window on top, F or F11 toggles fullscreen and Esc leaves it.
   bool _onDesktopKey(KeyEvent event) {
     if (event is KeyUpEvent || !mounted) return false;
-    // Let macOS/app shortcuts reach their handlers instead of treating, for
-    // example, Cmd+[ as a playback-speed change or Cmd+M as mute.
-    if (Platform.isMacOS &&
-        (HardwareKeyboard.instance.isMetaPressed ||
-            HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed)) {
+    // Ctrl, Cmd and Alt combinations are the app's shortcuts (Alt+Left goes back, Cmd+[ too), not M or [ for the player.
+    final keys = HardwareKeyboard.instance;
+    if (keys.isMetaPressed || keys.isControlPressed || keys.isAltPressed) {
       return false;
     }
     if (error != null ||
