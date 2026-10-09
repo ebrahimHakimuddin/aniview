@@ -334,9 +334,12 @@ class _SignInBanner extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Sign in with AniList', style: text.titleMedium),
                     Text(
-                      'Track what you watch, and see your lists and stats here',
+                      'Sign in with AniList or MyAnimeList',
+                      style: text.titleMedium,
+                    ),
+                    Text(
+                      'Track what you watch, and see your lists here',
                       style: text.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),

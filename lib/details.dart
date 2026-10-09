@@ -549,7 +549,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// Sets tracked progress to [progress] episodes; queued for later when offline and moving forward.
   Future<void> _markWatched(int progress) async {
     if (!Tracker.signedIn) {
-      return showError(context, 'Sign in with AniList to track episodes');
+      return showError(
+        context,
+        'Sign in with AniList or MyAnimeList to track episodes',
+      );
     }
     final synced = await Tracker.save(media, progress);
     if (!mounted) return;

@@ -1642,7 +1642,7 @@ class _SignInCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Sign in with AniList', style: text.titleMedium),
+                      Text('Sign in to track anime', style: text.titleMedium),
                       Text(
                         'Track what you watch, and see your lists here',
                         style: text.bodyMedium?.copyWith(
@@ -1733,7 +1733,9 @@ class _MeScreen extends StatelessWidget {
                             Text(
                               me == null
                                   ? 'Watching on this device'
-                                  : 'AniList',
+                                  : Tracker.providers
+                                        .map((p) => p.name)
+                                        .join(' · '),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: text.bodySmall?.copyWith(
@@ -1763,7 +1765,7 @@ class _MeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             // Signed out there are no stats to show: say what signing in brings, where they'd be.
-            if (Tracker.signedIn)
+            if (Tracker.anilistSignedIn)
               StatsView(feed.stats, onRetry: onRefresh)
             else
               Padding(
@@ -1784,7 +1786,7 @@ class _MeScreen extends StatelessWidget {
                         Text('Your stats', style: text.titleMedium),
                         const SizedBox(height: 4),
                         Text(
-                          'Sign in with AniList to track what you watch and see your time watched, your list and your activity here.',
+                          'Track what you watch with AniList or MyAnimeList. AniList also shows your time watched and activity here.',
                           style: text.bodyMedium?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),
@@ -1793,7 +1795,7 @@ class _MeScreen extends StatelessWidget {
                         FilledButton(
                           autofocus: isTv,
                           onPressed: onSignIn,
-                          child: const Text('Sign in with AniList'),
+                          child: const Text('Sign in'),
                         ),
                       ],
                     ),
