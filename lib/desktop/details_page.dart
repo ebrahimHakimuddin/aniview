@@ -773,10 +773,16 @@ extension _DeskDetails on _DetailsScreenState {
   }
 
   /// A box for an episode number: shows the page that holds it and scrolls to it, lit for a moment.
-  Widget _jumpBox(List<Episode> list, EpisodePlan plan) => SizedBox(
-    width: 168,
-    height: 40,
+  // As tall as the page chips beside it, and spaced from them as they are from each other.
+  Widget _jumpBox(List<Episode> list, EpisodePlan plan) => Container(
+    width: 156,
+    height: 33,
+    margin: const EdgeInsets.only(right: 8),
     child: TextField(
+      // Fills the height, text centred, rather than sitting at its top.
+      expands: true,
+      maxLines: null,
+      textAlignVertical: TextAlignVertical.center,
       keyboardType: TextInputType.number,
       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
       textInputAction: TextInputAction.go,
@@ -787,6 +793,7 @@ extension _DeskDetails on _DetailsScreenState {
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(vertical: 0),
         prefixIcon: const Icon(Icons.tag_rounded, size: 18),
+        prefixIconConstraints: const BoxConstraints(minWidth: 36),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(buttonRadius),
           borderSide: BorderSide.none,
