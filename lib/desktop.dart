@@ -173,6 +173,8 @@ Future<void> setupWindow() async {
       if (saved != null && saved.left >= 0 && saved.top >= 0) {
         await windowManager.setPosition(saved.topLeft);
       }
+      // The size above stays what un-maximizing goes back to.
+      if (Settings.windowMaximized) await windowManager.maximize();
       await windowManager.show();
       await windowManager.focus();
     },
@@ -200,6 +202,12 @@ class _WindowMemory with WindowListener {
 
   @override
   void onWindowMoved() => _later();
+
+  @override
+  void onWindowMaximize() => Settings.windowMaximized = true;
+
+  @override
+  void onWindowUnmaximize() => Settings.windowMaximized = false;
 }
 
 /// Back, Search and Quit for the whole app (see [DeskShell] for the pages themselves). Wraps the Navigator, so it finds it through [navigatorKey].

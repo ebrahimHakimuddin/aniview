@@ -230,6 +230,11 @@ class Settings {
           for (final v in [r.left, r.top, r.width, r.height]) '$v',
         ]);
 
+  /// Whether the desktop window opens maximized: at first, then as it was left.
+  static bool get windowMaximized =>
+      _prefs.getBool('window_maximized') ?? true;
+  static set windowMaximized(bool v) => _prefs.setBool('window_maximized', v);
+
   /// Last site explicitly selected (here or on a show); empty means the highest ranked site.
   static String get preferredSource =>
       _prefs.getString('preferred_source') ?? '';
