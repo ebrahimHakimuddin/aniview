@@ -35,14 +35,14 @@ void main() {
         'data-link="https://anikototv.to/home"><img src="a.png" alt=""> Anikoto</a></div>'
         '<div data-rank="2" data-filter="Hard-sub" class="section-item"><span style="color:#d8ba76;">2.</span> <a href="/s/animepahe" '
         'data-link="https://animepahe.pw"><img src="b.png" alt=""> animepahe</a></div>'
-        '<div data-rank="3" class="section-item">3. <a href="/s/reanime" data-link="https://reanime.to/home">'
-        '<img src="c.png" alt=""> Re:Anime</a></div>'
+        '<div data-rank="3" class="section-item">3. <a href="/s/miruro" data-link="https://miruro.tv/home">'
+        '<img src="c.png" alt=""> Miruro</a></div>'
         '<div data-rank="4" class="section-item">4. <a href="/s/x" data-link="https://x.to"> X</a></div></div>'
         '<div id="sec-donghua"><div data-rank="1" class="section-item">1. <a href="/s/d" data-link="https://d.to"> D</a>';
     expect(parseTopSites(html), [
       ('Anikoto', 'https://anikototv.to'),
       ('animepahe', 'https://animepahe.pw'),
-      ('Re:Anime', 'https://reanime.to'),
+      ('Miruro', 'https://miruro.tv'),
       ('X', 'https://x.to'),
     ]);
   });

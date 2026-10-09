@@ -959,6 +959,21 @@ const _extensionSkips = {
 };
 
 /// A source from an installed Aniyomi extension, run through the [ExtensionHost].
+/// Extensions left out, offered and installed: the sites AniView reaches itself (see [topSources]), which would only duplicate them, Re:Anime, which
+/// AniView no longer offers, and torrent extensions, which need Aniyomi's torrent utilities.
+// ponytail: matched by package name; read a manifest flag if more torrent extensions appear
+const _hiddenExtensions = {
+  'anikoto',
+  'animepahe',
+  'reanime',
+  'hentaitorrent',
+  'nyaatorrent',
+  'ptorrent',
+};
+
+bool hiddenExtension(String pkg) =>
+    _hiddenExtensions.contains(pkg.split('.').last);
+
 class ExtensionSource extends Source {
   ExtensionSource(this.id, super.name, super.base, {ExtensionHost? host})
     : host = host ?? ExtensionHost.current;
@@ -966,16 +981,17 @@ class ExtensionSource extends Source {
   final String id;
   final ExtensionHost host;
 
-  /// The sources of every installed extension; none off Android.
+  /// The sources of every installed extension; none off Android. One installed before it was hidden stays out.
   static Future<List<Source>> installed() async => [
     for (final s in await ExtensionHost.current.sources())
-      ExtensionSource(
-        s.id,
-        const {'en', 'all', ''}.contains(s.lang)
-            ? s.name
-            : '${s.name} (${s.lang.toUpperCase()})',
-        s.baseUrl,
-      ),
+      if (!hiddenExtension(s.pkg))
+        ExtensionSource(
+          s.id,
+          const {'en', 'all', ''}.contains(s.lang)
+              ? s.name
+              : '${s.name} (${s.lang.toUpperCase()})',
+          s.baseUrl,
+        ),
   ];
 
   @override

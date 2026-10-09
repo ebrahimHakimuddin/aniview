@@ -296,6 +296,15 @@ void main() {
             'lang': 'fr',
             'baseUrl': null,
           },
+          // Installed before AniView hid it: no site, but still listed to uninstall.
+          {
+            'id': '3',
+            'pkg': 'eu.kanade.tachiyomi.animeextension.en.reanime',
+            'version': '16.1',
+            'name': 'Re:Anime',
+            'lang': 'en',
+            'baseUrl': 'https://reanime.to',
+          },
         ],
       );
       expect((await ExtensionSource.installed()).map((s) => s.name), [
@@ -305,6 +314,10 @@ void main() {
       final installed = await Extensions.installed();
       expect(installed['pkg.a']?.version, '16.1');
       expect(installed['pkg.a']?.sources, ['A', 'A2']);
+      expect(
+        installed,
+        contains('eu.kanade.tachiyomi.animeextension.en.reanime'),
+      );
     });
 
     test('lists nothing off Android', () async {

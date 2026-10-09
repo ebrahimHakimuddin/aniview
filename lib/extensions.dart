@@ -61,18 +61,6 @@ typedef InstalledExtension = ({
   List<String> sources,
 });
 
-/// Left out: the sites AniView reaches itself (see [topSources]), which would only duplicate them, Re:Anime, which
-/// AniView no longer offers, and torrent extensions, which need Aniyomi's torrent utilities.
-// ponytail: matched by package name; read a manifest flag if more torrent extensions appear
-const _hidden = {
-  'anikoto',
-  'animepahe',
-  'reanime',
-  'hentaitorrent',
-  'nyaatorrent',
-  'ptorrent',
-};
-
 class Extensions {
   static Future<SharedPreferences> get _prefs =>
       SharedPreferences.getInstance();
@@ -128,7 +116,7 @@ class Extensions {
     );
     return [
       for (final e in lists.expand((l) => l))
-        if (e.supported && !_hidden.contains(e.pkg.split('.').last)) e,
+        if (e.supported && !hiddenExtension(e.pkg)) e,
     ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
