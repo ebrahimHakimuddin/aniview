@@ -61,8 +61,8 @@ typedef InstalledExtension = ({
   List<String> sources,
 });
 
-/// Left out: the sites AniView reaches itself (see [topSources]), which would only duplicate them, and torrent
-/// extensions, which need Aniyomi's torrent utilities.
+/// Left out: the sites AniView reaches itself (see [topSources]), which would only duplicate them, Re:Anime, which
+/// AniView no longer offers, and torrent extensions, which need Aniyomi's torrent utilities.
 // ponytail: matched by package name; read a manifest flag if more torrent extensions appear
 const _hidden = {
   'anikoto',

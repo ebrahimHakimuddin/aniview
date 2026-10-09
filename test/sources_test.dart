@@ -19,10 +19,10 @@ void main() {
     addTearDown(() => ExtensionHost.current = const ChannelExtensionHost());
     Sites.load = () async {
       if (++loads == 1) throw const SocketException('offline');
-      return [ReAnime('Re:Anime', 'https://re.test')];
+      return [AniPm('ani.pm', 'https://ani.test')];
     };
     await expectLater(Sites.all(), throwsA(isA<SocketException>()));
-    expect((await Sites.named('Re:Anime'))?.name, 'Re:Anime');
+    expect((await Sites.named('ani.pm'))?.name, 'ani.pm');
     expect(await Sites.named('Gone'), isNull);
     expect(identical(Sites.all(), Sites.all()), isTrue);
     expect(loads, 2);
@@ -324,97 +324,6 @@ void main() {
       final episodes = await site.episodesOf('https://ak.test/watch/right');
       expect([for (final e in episodes) e.number], [1, 2]);
       expect((episodes.first.ref as Map)['ids'], 'ids-5114-1');
-    });
-
-    test('Re:ANIME: matches by AniList id and drops empty titles', () async {
-      serve({
-        '/api/v1/search': jsonEncode({
-          'results': [
-            {
-              'anime_id': 7,
-              'anilist_id': 99,
-              'title': {'romaji': 'Wrong'},
-            },
-            {
-              'anime_id': 8,
-              'anilist_id': 21,
-              'title': {'english': 'One Piece'},
-              'format': 'TV',
-              'episodes': 1100,
-            },
-          ],
-        }),
-        '/api/v1/anime/8/episodes': jsonEncode({
-          'data': [
-            {'episode_number': 1, 'title': 'Romance Dawn', 'thumbnail': ''},
-            {'episode_number': 2, 'title': ''},
-          ],
-        }),
-      });
-      final site = ReAnime('Re:Anime', 'https://re.test');
-
-      final id = await site.match({
-        'id': 21,
-        'title': {'romaji': 'One Piece'},
-      });
-      expect(id, '8|21');
-      expect((await site.search('x')).last.info, 'TV · 1100 eps');
-      final episodes = await site.episodesOf(id!);
-      expect(
-        [for (final e in episodes) (e.number, e.title, e.thumbnail, e.ref)],
-        [(1, 'Romance Dawn', null, '21'), (2, null, null, '21')],
-      );
-    });
-
-    test('Re:ANIME: looks up an AniList id search reports as 0', () async {
-      serve({
-        '/api/v1/search': jsonEncode({
-          'results': [
-            {
-              'anime_id': 7,
-              'anilist_id': 0,
-              'title': {'romaji': 'Onigiri'},
-            },
-            {
-              'anime_id': 8,
-              'anilist_id': 0,
-              'title': {'english': 'One Piece'},
-            },
-          ],
-        }),
-        '/api/v1/anime/8/episodes': jsonEncode({
-          'data': [
-            {'episode_number': 1, 'title': 'Romance Dawn'},
-          ],
-        }),
-        '/api/v1/anime/7': jsonEncode({'anilist_id': 99}),
-        '/api/v1/anime/8': jsonEncode({'anilist_id': 21}),
-      });
-      final site = ReAnime('Re:Anime', 'https://re.test');
-
-      expect(
-        await site.match({
-          'id': 21,
-          'title': {'romaji': 'One Piece'},
-        }),
-        '8|21',
-      );
-      // A manual pick straight from search still streams by the real id.
-      expect((await site.episodesOf('8|0')).single.ref, '21');
-    });
-
-    test('Re:ANIME: pages through long episode lists', () async {
-      String page(int from, int count) => jsonEncode({
-        'total': 1001,
-        'data': [
-          for (var n = from; n < from + count; n++) {'episode_number': n},
-        ],
-      });
-      serve({'offset=0': page(1, 1000), 'offset=1000': page(1001, 1)});
-      final site = ReAnime('Re:Anime', 'https://re.test');
-
-      final episodes = await site.episodesOf('8|21');
-      expect([episodes.length, episodes.last.number], [1001, 1001]);
     });
 
     test('a redesigned page gives no episodes rather than failing', () async {

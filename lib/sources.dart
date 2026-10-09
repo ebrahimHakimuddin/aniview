@@ -234,7 +234,6 @@ Future<List<Source>> topSources() async => [
     ?switch (Uri.parse(origin).host) {
       final h when h.contains('anikoto') => Anikoto(name, origin),
       final h when h.contains('animepahe') => AnimePahe(name, origin),
-      final h when h.contains('reanime') => ReAnime(name, origin),
       'ani.pm' => AniPm(name, origin),
       final h when h.contains('uniquestream') => AnimeStream(name, origin),
       _ => null,
@@ -456,112 +455,6 @@ class Anikoto extends Source {
       }),
     );
     return resolved.expand((s) => s).toList();
-  }
-}
-
-class ReAnime extends Source {
-  ReAnime(super.name, super.base, {this.net = const HttpNet()});
-
-  final Net net;
-
-  @override
-  Future<List<SearchResult>> search(String query) async {
-    final json = jsonDecode(
-      await net.text(
-        '$base/api/v1/search?limit=20&q=${Uri.encodeQueryComponent(query)}',
-      ),
-    );
-    return [
-      for (final r in json['results'] as List? ?? const [])
-        // The id keeps the entry's AniList id too, so streams follow a manual pick.
-        SearchResult(
-          '${r['anime_id']}|${r['anilist_id'] ?? ''}',
-          '${r['title']?['english'] ?? r['title']?['romaji'] ?? r['anime_id']}',
-          image: r['cover_image']?['large'],
-          info: _info([
-            r['format'],
-            r['season_year'],
-            if (r['episodes'] != null) '${r['episodes']} eps',
-          ]),
-        ),
-    ];
-  }
-
-  /// Search reports some shows' AniList id as 0 (One Piece, for one); the show's own entry has the real one.
-  Future<String> _anilistId(String animeId) async =>
-      '${jsonDecode(await net.text('$base/api/v1/anime/$animeId'))['anilist_id'] ?? ''}';
-
-  static bool _unknown(String anilistId) =>
-      anilistId.isEmpty || anilistId == '0';
-
-  @override
-  Future<String?> match(Map media) async {
-    for (final title in _searchTitles(media)) {
-      final results = await search(title);
-      final hit = results
-          .where((r) => r.id.endsWith('|${media['id']}'))
-          .firstOrNull;
-      if (hit != null) return hit.id;
-      for (final r
-          in results.where((r) => _unknown(r.id.split('|')[1])).take(3)) {
-        final animeId = r.id.split('|')[0];
-        if (await _anilistId(animeId) == '${media['id']}') {
-          return '$animeId|${media['id']}';
-        }
-      }
-    }
-    return null;
-  }
-
-  @override
-  Future<List<Episode>> episodesOf(String id) async {
-    var [animeId, anilistId] = id.split('|');
-    // A manual pick of an entry search listed without its AniList id.
-    if (_unknown(anilistId)) anilistId = await _anilistId(animeId);
-    // Pages hold at most 1000; a bigger limit silently falls back to 30.
-    final data = [];
-    for (var total = 1; data.length < total;) {
-      final json = jsonDecode(
-        await net.text(
-          '$base/api/v1/anime/$animeId/episodes?limit=1000&offset=${data.length}',
-        ),
-      );
-      final page = json['data'] as List? ?? const [];
-      if (page.isEmpty) break;
-      data.addAll(page);
-      total = json['total'] as int? ?? 0;
-    }
-    return [
-      for (final e in data)
-        Episode(
-          e['episode_number'],
-          title: (e['title'] as String?)?.nullIfEmpty,
-          thumbnail: (e['thumbnail'] as String?)?.nullIfEmpty,
-          ref: anilistId,
-        ),
-    ];
-  }
-
-  // Re:ANIME's own flixcloud servers ship encrypted payloads; megaplay serves the same episode by AniList id.
-  @override
-  Future<List<VideoStream>> streams(
-    Map media,
-    Episode episode, {
-    required bool dub,
-  }) async {
-    final embed =
-        'https://megaplay.buzz/stream/ani/${(episode.ref as String).nullIfEmpty ?? media['id']}'
-        '/${epNumber(episode.number)}/${dub ? 'dub' : 'sub'}';
-    final found = await Future.wait([
-      for (final (label, server) in [('HD-1', 'tcdn'), ('HD-2', 'bcdn')])
-        megaplay(
-          label,
-          '$embed?s=$server',
-          referer: '$base/',
-          net: net,
-        ).catchError((Object _) => <VideoStream>[]),
-    ]);
-    return found.expand((s) => s).toList();
   }
 }
 

@@ -402,7 +402,7 @@ void main() {
   });
 
   group('the site list', () {
-    final builtIn = [ReAnime('Re:Anime', 'https://re.test')];
+    final builtIn = [AniPm('ani.pm', 'https://ani.test')];
     final host = FakeHost();
     setUp(() {
       Sites.load = () async => builtIn;
@@ -427,19 +427,19 @@ void main() {
     });
 
     test('has the installed extensions after the built-in sites', () async {
-      expect((await Sites.all()).map((s) => s.name), ['Re:Anime', 'Ext']);
+      expect((await Sites.all()).map((s) => s.name), ['ani.pm', 'Ext']);
     });
 
     test('keeps the built-in sites when the extension host fails', () async {
       host.sourceError = PlatformException(code: 'extension');
-      expect((await Sites.all()).map((s) => s.name), ['Re:Anime']);
+      expect((await Sites.all()).map((s) => s.name), ['ani.pm']);
     });
 
     test('keeps the built-in sites when the extension host stalls', () async {
       Sites.extensionsPatience = const Duration(milliseconds: 50);
       host.sourcesStall = true;
       addTearDown(() => host.sourcesStall = false);
-      expect((await Sites.all()).map((s) => s.name), ['Re:Anime']);
+      expect((await Sites.all()).map((s) => s.name), ['ani.pm']);
     });
   });
 }

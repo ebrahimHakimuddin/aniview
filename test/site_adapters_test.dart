@@ -176,22 +176,6 @@ void main() {
         );
       },
     );
-
-    test('Re:ANIME asks both servers by the show\'s AniList id', () async {
-      final net = FakeNet({
-        'ani/21/3/dub?s=tcdn': '<div data-id="42"></div>',
-        'ani/21/3/dub?s=bcdn': '<div data-id="43"></div>',
-        'getSourcesNew?id=42': sources(),
-        'master.m3u8': '#EXTM3U',
-      });
-      final streams = await ReAnime(
-        'Re:Anime',
-        'https://re.test',
-        net: net,
-      ).streams({'id': 21}, const Episode(3, ref: '21'), dub: true);
-      // HD-2's page has no sources to give: it drops out, HD-1 stays.
-      expect(streams.map((s) => s.label), ['HD-1']);
-    });
   });
 
   group('ani.pm', () {
