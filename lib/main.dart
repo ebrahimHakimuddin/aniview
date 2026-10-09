@@ -14,6 +14,7 @@ import 'tracker.dart';
 import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
+import 'welcome.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -96,7 +97,7 @@ class _AppState extends State<App> with WidgetsBindingObserver {
         : isDesktop
         ? (context, child) => DesktopKeys(child: child!)
         : null,
-    home: const HomeScreen(),
+    home: const Welcome(child: HomeScreen()),
   );
 }
 

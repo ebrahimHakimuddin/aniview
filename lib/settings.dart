@@ -295,6 +295,14 @@ class Settings {
       ? _prefs.remove('search_shortcut')
       : _prefs.setStringList('search_shortcut', v);
 
+  /// The greeting when the app opens (see [Welcome]), and the account name it last greeted.
+  static bool get welcome => _prefs.getBool('welcome') ?? true;
+  static set welcome(bool v) => _prefs.setBool('welcome', v);
+  static String? get welcomeName => _prefs.getString('welcome_name');
+  static set welcomeName(String? v) => v == null
+      ? _prefs.remove('welcome_name')
+      : _prefs.setString('welcome_name', v);
+
   static bool get syncAniList => _prefs.getBool('sync_anilist') ?? true;
   static set syncAniList(bool v) => _prefs.setBool('sync_anilist', v);
 
@@ -850,6 +858,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: const Text('Theme'),
           subtitle: Text(Settings.activeTheme.label),
           onTap: _pickTheme,
+        ),
+        SwitchListTile(
+          title: const Text('Welcome screen'),
+          subtitle: const Text('Greets you by name when AniView opens'),
+          value: Settings.welcome,
+          onChanged: (v) => setState(() => Settings.welcome = v),
         ),
         SwitchListTile(
           title: const Text('Follow system light and dark'),

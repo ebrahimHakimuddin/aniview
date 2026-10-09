@@ -288,6 +288,7 @@ class Tracker {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_orderKey, _order);
     await prefs.remove(provider.pendingKey);
+    Settings.welcomeName = null; // the next greeting asks whoever is left
   }
 
   /// Browsing asks [primary] (AniList) and falls back to [fallback] (MyAnimeList); replaced in tests.
