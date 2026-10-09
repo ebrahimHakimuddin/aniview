@@ -96,6 +96,24 @@ class MAL {
     await prefs.setString('mal_expires', _expires!.toIso8601String());
   }
 
+  /// What a paired TV signs in with ({access, expires}); null signed out. Never the refresh token: if MyAnimeList
+  /// retires one once it's used, a TV renewing would sign the phone out. The TV signs out when the access expires.
+  static Map<String, String>? get shareable => _access == null
+      ? null
+      : {'access': _access!, 'expires': ?_expires?.toIso8601String()};
+
+  /// Signs in with what a paired phone [shareable]d.
+  static Future<void> useShared(Map shared) async {
+    await logout();
+    _access = shared['access'] as String;
+    _expires = DateTime.tryParse(shared['expires'] as String? ?? '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('mal_access', _access!);
+    if (_expires != null) {
+      await prefs.setString('mal_expires', _expires!.toIso8601String());
+    }
+  }
+
   static Future<void> logout() async {
     _access = _refresh = _expires = _viewer = null;
     final prefs = await SharedPreferences.getInstance();
@@ -152,10 +170,44 @@ class MAL {
     );
   }
 
-  // AniList's list statuses and MAL's; rewatching is a flag on a watching entry there.
+  /// Your totals in the shape of [AniList.stats]. MyAnimeList keeps no activity history, so there's none.
+  static Future<Map<String, dynamic>?> stats() async {
+    if (!signedIn) return null;
+    final s =
+        (await _mine(
+              'GET',
+              'users/@me',
+              query: {'fields': 'anime_statistics'},
+            ))['anime_statistics']
+            as Map? ??
+        const {};
+    int n(String key) => (s[key] as num? ?? 0).toInt();
+    return {
+      'statistics': {
+        'anime': {
+          'count': n('num_items'),
+          'episodesWatched': n('num_episodes'),
+          'minutesWatched': ((s['num_days_watched'] as num? ?? 0) * 1440)
+              .round(),
+          'statuses': [
+            for (final (status, key) in const [
+              ('CURRENT', 'num_items_watching'),
+              ('PLANNING', 'num_items_plan_to_watch'),
+              ('COMPLETED', 'num_items_completed'),
+              ('PAUSED', 'num_items_on_hold'),
+              ('DROPPED', 'num_items_dropped'),
+            ])
+              {'status': status, 'count': n(key)},
+          ],
+        },
+      },
+    };
+  }
+
+  // AniList's list statuses and MAL's; rewatching is a flag on a completed entry there, as its site shows it.
   static const _toMal = {
     'CURRENT': 'watching',
-    'REPEATING': 'watching',
+    'REPEATING': 'completed',
     'PLANNING': 'plan_to_watch',
     'COMPLETED': 'completed',
     'PAUSED': 'on_hold',
@@ -222,9 +274,35 @@ class MAL {
             'status': repeating ? 'REPEATING' : key,
             'progress': entry['num_episodes_watched'] ?? 0,
           };
-        out[key]?.add(m);
+        // Rewatching sits with watching, as AniList lists it.
+        out[repeating ? 'CURRENT' : key]?.add(m);
       }
-      if (json['paging']?['next'] == null) return out;
+      if (json['paging']?['next'] == null) break;
+    }
+    await _withAniListIds(out.values.expand((l) => l));
+    return out;
+  }
+
+  /// AniList ids by MAL id, as far as they're known; null for a show AniList doesn't have, so it isn't asked again.
+  static final _anilistIds = <int, int?>{};
+
+  /// Fills in the AniList ids of [shows], which Schedule, airing times and episode notifications go by. AniList
+  /// being down leaves them for each show's page to fill in (`Tracker.resolveIds`).
+  static Future<void> _withAniListIds(Iterable shows) async {
+    final unknown = {
+      for (final m in shows)
+        if (!_anilistIds.containsKey(m['idMal'])) m['idMal'] as int,
+    };
+    try {
+      if (unknown.isNotEmpty) {
+        final found = await AniList.idsByMal(unknown.toList());
+        for (final id in unknown) {
+          _anilistIds[id] = found[id];
+        }
+      }
+    } catch (_) {}
+    for (final m in shows) {
+      m['id'] ??= _anilistIds[m['idMal']];
     }
   }
 

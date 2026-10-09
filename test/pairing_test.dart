@@ -53,7 +53,7 @@ void main() {
         'data': base64.encode(seal(key, jsonEncode({'token': 'abc'}))),
       });
       expect(res.statusCode, 200);
-      expect(await paired, 'abc'); // the phone's sign-in rides along
+      expect(await paired, {'token': 'abc'}); // the phone's sign-in rides along
       expect(Settings.remoteKeys, [base64.encode(key)]);
 
       // Nothing has focus here, so typing is turned away, but only after the press was let in.

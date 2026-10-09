@@ -200,7 +200,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (intent != RemoteIntent.notification) _reloadLists();
   }
 
-  /// Keeps the background new-episode check current with recently watched shows and the AniList sign-in.
+  /// Keeps the background new-episode check current with recently watched shows and the account's watching list.
   Future<void> _scheduleNotifications() async {
     final recent = await feed.history;
     syncWatchNext(recent);
@@ -208,7 +208,15 @@ class _HomeScreenState extends State<HomeScreen>
         (Tracker.signedIn || recent.isNotEmpty)) {
       EpisodeNotifications.requestPermission();
     }
-    await EpisodeNotifications.refresh([for (final r in recent) r.media]);
+    await EpisodeNotifications.refresh([
+      for (final r in recent) r.media,
+      // The job reads an AniList list itself; a MyAnimeList one is handed over.
+      if (Tracker.account == Tracker.mal)
+        ...await feed.lists.then(
+          (l) => [...?l['CURRENT']],
+          onError: (Object _) => const [],
+        ),
+    ]);
   }
 
   Future<void> _showReleases() async {
@@ -1775,7 +1783,7 @@ class _MeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             // Signed out there are no stats to show: say what signing in brings, where they'd be.
-            if (Tracker.anilistSignedIn)
+            if (Tracker.signedIn)
               StatsView(feed.stats, onRetry: onRefresh)
             else
               Padding(
@@ -1796,7 +1804,7 @@ class _MeScreen extends StatelessWidget {
                         Text('Your stats', style: text.titleMedium),
                         const SizedBox(height: 4),
                         Text(
-                          'Track what you watch with AniList or MyAnimeList. AniList also shows your time watched and activity here.',
+                          'Track what you watch with AniList or MyAnimeList, and see your time watched here.',
                           style: text.bodyMedium?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),

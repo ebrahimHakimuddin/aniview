@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' hide Padding, State;
 
 import 'anilist.dart';
+import 'mal.dart';
+import 'tracker.dart';
 import 'settings.dart';
 import 'states.dart';
 import 'platform.dart';
@@ -111,7 +113,7 @@ class TvLink {
   static final code = ValueNotifier<String?>(null);
 
   static ({String code, Uint8List key})? _agreed;
-  static Completer<String?>? _paired; // while a pairing screen is open
+  static Completer<Map>? _paired; // while a pairing screen is open
   static final _lastPress = <String, int>{};
 
   static Future<void> start() async {
@@ -152,9 +154,9 @@ class TvLink {
     } catch (_) {}
   }
 
-  /// Waits for a phone to pair as a remote; completes with its AniList token, or null when it isn't signed in.
-  /// Phones can only pair while this is waiting.
-  static Future<String?> pair() {
+  /// Waits for a phone to pair as a remote; completes with its sign-in ({token}: AniList's, or {mal}: see
+  /// [MAL.shareable]), empty when it isn't signed in. Phones can only pair while this is waiting.
+  static Future<Map> pair() {
     stopPairing();
     return (_paired = Completer()).future;
   }
@@ -187,7 +189,7 @@ class TvLink {
             base64.encode(agreed.key),
           ];
           response.write(jsonEncode({'id': Settings.installId}));
-          _paired?.complete(sent['token'] as String?);
+          _paired?.complete(sent);
           stopPairing();
         case '/key':
           final key = Settings.remoteKeys
@@ -372,9 +374,16 @@ class _TvPairScreenState extends State<TvPairScreen> {
   @override
   void initState() {
     super.initState();
-    TvLink.pair().then((token) async {
-      final signIn = token != null && AniList.token == null;
-      if (signIn) await AniList.useToken(token);
+    TvLink.pair().then((sent) async {
+      final signIn =
+          !Tracker.signedIn && (sent['token'] != null || sent['mal'] != null);
+      if (signIn) {
+        if (sent['token'] case final String token) {
+          await AniList.useToken(token);
+        } else {
+          await MAL.useShared(sent['mal'] as Map);
+        }
+      }
       if (!mounted) return;
       showSuccess(
         context,
@@ -395,7 +404,7 @@ class _TvPairScreenState extends State<TvPairScreen> {
   @override
   Widget build(BuildContext context) {
     final paired = Settings.remoteKeys.length;
-    final signedIn = AniList.token != null;
+    final signedIn = Tracker.signedIn;
     return Scaffold(
       appBar: AppBar(title: const Text('Pair your phone')),
       body: Center(
@@ -658,11 +667,11 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     });
     try {
       final base = target.toString();
-      final token = AniList.token;
+      final token = AniList.token, mal = MAL.shareable;
       final agreed = await _handshake(
         context,
         base,
-        confirm: token == null ? 'Yes, pair' : 'Yes, pair and sign in',
+        confirm: !Tracker.signedIn ? 'Yes, pair' : 'Yes, pair and sign in',
       );
       if (agreed == null) return;
       final res = await client
@@ -670,7 +679,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
             Uri.parse('$base/remote'),
             body: jsonEncode({
               'data': base64.encode(
-                seal(agreed.key, jsonEncode({'token': ?token})),
+                seal(agreed.key, jsonEncode({'token': ?token, 'mal': ?mal})),
               ),
             }),
           )
@@ -789,7 +798,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     children: [
       Text(
         'On the TV, open AniView and choose Sign in, or Settings → Phone remote. Keep both on the same Wi-Fi.'
-        '${AniList.token == null ? '' : ' Pairing also signs the TV in as you, if it isn\'t already.'}',
+        '${!Tracker.signedIn ? '' : ' Pairing also signs the TV in as you, if it isn\'t already.'}',
         style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
       ),
       const SizedBox(height: 16),

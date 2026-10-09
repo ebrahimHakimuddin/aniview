@@ -1082,7 +1082,7 @@ const _statusOrder = [
 class StatsView extends StatelessWidget {
   const StatsView(this.stats, {super.key, required this.onRetry});
 
-  /// From [AniList.stats].
+  /// From [Tracker.stats].
   final Future<Map<String, dynamic>?> stats;
   final VoidCallback onRetry;
 
@@ -1111,14 +1111,11 @@ class StatsView extends StatelessWidget {
             FadeIn(child: _spent(context, anime)),
             const SizedBox(height: 24),
             FadeIn(index: 2, child: _statuses(context, anime)),
-            const SizedBox(height: 24),
-            FadeIn(
-              index: 4,
-              child: _activity(
-                context,
-                data['stats']?['activityHistory'] as List?,
-              ),
-            ),
+            // MyAnimeList keeps no activity history.
+            if (data['stats']?['activityHistory'] case final List history) ...[
+              const SizedBox(height: 24),
+              FadeIn(index: 4, child: _activity(context, history)),
+            ],
           ],
         ),
       );

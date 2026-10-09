@@ -33,7 +33,7 @@ class LiveHomeSource implements HomeSource {
   @override
   Future<List> season() => Tracker.season();
   @override
-  Future<Map<String, dynamic>?> stats() => AniList.stats();
+  Future<Map<String, dynamic>?> stats() => Tracker.stats();
   @override
   Future<List<Map>> airingAround(Iterable<int> ids) =>
       AniList.airingAround(ids);
@@ -96,7 +96,7 @@ class HomeFeed extends ChangeNotifier {
   Future<Map<String, List>>? _library;
   Future<Map<String, List>> get library => _library ??= source.lists(all: true);
 
-  /// Your AniList totals, for Me; loaded the first time it's shown.
+  /// Your totals, for Me; loaded the first time it's shown.
   Future<Map<String, dynamic>?>? _stats;
   Future<Map<String, dynamic>?> get stats => _stats ??= source.stats();
 

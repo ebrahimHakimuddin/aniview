@@ -51,7 +51,7 @@ class EpisodeJob : JobService() {
             context.getSharedPreferences("episode_notifications", Context.MODE_PRIVATE)
 
         /**
-         * [json] is {enabled, ids: recently watched AniList ids, token: AniList token or null when signed out,
+         * [json] is {enabled, ids: recently watched AniList ids (and the watching list's, on MyAnimeList), token: AniList token or null when signed out,
          * user: AniList user id or null when unknown}. Checking starts from now, so turning it on doesn't announce
          * old episodes.
          */

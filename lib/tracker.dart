@@ -127,6 +127,9 @@ abstract interface class ListProvider {
   Future<void> login(BuildContext context);
   Future<void> logout();
   Future<Map<String, dynamic>?> viewer();
+
+  /// Your totals for Me, in the shape of [AniList.stats].
+  Future<Map<String, dynamic>?> stats();
   Future<Map<String, List>> lists({bool all = false});
   Future<int> progressOf(int id);
   Future<void> save(int id, {required String status, required int progress});
@@ -151,6 +154,8 @@ class _AniListProvider implements ListProvider {
   Future<void> logout() => AniList.logout();
   @override
   Future<Map<String, dynamic>?> viewer() => AniList.viewer();
+  @override
+  Future<Map<String, dynamic>?> stats() => AniList.stats();
   @override
   Future<Map<String, List>> lists({bool all = false}) =>
       AniList.lists(all: all);
@@ -181,6 +186,8 @@ class _MalProvider implements ListProvider {
   Future<void> logout() => MAL.logout();
   @override
   Future<Map<String, dynamic>?> viewer() => MAL.viewer();
+  @override
+  Future<Map<String, dynamic>?> stats() => MAL.stats();
   @override
   Future<Map<String, List>> lists({bool all = false}) => MAL.lists(all: all);
   @override
@@ -334,6 +341,8 @@ class Tracker {
   }
 
   static Future<Map<String, dynamic>?> viewer() async => account?.viewer();
+
+  static Future<Map<String, dynamic>?> stats() async => account?.stats();
 
   static Future<List> trending() => _browse((c) => c.trending()).then(_safe);
 

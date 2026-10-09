@@ -99,14 +99,15 @@ class DeskProfile extends StatelessWidget {
                       );
                     },
                   ),
-                  if (Tracker.anilistSignedIn)
+                  if (Tracker.signedIn)
                     StatsView(feed.stats, onRetry: onRefresh)
                   else
                     const EmptyState(
                       compact: true,
                       icon: Icons.insights_rounded,
                       title: 'Your stats',
-                      message: 'Sign in with AniList to see your time watched, your list and your activity.',
+                      message:
+                          'Sign in to see your time watched and your list.',
                     ),
                 ],
               ),

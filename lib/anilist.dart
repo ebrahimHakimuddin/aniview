@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:isolate';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -268,6 +269,23 @@ class AniList {
   static Future<List> trending() async => (await query(
     'query{Page(perPage:20){media(type:ANIME,sort:TRENDING_DESC,isAdult:false){$_media}}}',
   ))['Page']['media'];
+
+  /// The AniList ids of shows by their MyAnimeList ids, 50 to a request; ones AniList doesn't have are left out.
+  static Future<Map<int, int>> idsByMal(List<int> malIds) async {
+    final ids = <int, int>{};
+    for (var i = 0; i < malIds.length; i += 50) {
+      final page =
+          (await query(
+                r'query($m:[Int]){Page(perPage:50){media(idMal_in:$m,type:ANIME){id idMal}}}',
+                {'m': malIds.sublist(i, min(i + 50, malIds.length))},
+              ))['Page']['media']
+              as List;
+      for (final m in page) {
+        ids[m['idMal'] as int] = m['id'] as int;
+      }
+    }
+    return ids;
+  }
 
   /// AniList season name and year for today (WINTER = Jan–Mar, SPRING, SUMMER, FALL).
   static (String, int) get currentSeason {

@@ -36,6 +36,8 @@ class _Account implements ListProvider {
   @override
   Future<Map<String, dynamic>?> viewer() async => {'name': name};
   @override
+  Future<Map<String, dynamic>?> stats() async => null;
+  @override
   Future<Map<String, List>> lists({bool all = false}) async => {};
   @override
   Future<int> progressOf(int id) async => remote;
