@@ -61,55 +61,62 @@ class _WelcomeState extends State<Welcome> with SingleTickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    if (!_showing || _done) return widget.child;
     final text = Theme.of(context).textTheme;
     final greeting = CurvedAnimation(
       parent: _run,
       curve: const Interval(.05, .3, curve: Curves.easeOutCubic),
     );
+    // Always this Stack, so [child] keeps its place (and its state) when the greeting goes: swapping in the bare
+    // child would build the app's home again, and its first-launch work (What's new) with it.
     return Stack(
       children: [
         widget.child,
         // Lets go of taps and the remote as it fades, so nothing waits on it.
-        IgnorePointer(
-          child: FadeTransition(
-            opacity: ReverseAnimation(
-              CurvedAnimation(
-                parent: _run,
-                curve: const Interval(.8, 1, curve: Curves.easeIn),
+        if (_showing && !_done)
+          IgnorePointer(
+            child: FadeTransition(
+              opacity: ReverseAnimation(
+                CurvedAnimation(
+                  parent: _run,
+                  curve: const Interval(.8, 1, curve: Curves.easeIn),
+                ),
               ),
-            ),
-            child: Material(
-              color: scheme.surface,
-              child: Center(
-                child: FadeTransition(
-                  opacity: greeting,
-                  child: SlideTransition(
-                    position: Tween(
-                      begin: const Offset(0, .15),
-                      end: Offset.zero,
-                    ).animate(greeting),
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _name == null ? 'Hey! 👋' : 'Hey, $_name! 👋',
-                            textAlign: TextAlign.center,
-                            style:
-                                (isTv ? text.displayMedium : text.headlineLarge)
-                                    ?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Welcome back to AniView 🍿',
-                            textAlign: TextAlign.center,
-                            style:
-                                (isTv ? text.headlineSmall : text.titleMedium)
-                                    ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ],
+              child: Material(
+                color: scheme.surface,
+                child: Center(
+                  child: FadeTransition(
+                    opacity: greeting,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0, .15),
+                        end: Offset.zero,
+                      ).animate(greeting),
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _name == null ? 'Hey! 👋' : 'Hey, $_name! 👋',
+                              textAlign: TextAlign.center,
+                              style:
+                                  (isTv
+                                          ? text.displayMedium
+                                          : text.headlineLarge)
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Welcome back to AniView 🍿',
+                              textAlign: TextAlign.center,
+                              style:
+                                  (isTv ? text.headlineSmall : text.titleMedium)
+                                      ?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -117,7 +124,6 @@ class _WelcomeState extends State<Welcome> with SingleTickerProviderStateMixin {
               ),
             ),
           ),
-        ),
       ],
     );
   }
