@@ -17,6 +17,8 @@ import 'analytics.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
 import 'downloads.dart';
+import 'desktop.dart'
+    show keysLabel, rebindSearch, recordShortcut, searchShortcut;
 import 'desktop/launcher.dart';
 import 'extensions.dart';
 import 'history.dart';
@@ -285,6 +287,13 @@ class Settings {
 
   static double get subtitleSize => _prefs.getDouble('subtitle_size') ?? 22;
   static set subtitleSize(double v) => _prefs.setDouble('subtitle_size', v);
+
+  /// Search's shortcut on a desktop: the key's id and its modifiers; null for Ctrl+F (see [searchShortcut]).
+  static List<String>? get searchShortcut =>
+      _prefs.getStringList('search_shortcut');
+  static set searchShortcut(List<String>? v) => v == null
+      ? _prefs.remove('search_shortcut')
+      : _prefs.setStringList('search_shortcut', v);
 
   static bool get syncAniList => _prefs.getBool('sync_anilist') ?? true;
   static set syncAniList(bool v) => _prefs.setBool('sync_anilist', v);
@@ -886,6 +895,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ]),
+      if (isDesktop)
+        _Group('Keyboard', [
+          ListTile(
+            leading: const Icon(Icons.keyboard_rounded),
+            title: const Text('Search shortcut'),
+            subtitle: Text(keysLabel(searchShortcut.value)),
+            trailing: Settings.searchShortcut == null
+                ? null
+                : IconButton(
+                    tooltip: 'Back to $shortcutKey+F',
+                    icon: const Icon(Icons.restore_rounded),
+                    onPressed: () => setState(() => rebindSearch(null)),
+                  ),
+            onTap: () async {
+              final keys = await recordShortcut(context);
+              if (keys != null) setState(() => rebindSearch(keys));
+            },
+          ),
+        ]),
       _Group('Home screen', [
         _Choice(
           title: 'Watch random picks from',

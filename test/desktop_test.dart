@@ -43,6 +43,8 @@ void main() {
   testWidgets('the shortcut key and F put the cursor in the search box', (
     tester,
   ) async {
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
     final focus = FocusNode();
     final controller = TextEditingController();
     onDesktopFind = focus.requestFocus;
@@ -70,6 +72,23 @@ void main() {
     await tester.sendKeyDownEvent(modifier);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
     await tester.sendKeyUpEvent(modifier);
+    await tester.pump();
+    expect(focus.hasFocus, isTrue);
+
+    // Rebound in Settings: the new keys work, the old ones don't, and the box says so.
+    addTearDown(() => rebindSearch(null));
+    rebindSearch(const SingleActivator(LogicalKeyboardKey.keyK, alt: true));
+    await tester.pump();
+    expect(find.text('Alt K'), findsOneWidget);
+    focus.unfocus();
+    await tester.sendKeyDownEvent(modifier);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(modifier);
+    await tester.pump();
+    expect(focus.hasFocus, isFalse);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
     await tester.pump();
     expect(focus.hasFocus, isTrue);
   });
