@@ -189,10 +189,17 @@ class Extensions(private val context: Context, engine: FlutterEngine) {
         val loader = ChildFirstPathClassLoader(apk.path, null, context.classLoader)
         return meta.getString("tachiyomi.animeextension.class")!!.split(';').map { it.trim() }.flatMap { name ->
             val className = if (name.startsWith('.')) info.packageName + name else name
-            when (val obj = Class.forName(className, false, loader).getDeclaredConstructor().newInstance()) {
-                is AnimeSource -> listOf(obj)
-                is AnimeSourceFactory -> obj.createSources()
-                else -> error("Unknown source class $className")
+            fun create(loader: ClassLoader) =
+                when (val obj = Class.forName(className, false, loader).getDeclaredConstructor().newInstance()) {
+                    is AnimeSource -> listOf(obj)
+                    is AnimeSourceFactory -> obj.createSources()
+                    else -> error("Unknown source class $className")
+                }
+            try {
+                create(loader)
+            } catch (_: LinkageError) {
+                // As Aniyomi does: one that bundles a class the app has too links against the app's instead.
+                create(PathClassLoader(apk.path, null, context.classLoader))
             }
         }.map { Loaded(info.packageName, version, it) }
     }
@@ -246,19 +253,22 @@ class Extensions(private val context: Context, engine: FlutterEngine) {
         } else {
             source.getVideoList(episode)
         }
-        with(source) { videos.sortVideos() }.map { video ->
+        // Its pick first, which Aniyomi plays: lib 16 marks it rather than sorting it there.
+        with(source) { videos.sortVideos() }.sortedByDescending { it.preferred }.map { video ->
             async {
                 try {
                     gate.withPermit {
                         // Lib 14 leaves "null" when the url is only on the video's page; lib 16 may resolve lazily.
                         val withUrl = if (video.videoUrl == "null") video.copy(videoUrl = source.getVideoUrl(video)) else video
-                        source.resolveVideo(withUrl)
+                        if (withUrl.initialized) withUrl else source.resolveVideo(withUrl)
                     }
                 } catch (_: Exception) {
                     null
                 }
             }
         }.awaitAll().filterNotNull().filter { it.videoUrl.startsWith("http") } // not magnet: links or "null"
+            // One without headers of its own plays with the source's (its User-Agent, Referer), as in Aniyomi.
+            .map { if (it.headers == null) it.copy(headers = source.headers) else it }
     }
 
     /** Whether the extension uses lib 16's hosters, as Aniyomi tells: it declares one of their methods itself. */
