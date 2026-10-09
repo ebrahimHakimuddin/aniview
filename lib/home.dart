@@ -1033,6 +1033,15 @@ class _HomeFeed extends StatelessWidget {
       true,
     ));
     final first = isTv && firstRow(Settings.homeSections) == section;
+    if (section.filters case final filters?) {
+      return _row(
+        context,
+        section.label,
+        feed.category(section),
+        autofocus: first,
+        seeAll: filters,
+      );
+    }
     return switch (section) {
       HomeSection.featured => const SizedBox.shrink(), // the carousel
       HomeSection.newEpisodes => FutureBuilder(

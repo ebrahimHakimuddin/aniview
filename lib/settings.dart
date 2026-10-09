@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
+import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
 import 'downloads.dart';
 import 'desktop/launcher.dart';
@@ -128,10 +129,39 @@ enum HomeSection {
   planning('Plan to watch', 'Your planning list'),
   recent('Recently watched', 'Where you stopped, on this device'),
   season('This season', 'Popular shows this season'),
-  trending('Trending now', 'Trending on AniList');
+  trending('Trending now', 'Trending on AniList'),
+  topRated('Top rated', 'Highest rated shows'),
+  popular('All-time popular', 'The most popular shows'),
+  upcoming('Coming soon', 'Upcoming anime'),
+  action('Action', 'Popular action anime'),
+  comedy('Comedy', 'Popular comedy anime'),
+  fantasy('Fantasy', 'Popular fantasy anime'),
+  romance('Romance', 'Popular romance anime'),
+  sciFi('Sci-Fi', 'Popular science fiction anime');
 
   const HomeSection(this.label, this.description);
   final String label, description;
+
+  SearchFilters? get filters => switch (this) {
+    topRated => const SearchFilters(sort: 'SCORE_DESC'),
+    popular => const SearchFilters(sort: 'POPULARITY_DESC'),
+    upcoming => const SearchFilters(
+      status: 'NOT_YET_RELEASED',
+      sort: 'POPULARITY_DESC',
+    ),
+    action => const SearchFilters(genres: {'Action'}, sort: 'POPULARITY_DESC'),
+    comedy => const SearchFilters(genres: {'Comedy'}, sort: 'POPULARITY_DESC'),
+    fantasy => const SearchFilters(
+      genres: {'Fantasy'},
+      sort: 'POPULARITY_DESC',
+    ),
+    romance => const SearchFilters(
+      genres: {'Romance'},
+      sort: 'POPULARITY_DESC',
+    ),
+    sciFi => const SearchFilters(genres: {'Sci-Fi'}, sort: 'POPULARITY_DESC'),
+    _ => null,
+  };
 
   /// On until the user changes the sections; the rest start off.
   bool get byDefault =>

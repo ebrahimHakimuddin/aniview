@@ -17,12 +17,14 @@ void main() {
       (HomeSection.featured, false),
     ]);
     expect(sections.length, HomeSection.values.length);
-    expect(sections.last, (HomeSection.season, true));
+    expect(sections, contains((HomeSection.season, true)));
+    expect(sections.last, (HomeSection.sciFi, false));
+    expect(sections, contains((HomeSection.topRated, false)));
     // Appended sections start off unless they're one of the defaults.
     expect(sections, contains((HomeSection.planning, false)));
 
     Settings.homeSections = sections.reversed.toList();
-    expect(Settings.homeSections.first, (HomeSection.season, true));
+    expect(Settings.homeSections.first, (HomeSection.sciFi, false));
     expect(Settings.homeSections.last, (HomeSection.trending, true));
   });
 
