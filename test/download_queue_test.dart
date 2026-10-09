@@ -34,6 +34,27 @@ void enqueue(DownloadQueue queue, Iterable<num> numbers, {bool dub = false}) =>
 
 void main() {
   group('DownloadQueue', () {
+    test('a failed episode retries with the source and ref picked now', () {
+      final failed = download(
+        1,
+        1,
+        status: DownloadStatus.failed,
+        error: 'Unavailable',
+      );
+      final queue = DownloadQueue(readIndex(jsonEncode([failed.toJson()])));
+      queue.enqueue(
+        {'id': 1},
+        'Working source',
+        [Episode(1, ref: 'new-ref')],
+        dub: false,
+      );
+      final retry = queue.nextQueued!;
+      expect(retry.source, 'Working source');
+      expect(retry.ref, 'new-ref');
+      expect(retry.error, isNull);
+      expect(queue.items, hasLength(1));
+    });
+
     test('enqueue skips queued and done episodes and retries failed ones', () {
       final queue = DownloadQueue([
         download(1, 1, status: DownloadStatus.done),

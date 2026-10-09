@@ -7,6 +7,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test(
+    'partial segments resume from the same source, not from another',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('aniview_segments');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await prepareHlsFiles(dir, 'Old\nep-1');
+      final segment = File('${dir.path}/seg00000.ts')..writeAsStringSync('old');
+      await prepareHlsFiles(dir, 'Old\nep-1');
+      expect(segment.readAsStringSync(), 'old');
+      await prepareHlsFiles(dir, 'New\nep-1');
+      expect(segment.existsSync(), isFalse);
+    },
+  );
+
   desktopFolderTests();
   test('one unreadable download is skipped, not the whole list', () {
     final good = Download(

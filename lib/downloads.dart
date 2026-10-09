@@ -167,21 +167,23 @@ class DownloadQueue {
     required bool dub,
   }) {
     for (final episode in episodes) {
-      if (entry(media, episode.number, dub) case final existing?) {
-        retry(existing);
-        continue;
-      }
-      items.add(
-        Download(
-          media: media,
-          source: source,
-          number: episode.number,
-          dub: dub,
-          ref: episode.ref,
-          title: episode.title,
-          thumbnail: episode.thumbnail,
-        ),
+      final existing = entry(media, episode.number, dub);
+      if (!needsDownload(existing)) continue;
+      // A retry uses the source and episode picked now, not the one that couldn't download it.
+      final replacement = Download(
+        media: media,
+        source: source,
+        number: episode.number,
+        dub: dub,
+        ref: episode.ref,
+        title: episode.title,
+        thumbnail: episode.thumbnail,
       );
+      if (existing == null) {
+        items.add(replacement);
+      } else {
+        items[items.indexOf(existing)] = replacement;
+      }
     }
   }
 
@@ -189,6 +191,8 @@ class DownloadQueue {
     if (!needsDownload(d)) return;
     d
       ..status = DownloadStatus.queued
+      ..progress = 0
+      ..bytes = 0
       ..error = null;
   }
 
@@ -632,6 +636,7 @@ class Downloads extends ChangeNotifier {
       playlist = await fetch('$url', headers: stream.headers);
     }
     final (local, files, length) = localizePlaylist(playlist, url);
+    await prepareHlsFiles(dir, '${d.source}\n${d.ref}');
     final queue = files.entries.toList().iterator;
     var done = 0;
     var stop = false;
@@ -686,6 +691,18 @@ class Downloads extends ChangeNotifier {
     }
     return saved;
   }
+}
+
+/// Partial segments are reused only when they came from the same source's episode: another source names its files
+/// the same but they hold different video. (Not the segment addresses: those often carry a token that expires.)
+@visibleForTesting
+Future<void> prepareHlsFiles(Directory dir, String origin) async {
+  final mark = File('${dir.path}/origin');
+  if (await mark.exists() && await mark.readAsString() == origin) return;
+  for (final file in await dir.list().toList()) {
+    await file.delete(recursive: true);
+  }
+  await mark.writeAsString(origin, flush: true);
 }
 
 class _Cancelled implements Exception {}
