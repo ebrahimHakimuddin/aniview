@@ -228,7 +228,7 @@ class Settings {
           for (final v in [r.left, r.top, r.width, r.height]) '$v',
         ]);
 
-  /// Site name to select first; empty means the highest ranked site.
+  /// Last site explicitly selected (here or on a show); empty means the highest ranked site.
   static String get preferredSource =>
       _prefs.getString('preferred_source') ?? '';
   static set preferredSource(String v) =>

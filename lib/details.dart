@@ -788,7 +788,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final picked = await pickOne(context, 'Watch on', {
           for (final (i, s) in all.indexed) s: '#${i + 1}  ${s.label}',
         }, source);
-        if (picked != null && picked != source && mounted) _select(picked);
+        if (picked != null && mounted) {
+          Settings.preferredSource = picked.name;
+          if (picked != source) _select(picked);
+        }
       },
       icon: const Icon(Icons.dns_outlined, size: 18),
       label: Row(
