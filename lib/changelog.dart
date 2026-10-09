@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0-beta.3';
+const changelogVersion = '2.5.0-beta.4';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
@@ -30,7 +30,7 @@ const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.build_rounded,
     title: 'Fixes from the last beta',
-    body: 'Playing a second video no longer crashes the desktop app, AnimeStream seasons count from episode 1, and episode titles stay readable in a narrow window.',
+    body: 'Video plays and sign-in comes back to the app on a Mac, sign-in works on Windows, the desktop apps have their proper icon, and TV Search lets you browse.',
   ),
 ];
 
