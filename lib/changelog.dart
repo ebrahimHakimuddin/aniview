@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0-beta.4';
+const changelogVersion = '2.5.0-beta.5';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
@@ -15,7 +15,17 @@ const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.sync_rounded,
     title: 'MyAnimeList sign-in',
-    body: 'Sign in to AniList, MyAnimeList or both. The first one you sign in to is your main list, and progress goes there first, then to the other.',
+    body: 'Track with AniList or MyAnimeList, one at a time. With MyAnimeList you get Schedule, airing times, new-episode alerts and your stats too.',
+  ),
+  (
+    icon: Icons.audiotrack_rounded,
+    title: 'Pick the audio',
+    body: 'Extension videos whose audio comes separately now play with sound, and the player lets you switch between audio tracks.',
+  ),
+  (
+    icon: Icons.waving_hand_rounded,
+    title: 'A hello when you open AniView',
+    body: 'AniView greets you by name as it opens. Turn it off in Settings → Appearance.',
   ),
   (
     icon: Icons.desktop_windows_rounded,
@@ -30,7 +40,7 @@ const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.build_rounded,
     title: 'Fixes from the last beta',
-    body: 'Video plays and sign-in comes back to the app on a Mac, sign-in works on Windows, the desktop apps have their proper icon, and TV Search lets you browse.',
+    body: 'Extension videos load the way Aniyomi loads them, Re:Anime is gone for good, and the desktop search shortcut can be changed in Settings.',
   ),
 ];
 
