@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0-beta.7';
+const changelogVersion = '2.5.0-beta.6';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
