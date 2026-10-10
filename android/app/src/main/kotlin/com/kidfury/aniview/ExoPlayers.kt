@@ -284,10 +284,15 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 .build()
         }
 
-        /** The stream's video heights, tallest first. */
+        /**
+         * The stream's video heights, tallest first. Ones said to exceed the decoder count too: TVs' decoders often say
+         * so of 1080p, which ExoPlayer plays anyway, and the list (so the quality picker) came down to one.
+         */
         private fun videoHeights(tracks: Tracks) = tracks.groups
             .filter { it.type == C.TRACK_TYPE_VIDEO }
-            .flatMap { group -> (0 until group.length).filter(group::isTrackSupported).map { group.getTrackFormat(it).height } }
+            .flatMap { group ->
+                (0 until group.length).filter { group.isTrackSupported(it, true) }.map { group.getTrackFormat(it).height }
+            }
             .filter { it > 0 }
             .distinct()
             .sortedDescending()
