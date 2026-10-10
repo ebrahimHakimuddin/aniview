@@ -301,7 +301,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     (full) => windowManager.setFullScreen(!full),
   );
 
-  /// A click plays or pauses (the controls come up with the pointer, see [_pointer]).
+  /// The play button: plays or pauses and keeps the controls up. A click on the video only shows or hides them.
   void _click() {
     player.playOrPause();
     _showControls();
@@ -331,7 +331,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
         );
 
-  /// Desktop keyboard: space plays/pauses, left/right seek, up/down and the wheel change the volume, M mutes, [ and ]
+  /// Desktop keyboard: space or K plays/pauses, left/right seek, up/down and the wheel change the volume, M mutes, [ and ]
   /// change the speed, N plays the next episode, T keeps the window on top, F or F11 toggles fullscreen and Esc leaves it.
   bool _onDesktopKey(KeyEvent event) {
     if (event is KeyUpEvent || !mounted) return false;
@@ -346,7 +346,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return false;
     }
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.space) {
+    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.keyK) {
       if (event is KeyDownEvent) player.playOrPause();
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       _seekBy(-Settings.seekSeconds);
@@ -974,7 +974,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: isDesktop ? _click : _toggleControls,
+                onTap: _toggleControls,
                 onDoubleTapDown: locked
                     ? null
                     : (d) => doubleTapX = d.localPosition.dx,
