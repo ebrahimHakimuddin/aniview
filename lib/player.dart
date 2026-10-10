@@ -283,6 +283,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _nudgeVolume(double delta) => _setVolume(volume + delta);
 
+  /// How far the desktop's bottom controls reach up the video: the floating skip and up next sit above them.
+  static const _deskBarHeight = 150.0;
+
   static const _speeds = [.5, .75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
   void _stepSpeed(int direction) {
@@ -1130,19 +1133,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: SafeArea(top: false, child: _timeline(position)),
                   ),
                 ),
-              if (upNext != null && !locked && !controls)
-                Positioned(
+              // On desktop they stay with the controls up, lifted over the bar: reaching for them with the pointer
+              // brings the controls up.
+              if (upNext != null && !locked && (isDesktop || !controls))
+                AnimatedPositioned(
+                  duration: motionMs(context, 200),
                   right: isTv ? tvMargin : 24,
-                  bottom: isTv ? 32 : 24,
+                  bottom: isTv ? 32 : (controls ? _deskBarHeight : 24),
                   // OK takes the offer on TV (see _onKey), so it never holds focus.
                   child: ExcludeFocus(excluding: isTv, child: upNext),
                 )
               else if (skip != null &&
                   !locked &&
-                  !controls) // the controls have their own
-                Positioned(
+                  (isDesktop ||
+                      !controls)) // elsewhere the controls have their own
+                AnimatedPositioned(
+                  duration: motionMs(context, 200),
                   right: isTv ? tvMargin : 24,
-                  bottom: isTv ? 48 : 32,
+                  bottom: isTv ? 48 : (controls ? _deskBarHeight : 32),
                   child: ExcludeFocus(
                     excluding: isTv,
                     child: FilledButton.icon(
@@ -1461,9 +1469,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  /// The skip for the range being played, else a fixed jump forward.
+  /// The skip for the range being played, else a fixed jump forward. On desktop the floating skip stays up over
+  /// the controls, so this one only jumps then.
   Widget _skipButton(Duration position) {
-    final skip = Settings.skipMode == SkipMode.off
+    final skip =
+        Settings.skipMode == SkipMode.off ||
+            (isDesktop && session.skipButton(position) != null)
         ? null
         : session.activeSkip(position);
     return TextButton.icon(
