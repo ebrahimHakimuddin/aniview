@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -90,7 +91,7 @@ class _HomeScreenState extends State<HomeScreen>
       resume: (id) => _land(RemoteIntent.launcher, id),
       search: _voiceSearch,
     );
-    if (!isTv) TvRemote.check();
+    if (!isTv && !Platform.isIOS) TvRemote.check();
     if (isTv) {
       onRemoteSearch = _remoteSearch;
       onRemotePlay = (id) => _land(RemoteIntent.remotePlay, id);

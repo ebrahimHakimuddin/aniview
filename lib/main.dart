@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -18,10 +19,12 @@ import 'welcome.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // libmpv plays on desktop only; Android has ExoPlayer and no libmpv, where this throws before the app starts. On Linux,
+  // Start receiving iOS URL-scheme callbacks before asynchronous startup work.
+  if (Platform.isIOS) AppLinks();
+  // iOS and desktop bundle their own libmpv. Android keeps ExoPlayer and has no libmpv. On Linux,
   // name the soname the video plugin links: plain 'libmpv.so' can load the host's copy beside an AppImage's own, and
   // two libmpvs abort on the first video.
-  if (isDesktop) {
+  if (videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit) {
     MediaKit.ensureInitialized(libmpv: Platform.isLinux ? 'libmpv.so.2' : null);
   }
   // Build the top sites on app load; screens await it later.

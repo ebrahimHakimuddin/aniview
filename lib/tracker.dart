@@ -30,7 +30,8 @@ abstract interface class Catalog {
 class AniListCatalog implements Catalog {
   const AniListCatalog();
   @override
-  bool get usable => AniList.usable;
+  // Public GraphQL browsing needs no OAuth client; signing in still does.
+  bool get usable => true;
   @override
   Future<List> trending() => AniList.trending();
   @override

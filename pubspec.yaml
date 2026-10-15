@@ -15,6 +15,7 @@ dependencies:
   http: ^1.6.0
   http2: ^2.3.1
   media_kit: ^1.2.6
+  media_kit_libs_ios_video: ^1.1.4
   media_kit_libs_linux: ^1.2.1
   media_kit_libs_macos_video: ^1.1.4
   media_kit_libs_windows_video: ^1.0.11
@@ -30,6 +31,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true

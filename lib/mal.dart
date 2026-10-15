@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -48,7 +49,7 @@ class MAL {
     String? pick(Uri uri) => uri.queryParameters['state'] == state
         ? uri.queryParameters['code']
         : null;
-    final code = isDesktop
+    final code = isDesktop || Platform.isIOS
         ? await signInInBrowser(
             context,
             url,

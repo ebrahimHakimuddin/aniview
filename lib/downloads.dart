@@ -277,8 +277,8 @@ class DownloadStore {
 }
 
 /// Episodes saved on the device. An HLS stream is stored as a local playlist plus its segment, key and subtitle
-/// files, so offline playback works exactly like streaming. Downloads run one at a time, in the background too
-/// (a foreground service keeps the app alive while the queue runs); unfinished segments resume on the next launch.
+/// files, so offline playback works exactly like streaming. Downloads run one at a time. Android's foreground
+/// service keeps the queue alive; iOS can suspend it when backgrounded. Unfinished segments resume on launch.
 class Downloads extends ChangeNotifier {
   Downloads._();
   static final instance = Downloads._();
@@ -309,7 +309,7 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<Directory> _chosenRoot() async =>
-      Settings.desktopDownloadFolder.isEmpty
+      Platform.isIOS || Settings.desktopDownloadFolder.isEmpty
       ? Directory('${(await _appFolder()).path}/downloads')
       : Directory('${Settings.desktopDownloadFolder}/AniView');
 
@@ -615,7 +615,9 @@ class Downloads extends ChangeNotifier {
         ..skips = community.isNotEmpty ? community : stream.skips
         ..progress = 1;
       // The folder is part of saving to the gallery; without it, episodes stay in app storage.
-      if (Settings.saveToGallery && Settings.downloadFolder.isNotEmpty) {
+      if (Platform.isAndroid &&
+          Settings.saveToGallery &&
+          Settings.downloadFolder.isNotEmpty) {
         await AndroidApp.exportDownloadFolder(
           Settings.downloadFolder,
           d.id,
@@ -624,7 +626,7 @@ class Downloads extends ChangeNotifier {
         d.storageUri = Settings.downloadFolder;
       }
       _queue.markDone(d);
-      if (Settings.saveToGallery && d.video != null) {
+      if (Platform.isAndroid && Settings.saveToGallery && d.video != null) {
         note = await _saveToGallery(d, dir);
       }
       if (d.storageUri != null) await dir.delete(recursive: true);
@@ -648,6 +650,8 @@ class Downloads extends ChangeNotifier {
   /// Joins the saved segments into one MP4 (no re-encoding) and drops them; returns why it couldn't, or null. An
   /// episode that couldn't be joined stays an HLS playlist, which still plays.
   Future<String?> _toMp4(Download d, Directory dir) async {
+    // iOS cannot launch an ffmpeg executable. Its native player opens the saved playlist directly.
+    if (Platform.isIOS) return null;
     final video = '${d.name}.mp4';
     final out = '${dir.path}/$video';
     try {

@@ -487,7 +487,7 @@ Map? updateApk(List assets, String? abi) => assets
 /// [quiet] (the check on launch) stays silent when up to date or offline.
 Future<void> checkForUpdate(BuildContext context, {bool quiet = false}) async {
   // The beta package has a different application id; production APKs cannot update it.
-  if (isBetaBuild) return;
+  if (isBetaBuild || Platform.isIOS) return;
   try {
     final current = await AndroidApp.version() ?? '';
     final res = await http
@@ -987,7 +987,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => Settings.randomFrom = v,
           ),
         ),
-        if (!isDesktop)
+        if (!isDesktop && !Platform.isIOS)
           ListTile(
             title: const Text('Layout'),
             subtitle: Text(
@@ -1025,42 +1025,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ]),
       // A phone that has never paired a TV sets one up; "remote" only once there's a TV to control.
-      _Group(isTv ? 'Remote' : 'TV', [
-        ListTile(
-          leading: Icon(
-            isTv || Settings.tvRemotes.isNotEmpty
-                ? Icons.settings_remote_rounded
-                : Icons.connected_tv_rounded,
+      if (!Platform.isIOS)
+        _Group(isTv ? 'Remote' : 'TV', [
+          ListTile(
+            leading: Icon(
+              isTv || Settings.tvRemotes.isNotEmpty
+                  ? Icons.settings_remote_rounded
+                  : Icons.connected_tv_rounded,
+            ),
+            title: Text(
+              isTv
+                  ? 'Phone remote'
+                  : Settings.tvRemotes.isEmpty
+                  ? 'Set up AniView on a TV'
+                  : 'TV remote',
+            ),
+            subtitle: Text(
+              isTv
+                  ? 'Control AniView on this TV from your phone'
+                  : Settings.tvRemotes.isEmpty
+                  ? isDesktop
+                        ? 'Pair a TV running AniView to sign it in from this computer and use it as the TV\'s remote'
+                        : 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
+                  : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
+            ),
+            onTap: () async {
+              await pushSettled(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      isTv ? const TvPairScreen() : const PhoneRemoteScreen(),
+                ),
+              );
+              // Pairing may have signed the TV in.
+              if (mounted) setState(() {});
+            },
           ),
-          title: Text(
-            isTv
-                ? 'Phone remote'
-                : Settings.tvRemotes.isEmpty
-                ? 'Set up AniView on a TV'
-                : 'TV remote',
-          ),
-          subtitle: Text(
-            isTv
-                ? 'Control AniView on this TV from your phone'
-                : Settings.tvRemotes.isEmpty
-                ? isDesktop
-                      ? 'Pair a TV running AniView to sign it in from this computer and use it as the TV\'s remote'
-                      : 'Pair a TV running AniView to sign it in from this phone and use the phone as its remote'
-                : 'Control AniView on ${Settings.tvRemotes.length == 1 ? Settings.tvRemotes.values.first['name'] : 'your TVs'}',
-          ),
-          onTap: () async {
-            await pushSettled(
-              context,
-              MaterialPageRoute(
-                builder: (_) =>
-                    isTv ? const TvPairScreen() : const PhoneRemoteScreen(),
-              ),
-            );
-            // Pairing may have signed the TV in.
-            if (mounted) setState(() {});
-          },
-        ),
-      ]),
+        ]),
       if (Platform.isAndroid)
         _Group('Notifications', [
           SwitchListTile(
@@ -1267,6 +1268,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ]),
       _Group('Storage', [
+        if (Platform.isIOS)
+          const ListTile(
+            leading: Icon(Icons.folder_outlined),
+            title: Text('Downloads stay in AniView'),
+            subtitle: Text(
+              'Keep the app open while downloading. Saved episodes are available offline.',
+            ),
+          ),
         _Choice(
           title: 'Download quality',
           subtitle: 'Lower quality takes less space',
@@ -1411,10 +1420,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: Text(isBetaBuild ? 'AniView Beta' : 'AniView'),
             subtitle: Text(
               snap.hasData
-                  ? 'Version ${snap.data}${isBetaBuild ? ' · Beta build' : ' · ${isDesktop ? 'Click' : 'Tap'} to check for updates'}'
+                  ? 'Version ${snap.data}${Platform.isIOS
+                        ? ' · Update through your sideloading app'
+                        : isBetaBuild
+                        ? ' · Beta build'
+                        : ' · ${isDesktop ? 'Click' : 'Tap'} to check for updates'}'
                   : 'Version',
             ),
-            trailing: isBetaBuild
+            trailing: isBetaBuild || Platform.isIOS
                 ? null
                 : Icon(
                     isDesktop
@@ -1422,7 +1435,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         : Icons.system_update_rounded,
                     size: 18,
                   ),
-            onTap: isBetaBuild ? null : () => checkForUpdate(context),
+            onTap: isBetaBuild || Platform.isIOS
+                ? null
+                : () => checkForUpdate(context),
           ),
         ),
         if (Platform.isLinux)

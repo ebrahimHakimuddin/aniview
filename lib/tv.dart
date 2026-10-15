@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -23,7 +24,7 @@ Future<void> detectTv({String layout = 'auto'}) async {
 /// Picks the layout; a phone in the TV layout stays in landscape, the shape it's made for.
 void applyLayout(String layout) {
   isTv = switch (layout) {
-    'tv' => true,
+    'tv' => !Platform.isIOS,
     'phone' => false,
     _ => deviceIsTv,
   };

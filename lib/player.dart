@@ -143,7 +143,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   int _shownSecond = -1;
   // Home on a TV or switching apps may be the last chance: the app can be closed from there.
-  late final _lifecycle = AppLifecycleListener(onHide: _saveHistory);
+  late final _lifecycle = AppLifecycleListener(
+    onHide: () {
+      _saveHistory();
+      // iOS may suspend the app immediately. Keep playback foreground-only and resume explicitly.
+      if (Platform.isIOS) player.pause().ignore();
+    },
+  );
 
   int get index => session.index;
   List<VideoStream> get streams => session.streams;
@@ -435,7 +441,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timelineTimer?.cancel();
     _seekHover.dispose();
     player.dispose();
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
     }
     if (isDesktop) {
@@ -477,7 +483,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         'dub': widget.dub,
         'downloaded': session.fromDownload,
       });
-      if (Settings.externalPlayer) {
+      if (Platform.isAndroid && Settings.externalPlayer) {
         final stopped = await _playExternal(streams.first, at: opened.at);
         if (!mounted) return;
         if (stopped == null) {
@@ -798,7 +804,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _verticalDrag(DragUpdateDetails d, Size size) {
     final delta = -d.delta.dy / (size.height * .8);
     if (d.localPosition.dx < size.width / 2) {
-      if (!Platform.isAndroid) return;
+      if (!Platform.isAndroid && !Platform.isIOS) return;
       brightness = (brightness + delta).clamp(0.0, 1.0);
       ScreenBrightness().setApplicationScreenBrightness(brightness);
       _hint(
@@ -1018,7 +1024,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         }
                         _clearHint();
                       },
-                onVerticalDragStart: !swipes
+                onVerticalDragStart: !swipes || !Platform.isAndroid
                     ? null
                     // may have changed with the volume keys
                     : (_) => AndroidApp.volume()

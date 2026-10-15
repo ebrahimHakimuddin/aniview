@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 
@@ -166,8 +167,8 @@ class AniList {
       return; // signed in by the phone, or closed
     }
     if (!context.mounted) return;
-    // The desktop uses the system browser, where the person is likely signed in to AniList already.
-    if (isDesktop) {
+    // iOS and desktop return from the system browser through app_links.
+    if (isDesktop || Platform.isIOS) {
       final value = await signInInBrowser(
         context,
         'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',

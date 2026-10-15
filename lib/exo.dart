@@ -49,7 +49,7 @@ class ExoPlayerState {
 }
 
 /// Where [ExoPlayer]'s commands go and its events come from: Media3 ExoPlayer on the Android side (see
-/// ExoPlayers.kt) over a channel, libmpv through media_kit on desktop, or a fake in tests. Commands are the
+/// ExoPlayers.kt) over a channel, media_kit's native iOS/desktop libraries, or a fake in tests. Commands are the
 /// channel's (`open`, `seek`, `subtitle`, …); events are maps of what changed (`position`, `tracks`, …).
 abstract class PlayerBackend {
   /// Creates the player; [on] gets every event from then on.
@@ -60,7 +60,7 @@ abstract class PlayerBackend {
   Future<void> setVolume(double level);
   Future<void> dispose();
 
-  /// The desktop picture's controller; null where the picture is a texture.
+  /// The media_kit picture's controller; null where the backend exposes a texture directly.
   VideoController? get video => null;
 }
 
@@ -95,8 +95,9 @@ class _AndroidBackend extends PlayerBackend {
   }
 }
 
-/// Desktop: libmpv, answering the Android channel's commands and events.
-class _MpvBackend extends PlayerBackend {
+/// media_kit on iOS and desktop, answering the same commands and events as Media3.
+/// iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture renderer.
+class _MediaKitBackend extends PlayerBackend {
   // One mpv for the app's whole run, stopped between videos: a new instance after another has shut down can abort
   // inside libmpv (m_config_core.c "group_index >= 0") as it opens its first file.
   static mk.Player? _sharedMpv;
@@ -249,12 +250,16 @@ class _MpvBackend extends PlayerBackend {
   }
 }
 
-/// The video player: Media3 ExoPlayer on Android, drawing into a texture; libmpv on desktop (see [PlayerBackend]).
+/// The video player: Media3 on Android; native media_kit on iOS and desktop (see [PlayerBackend]).
 /// Reads like media_kit's player: [state] for now, [stream] for changes.
 class ExoPlayer {
   ExoPlayer([PlayerBackend? backend])
     : _backend =
-          backend ?? (Platform.isAndroid ? _AndroidBackend() : _MpvBackend()) {
+          backend ??
+          switch (videoBackendFor(Platform.operatingSystem)) {
+            VideoBackend.exoPlayer => _AndroidBackend(),
+            VideoBackend.mediaKit => _MediaKitBackend(),
+          } {
     _ready = _backend.start(_on);
   }
 
@@ -265,7 +270,7 @@ class ExoPlayer {
   /// Counts [load]s, so one overtaken by the next stops settling.
   int _loads = 0;
 
-  /// The desktop picture's controller; null on Android, which draws [texture].
+  /// The media_kit picture's controller; null on Android, which draws [texture].
   VideoController? get video => _backend.video;
 
   /// The texture the picture draws into, once the player exists.

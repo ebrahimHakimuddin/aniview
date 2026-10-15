@@ -16,6 +16,9 @@
 Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
 MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
 
+The iPhone target (iOS 15+) uses native media_kit playback. See [iOS build, sideloading and testing](docs/ios.md)
+for re-signable IPA builds, client-ID configuration and platform limitations. Android retains ExoPlayer.
+
 ## Disclaimer
 
 AniView does not host, store, upload or serve any video, subtitle or image content. Everything shown in the app
