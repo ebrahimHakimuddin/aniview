@@ -12,3 +12,12 @@ android/key.properties
 .fvm/
 /AniView-*.AppImage
 dart_defines.env
+dart_defines.*.env
+.env
+.env.*
+*.ipa
+*.xcarchive/
+*.mobileprovision
+*.p12
+*.p8
+.DS_Store

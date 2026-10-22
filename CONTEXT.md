@@ -27,7 +27,9 @@ when to offer or start the next episode (**up next**), what OK on a TV remote do
 
 **Video player** (`lib/exo.dart`, `ExoPlayer`): plays a stream and **settles** it once loaded (`load`): lands on the
 resume point when the stream ignored it, shows the picked subtitles, keeps the audio track picked before. Its
-**backend** (`PlayerBackend`) is Media3 ExoPlayer on Android, libmpv on desktop, or a fake in tests.
+**backend** (`PlayerBackend`) is Media3 ExoPlayer on Android, native media_kit/libmpv on iOS and desktop, or a fake
+in tests. iOS links `media_kit_libs_ios_video` XCFrameworks and uses the native iOS texture renderer. Its downloads
+stay in sandboxed storage as HLS or direct video files, with relative names resolved against the current container.
 
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
 sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's

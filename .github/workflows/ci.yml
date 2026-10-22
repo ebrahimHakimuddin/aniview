@@ -30,6 +30,23 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: python3 tool/check_macos_bundle.py
+      - run: python3 tool/check_ios_bundle.py
+
+  # Compile for actual iPhone hardware without signing credentials; no IPA is published.
+  ios:
+    needs: check
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.6
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
+      - run: python3 tool/check_ios_bundle.py build/ios/iphoneos/Runner.app
 
   # Builds each target on its own OS, since none of them cross-compiles; the tests above run on Linux only.
   build:

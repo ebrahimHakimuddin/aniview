@@ -3,10 +3,60 @@ import 'dart:io';
 
 import 'package:aniview/downloads.dart';
 import 'package:aniview/settings.dart';
+import 'package:aniview/sources.dart';
+import 'package:aniview/stream_address.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test(
+    'sandbox downloads survive restart with a different container path',
+    () async {
+      final container = await Directory.systemTemp.createTemp(
+        'aniview_sandbox',
+      );
+      addTearDown(() => container.delete(recursive: true));
+      final originalRoot = await Directory('${container.path}/before/downloads')
+          .create(recursive: true);
+      final download = Download(
+        media: {'id': 42},
+        source: 'Anikoto',
+        number: 1,
+        dub: false,
+        ref: 'ep1',
+        status: DownloadStatus.done,
+        subtitles: [Subtitle('English', 'sub0.vtt')],
+      );
+      final episode = await Directory('${originalRoot.path}/${download.id}')
+          .create();
+      await File('${episode.path}/index.m3u8')
+          .writeAsString('#EXTM3U\n#EXTINF:5,\nseg00000.ts\n#EXT-X-ENDLIST');
+      await File('${episode.path}/seg00000.ts')
+          .writeAsBytes([0x47, 0x40, 0x11]);
+      await File('${episode.path}/sub0.vtt').writeAsString('WEBVTT\n');
+      await DownloadStore(originalRoot).write(jsonEncode([download.toJson()]));
+
+      final relocated = await originalRoot.rename('${container.path}/after');
+      final restored = (await DownloadStore(relocated).read()).single;
+      final folder = LocalFolder('${relocated.path}/${restored.id}');
+      expect(restored.status, DownloadStatus.done);
+      expect(restored.storageUri, isNull);
+      expect(
+        restored.video,
+        isNull,
+      ); // iOS keeps HLS, without launching ffmpeg.
+      expect(
+        await File(folder.urlOf('index.m3u8')).readAsString(),
+        contains('seg00000.ts'),
+      );
+      expect(
+        await File(folder.urlOf(restored.subtitles.single.url)).exists(),
+        isTrue,
+      );
+      expect(jsonEncode(restored.toJson()), isNot(contains(originalRoot.path)));
+    },
+  );
+
   test(
     'partial segments resume from the same source, not from another',
     () async {

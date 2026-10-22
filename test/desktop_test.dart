@@ -79,7 +79,7 @@ void main() {
     addTearDown(() => rebindSearch(null));
     rebindSearch(const SingleActivator(LogicalKeyboardKey.keyK, alt: true));
     await tester.pump();
-    expect(find.text('Alt K'), findsOneWidget);
+    expect(find.text(Platform.isMacOS ? 'Option K' : 'Alt K'), findsOneWidget);
     focus.unfocus();
     await tester.sendKeyDownEvent(modifier);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyF);

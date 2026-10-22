@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 
@@ -13,6 +14,7 @@ class EpisodeNotifications {
 
   /// [recent] are media maps from watch history; ones without an AniList id (MAL-only) are skipped.
   static Future<void> refresh(Iterable recent) async {
+    if (!Platform.isAndroid) return;
     try {
       final token = AniList.token;
       // The user id is cached after the first lookup; offline, the job keeps the one it has.
@@ -37,6 +39,7 @@ class EpisodeNotifications {
   /// Calls [open] with the AniList id of a tapped notification's show: the one that launched the app, and any
   /// tapped while it runs.
   static Future<void> listen(void Function(int id) open) async {
+    if (!Platform.isAndroid) return;
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'open') open(call.arguments as int);
     });
@@ -51,6 +54,7 @@ class EpisodeNotifications {
   /// Asks for Android 13's notification permission when it hasn't been granted, at most once per app launch
   /// unless [again] (the user just switched notifications on).
   static Future<void> requestPermission({bool again = false}) async {
+    if (!Platform.isAndroid) return;
     if (_asked && !again) return;
     _asked = true;
     await _channel.invokeMethod('permission').catchError((Object _) => null);
