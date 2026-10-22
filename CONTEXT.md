@@ -33,7 +33,8 @@ stay in sandboxed storage as HLS or direct video files, with relative names reso
 
 **Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
 sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's
-adapter (Anikoto, animepahe, ani.pm, AnimeStream, or an extension's `ExtensionSource`); history and downloads remember it by name.
+adapter (Anikoto, animepahe, ani.pm, AnimeStream, an extension's `ExtensionSource`, or the user's own
+Jellyfin server, `lib/jellyfin.dart`, listed first once connected in Settings); history and downloads remember it by name.
 Adapters reach the network through a `Net` (`lib/net.dart`: plain HTTP, or `CloudflareNet` with a passed check's clearance)
 and extensions through an `ExtensionHost` (`lib/sources.dart`: the Android side, typed); both are faked in tests.
 

@@ -22,6 +22,7 @@ import 'desktop.dart'
 import 'desktop/launcher.dart';
 import 'extensions.dart';
 import 'history.dart';
+import 'jellyfin.dart';
 import 'notifications.dart';
 import 'sources.dart';
 import 'pairing.dart';
@@ -384,6 +385,30 @@ class Settings {
       _prefs.getString('desktop_download_folder') ?? '';
   static set desktopDownloadFolder(String v) =>
       _prefs.setString('desktop_download_folder', v);
+
+  /// The Jellyfin server signed in to (see jellyfin.dart); no token is signed out.
+  static String get jellyfinServer => _prefs.getString('jellyfin_server') ?? '';
+  static set jellyfinServer(String v) => _prefs.setString('jellyfin_server', v);
+  static String get jellyfinToken =>
+      (_loaded ? _prefs.getString('jellyfin_token') : null) ?? '';
+  static set jellyfinToken(String v) => _prefs.setString('jellyfin_token', v);
+  static String get jellyfinUser => _prefs.getString('jellyfin_user') ?? '';
+  static set jellyfinUser(String v) => _prefs.setString('jellyfin_user', v);
+  static String get jellyfinUserName =>
+      _prefs.getString('jellyfin_user_name') ?? '';
+  static set jellyfinUserName(String v) =>
+      _prefs.setString('jellyfin_user_name', v);
+
+  /// This install's id on the server, made once: Jellyfin keeps one session per device.
+  static String get jellyfinDevice {
+    if (_prefs.getString('jellyfin_device') case final id?) return id;
+    final id = List.generate(
+      16,
+      (_) => Random().nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    _prefs.setString('jellyfin_device', id);
+    return id;
+  }
 
   static String get downloadFolder => _prefs.getString('download_folder') ?? '';
   static set downloadFolder(String v) => _prefs.setString('download_folder', v);
@@ -798,6 +823,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _jellyfinSignIn() async {
+    final server = TextEditingController(text: Settings.jellyfinServer);
+    final name = TextEditingController(text: Settings.jellyfinUserName);
+    final password = TextEditingController();
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Connect to Jellyfin'),
+        content: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: server,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autofillHints: const [AutofillHints.url],
+                decoration: const InputDecoration(
+                  labelText: 'Server address',
+                  hintText: 'http://192.168.1.10:8096',
+                ),
+              ),
+              TextField(
+                controller: name,
+                autofillHints: const [AutofillHints.username],
+                decoration: const InputDecoration(labelText: 'Username'),
+              ),
+              TextField(
+                controller: password,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(labelText: 'Password'),
+                onSubmitted: (_) => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    try {
+      await Jellyfin.signIn(server.text, name.text, password.text);
+      Sites.reload();
+      if (mounted) {
+        showSuccess(context, 'Connected as ${Settings.jellyfinUserName}');
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _signOut(ListProvider provider) async {
     await Tracker.signOut(provider);
     if (!mounted) return;
@@ -953,6 +1040,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => Settings.watchedPercent = v,
           ),
         ),
+      ]),
+      _Group('Jellyfin', [
+        if (Settings.jellyfinToken.isEmpty)
+          ListTile(
+            leading: const Icon(Icons.dns_rounded),
+            title: const Text('Connect to Jellyfin'),
+            subtitle: const Text(
+              'Play shows from your own server, listed first among the sites',
+            ),
+            onTap: _jellyfinSignIn,
+          )
+        else
+          ListTile(
+            leading: const Icon(Icons.dns_rounded),
+            title: Text('Connected as ${Settings.jellyfinUserName}'),
+            subtitle: Text(Settings.jellyfinServer),
+            trailing: TextButton(
+              onPressed: () {
+                Jellyfin.signOut();
+                Sites.reload();
+                setState(() {});
+              },
+              child: const Text('Disconnect'),
+            ),
+          ),
       ]),
       if (isDesktop)
         _Group('Keyboard', [
