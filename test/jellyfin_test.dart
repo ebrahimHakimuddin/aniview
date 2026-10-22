@@ -170,10 +170,7 @@ void main() {
       expect(id, startsWith('a/'));
       expect(net.requests, everyElement(contains('searchTerm=')));
       // The season's suffix is dropped too: libraries name a show by its first season.
-      expect(
-        net.requests,
-        contains(contains('searchTerm=sousou+no+frieren&')),
-      );
+      expect(net.requests, contains(contains('searchTerm=sousou+no+frieren&')));
     },
   );
 

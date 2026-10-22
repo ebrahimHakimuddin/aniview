@@ -23,6 +23,7 @@ import 'desktop/launcher.dart';
 import 'extensions.dart';
 import 'history.dart';
 import 'jellyfin.dart';
+import 'jellyseerr.dart';
 import 'notifications.dart';
 import 'sources.dart';
 import 'pairing.dart';
@@ -405,6 +406,16 @@ class Settings {
       _prefs.getString('jellyfin_user_name') ?? '';
   static set jellyfinUserName(String v) =>
       _prefs.setString('jellyfin_user_name', v);
+
+  /// The Jellyseerr signed in to (see jellyseerr.dart); no cookie is signed out.
+  static String get jellyseerrServer =>
+      _prefs.getString('jellyseerr_server') ?? '';
+  static set jellyseerrServer(String v) =>
+      _prefs.setString('jellyseerr_server', v);
+  static String get jellyseerrCookie =>
+      (_loaded ? _prefs.getString('jellyseerr_cookie') : null) ?? '';
+  static set jellyseerrCookie(String v) =>
+      _prefs.setString('jellyseerr_cookie', v);
 
   /// This install's id on the server, made once: Jellyfin keeps one session per device.
   static String get jellyfinDevice {
@@ -901,6 +912,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _jellyseerrSignIn() async {
+    final server = TextEditingController(text: Settings.jellyseerrServer);
+    final name = TextEditingController(text: Settings.jellyfinUserName);
+    final password = TextEditingController();
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Connect to Jellyseerr'),
+        content: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: server,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autofillHints: const [AutofillHints.url],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyseerr address',
+                  hintText: 'http://192.168.1.10:5055',
+                ),
+              ),
+              TextField(
+                controller: name,
+                autofillHints: const [AutofillHints.username],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyfin username',
+                ),
+              ),
+              TextField(
+                controller: password,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyfin password',
+                ),
+                onSubmitted: (_) => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    try {
+      await Jellyseerr.signIn(server.text, name.text, password.text);
+      if (mounted) showSuccess(context, 'Connected to Jellyseerr');
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) setState(() {});
+  }
+
   /// Shows Quick Connect's code until it's approved (true) or the dialog is closed (false).
   Future<bool> _quickConnect(String server) async {
     final code = ValueNotifier<String?>(null);
@@ -1127,6 +1201,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Sites.reload();
                 setState(() {});
               },
+              child: const Text('Disconnect'),
+            ),
+          ),
+        if (Settings.jellyseerrCookie.isEmpty)
+          ListTile(
+            leading: const Icon(Icons.playlist_add_rounded),
+            title: const Text('Connect to Jellyseerr'),
+            subtitle: const Text(
+              'Request shows that aren\'t on your server yet. Works with Seerr too',
+            ),
+            onTap: _jellyseerrSignIn,
+          )
+        else
+          ListTile(
+            leading: const Icon(Icons.playlist_add_check_rounded),
+            title: const Text('Jellyseerr connected'),
+            subtitle: Text(Settings.jellyseerrServer),
+            trailing: TextButton(
+              onPressed: () => setState(Jellyseerr.signOut),
               child: const Text('Disconnect'),
             ),
           ),

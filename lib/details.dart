@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
+import 'jellyfin.dart';
+import 'jellyseerr.dart';
 import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
@@ -863,6 +865,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
               onTap: () => _markWatched(EpisodePlan.progressAfter(list)),
               destructive: false,
             ),
+          if (Settings.jellyseerrCookie.isNotEmpty)
+            (
+              icon: Icons.playlist_add_rounded,
+              label: 'Request on Jellyseerr…',
+              onTap: () => requestOnJellyseerr(context, media),
+              destructive: false,
+            ),
         ]);
       },
     ),
@@ -1457,11 +1466,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
               icon: Icons.search_off_rounded,
               title: 'Not found on ${current.name}',
               message: 'The site may list it under another name. Pick it manually or try another site.',
-              action: FilledButton.tonalIcon(
-                onPressed: _fixMatch,
-                icon: const Icon(Icons.manage_search_rounded),
-                label: const Text('Find it manually'),
-              ),
+              // Not on the user's own server: it can be asked for there instead.
+              action:
+                  current is Jellyfin && Settings.jellyseerrCookie.isNotEmpty
+                  ? FilledButton.tonalIcon(
+                      onPressed: () => requestOnJellyseerr(context, media),
+                      icon: const Icon(Icons.playlist_add_rounded),
+                      label: const Text('Request on Jellyseerr'),
+                    )
+                  : FilledButton.tonalIcon(
+                      onPressed: _fixMatch,
+                      icon: const Icon(Icons.manage_search_rounded),
+                      label: const Text('Find it manually'),
+                    ),
             ),
           );
         }
