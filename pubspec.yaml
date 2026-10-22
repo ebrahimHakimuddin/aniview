@@ -1,7 +1,7 @@
 name: aniview
 description: "AniView: watch and track anime with AniList or MyAnimeList."
 publish_to: 'none'
-version: 2.6.0-beta.1+28
+version: 2.6.0-beta.2+29
 
 environment:
   sdk: ^3.13.3
