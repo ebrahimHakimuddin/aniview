@@ -8,6 +8,13 @@ set(BINARY_NAME "aniview")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.kidfury.aniview")
+set(APPLICATION_TITLE "AniView")
+# A beta (ANIVIEW_BETA in the build's environment) is an app of its own: its own id keeps its data apart and lets it
+# run beside AniView (one instance per id).
+if(DEFINED ENV{ANIVIEW_BETA})
+  set(APPLICATION_ID "com.kidfury.aniview.beta")
+  set(APPLICATION_TITLE "AniView Beta")
+endif()
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -73,6 +80,14 @@ set_target_properties(${BINARY_NAME}
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+# WPE WebKit 2.54 renamed the setting flutter_inappwebview_linux still names: WPE_SETTING_DISABLE_ANIMATIONS is now
+# WPE_SETTING_REDUCED_MOTION. Drop this once the plugin uses the new name.
+pkg_check_modules(WPE_WEBKIT QUIET wpe-webkit-2.0)
+if(TARGET flutter_inappwebview_linux_plugin AND WPE_WEBKIT_VERSION VERSION_GREATER_EQUAL 2.54)
+  target_compile_definitions(flutter_inappwebview_linux_plugin PRIVATE
+    "WPE_SETTING_DISABLE_ANIMATIONS=WPE_SETTING_REDUCED_MOTION")
+endif()
 
 
 # === Installation ===

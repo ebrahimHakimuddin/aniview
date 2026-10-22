@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../platform.dart';
 import '../ui.dart';
+import '../settings.dart' show appName, isBetaBuild;
 import 'launcher.dart';
 
 /// Signs in with the system browser: opens [url], and waits for the tracker (called [name]) to send the browser on to
@@ -69,6 +70,10 @@ Future<String?> signInInBrowser(
   }
 }
 
+const _linkEntry = isBetaBuild
+    ? 'aniview-beta-link.desktop'
+    : 'aniview-link.desktop';
+
 /// Tells the desktop to open `aniview://` links with this app: its menu entry, which also registers the scheme, as a
 /// Linux package would install (kept pointing at where the app is now); a hidden one when it isn't in the menu.
 Future<void> _registerScheme() async {
@@ -85,12 +90,12 @@ Future<void> _registerScheme() async {
     final home = Platform.environment['HOME'];
     if (home == null) return;
     final dir = Directory('$home/.local/share/applications');
-    final file = File('${dir.path}/aniview-link.desktop');
+    final file = File('${dir.path}/$_linkEntry');
     final entry =
         '[Desktop Entry]\n'
         'Type=Application\n'
-        'Name=AniView\n'
-        'Exec="${Platform.resolvedExecutable}" %u\n'
+        'Name=$appName\n'
+        'Exec="$launcherExec" %u\n'
         'MimeType=x-scheme-handler/aniview;\n'
         'NoDisplay=true\n';
     if (!await file.exists() || await file.readAsString() != entry) {
@@ -99,7 +104,7 @@ Future<void> _registerScheme() async {
     }
     await Process.run('xdg-mime', [
       'default',
-      'aniview-link.desktop',
+      _linkEntry,
       'x-scheme-handler/aniview',
     ]);
   } catch (_) {} // the browser then can't hand the link back; the dialog's Cancel still works

@@ -52,7 +52,8 @@ with (app / "Info.plist").open("rb") as stream:
     built = plistlib.load(stream)
 require(built.get("CFBundleSupportedPlatforms") == ["iPhoneOS"], "Expected a device app, not a simulator")
 require(built["MinimumOSVersion"] == "15.0", "Unexpected minimum iOS version")
-require(built["CFBundleIdentifier"] == "com.kidfury.aniview", "Unexpected bundle identifier")
+require(built["CFBundleIdentifier"] in ("com.kidfury.aniview", "com.kidfury.aniview.beta"),
+        "Unexpected bundle identifier")
 frameworks = app / "Frameworks"
 for name in ("App", "Flutter", "Mpv", "Avcodec", "Avformat", "media_kit_video"):
     require((frameworks / f"{name}.framework" / name).is_file(), f"Missing native library: {name}")

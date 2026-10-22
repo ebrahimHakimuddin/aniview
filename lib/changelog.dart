@@ -6,41 +6,42 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.5.0';
+const changelogVersion = '2.6.0-beta.1';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
   (
-    icon: Icons.desktop_windows_rounded,
-    title: 'AniView on your computer',
-    body: 'A new desktop app for Windows, macOS and Linux, with its own layout, keyboard controls and player.',
+    icon: Icons.dns_rounded,
+    title: 'Your own Jellyfin',
+    body: 'Connect your Jellyfin server in Settings and its shows play like any site, listed first, with your progress sent back to it. Sign in with a password or Quick Connect.',
   ),
   (
-    icon: Icons.sync_rounded,
-    title: 'MyAnimeList sign-in',
-    body: 'Track with AniList or MyAnimeList, one at a time. With MyAnimeList you also get Schedule, airing times, new-episode alerts and your stats.',
+    icon: Icons.playlist_add_rounded,
+    title: 'Request it on Jellyseerr',
+    body: 'With Jellyfin picked and a show not on your server, request it on Jellyseerr or Seerr, season by season.',
   ),
   (
-    icon: Icons.home_rounded,
-    title: 'A fuller Home',
-    body: 'Top rated, All-time popular, Coming soon and genre rows, with Continue watching on by default. AniView also greets you by name when it opens.',
+    icon: Icons.new_releases_rounded,
+    title: 'New on your server',
+    body: 'An "On your Jellyfin" row at Home shows what was added to your server lately.',
   ),
   (
-    icon: Icons.download_done_rounded,
-    title: 'Downloads you can keep',
-    body: 'Each episode is saved as one MP4 with its subtitles inside, ready for any player. Extension episodes download too.',
+    icon: Icons.system_update_rounded,
+    title: 'Updates from inside the app',
+    body: 'Windows, macOS and Linux now download and install updates themselves, like Android. The beta updates to newer betas too.',
   ),
   (
-    icon: Icons.travel_explore_rounded,
-    title: 'Two new sites',
-    body: 'ani.pm and AnimeStream, both with sub and dub. AnimeStream episodes can’t be downloaded yet.',
+    icon: Icons.phone_iphone_rounded,
+    title: 'AniView on iPhone',
+    body:
+        'A first iOS build to sideload with AltStore, SideStore or Sideloadly.',
   ),
   (
-    icon: Icons.audiotrack_rounded,
-    title: 'Pick the audio',
-    body: 'Extension videos whose audio comes separately now play with sound, and you can switch between audio tracks.',
+    icon: Icons.science_rounded,
+    title: 'A beta beside AniView',
+    body: 'AniView Beta is an app of its own on every platform, so trying it leaves your AniView and its data as they are.',
   ),
 ];
 

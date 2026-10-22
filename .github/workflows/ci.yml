@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      beta:
+        description: Package AniView Beta, which installs beside AniView (for a pre-release)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,19 +83,22 @@ jobs:
 
   # Linux isn't here: flutter_inappwebview_linux needs WPE WebKit 2.50+, which Ubuntu's runners don't have, so tool/appimage.sh runs on a machine that does.
   # Release builds you can download from the run page; the defines come from the DART_DEFINES secret (the contents of dart_defines.env).
+  # With the beta input, every package is AniView Beta: its own app id, name and file names (AniView-Beta-*).
   package:
     needs: check
     if: github.event_name != 'pull_request'
+    env:
+      ANIVIEW_BETA: ${{ inputs.beta && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-2022
             target: windows
-            out: build/AniView-windows-x64-setup.exe
+            out: build/AniView-*windows-x64-setup.exe
           - os: macos-15
             target: macos
-            out: AniView-macos.dmg
+            out: AniView-*macos.dmg
           # Unsigned; AltStore, SideStore or Sideloadly re-sign it on install (docs/ios.md).
           - os: xcode-27
             target: ios
@@ -112,7 +120,8 @@ jobs:
         run: |
           printf '%s\n' "$DART_DEFINES" > dart_defines.env
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
-          flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env
+          flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env \
+            ${ANIVIEW_BETA:+--dart-define=ANIVIEW_BETA=true}
         env:
           DART_DEFINES: ${{ secrets.DART_DEFINES }}
       - if: matrix.target == 'windows'
@@ -121,15 +130,27 @@ jobs:
           choco install innosetup -y --no-progress
           version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
           # Git Bash would turn /DAppVersion into a path.
-          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" tool/aniview.iss
+          MSYS_NO_PATHCONV=1 "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/DAppVersion=$version" ${ANIVIEW_BETA:+/DBeta} tool/aniview.iss
       # ditto keeps the app's permissions and symlinks, which a plain copy or artifact upload would drop.
+      # The beta gets its own bundle id and name (so its own sandbox container, and a place beside AniView in
+      # Applications), then the ad-hoc signature again over the changed Info.plist.
       - if: matrix.target == 'macos'
         run: |
+          name=AniView file=AniView-macos.dmg
+          if [ -n "$ANIVIEW_BETA" ]; then name="AniView Beta" file=AniView-Beta-macos.dmg; fi
           mkdir dmg
-          ditto build/macos/Build/Products/Release/aniview.app dmg/AniView.app
-          python3 tool/check_macos_bundle.py dmg/AniView.app
+          ditto build/macos/Build/Products/Release/aniview.app "dmg/$name.app"
+          if [ -n "$ANIVIEW_BETA" ]; then
+            plist="dmg/$name.app/Contents/Info.plist"
+            /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.kidfury.aniview.beta' "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName $name" "$plist"
+            /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $name" "$plist" 2>/dev/null ||
+              /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $name" "$plist"
+            codesign --force --deep --sign - --entitlements macos/Runner/Release.entitlements "dmg/$name.app"
+          fi
+          python3 tool/check_macos_bundle.py "dmg/$name.app"
           ln -s /Applications dmg/Applications
-          hdiutil create -volname AniView -srcfolder dmg -ov -format UDZO AniView-macos.dmg
+          hdiutil create -volname "$name" -srcfolder dmg -ov -format UDZO "$file"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aniview-${{ matrix.target }}
