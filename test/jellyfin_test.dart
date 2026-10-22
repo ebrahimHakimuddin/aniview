@@ -105,13 +105,14 @@ void main() {
                     'Type': 'Audio',
                     'Index': 1,
                     'Language': 'jpn',
-                    'DisplayTitle': 'Japanese',
+                    'DisplayTitle': 'Japanese - AAC - Stereo',
                   },
                   {
                     'Type': 'Audio',
                     'Index': 2,
                     'Language': 'eng',
-                    'DisplayTitle': 'English',
+                    'Title': 'English Dub',
+                    'DisplayTitle': 'English Dub - AAC - Stereo',
                   },
                   {
                     'Type': 'Subtitle',
