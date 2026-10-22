@@ -62,23 +62,50 @@ install over builds signed with the same key.
    Prepare the short release notes file before the final command. Publish the three split APKs with their
    `app-*-release.apk` names so the in-app updater can select the device's ABI.
 
-The app checks the latest GitHub release on launch and when you tap the version in Settings → About.
+The app checks for a newer release on launch and when you tap the version in Settings → About, and installs it from
+inside the app. It looks for its own file in the release, so keep these names:
 
-To build a separate installable beta with the local app configuration and current streaming-source ranking, run:
+| | Release | Beta (pre-release) |
+|---|---|---|
+| Android | `app-<abi>-release.apk` | `AniView-Beta-<abi>.apk` |
+| Windows | `AniView-windows-x64-setup.exe` | `AniView-Beta-windows-x64-setup.exe` |
+| macOS | `AniView-macos.dmg` | `AniView-Beta-macos.dmg` |
+| Linux | `AniView-x86_64.AppImage` | `AniView-Beta-x86_64.AppImage` |
+| iOS (sideloaded) | `AniView-<version>-unsigned.ipa` | `AniView-Beta-<version>-unsigned.ipa` |
 
-```sh
-fvm flutter build apk --release --android-project-arg=aniviewBeta=true \
-  --dart-define-from-file=dart_defines.env \
-  --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" \
-  --dart-define=ANIVIEW_BETA=true
-```
+- **Android:** the APK downloads with a progress dialog, then goes to a PackageInstaller session, so Android's own
+  update prompt appears straight away (on TV the offer itself is a dialog). Android asks once to allow installs from
+  AniView; from Android 12, later updates need no prompt. The app closes when it's replaced; a notification opens it.
+- **Windows:** the installer runs silently once AniView has closed, and opens the new version.
+- **Linux:** the new AppImage replaces the running one and starts. Outside an AppImage, the release page opens.
+- **macOS:** the sandbox keeps the app from replacing itself, so the disk image opens to drag it into Applications.
+- **iOS:** updated through the sideloading app.
 
-Its app name is **AniView Beta** and its application id is `com.kidfury.aniview.beta`; the beta build does not offer
-production APK updates.
-The update APK downloads inside the app with a progress dialog, then goes to a PackageInstaller session, so
-Android's own update prompt appears straight away (on TV the offer itself is a dialog). Android asks once to allow
-installs from AniView. From Android 12, after AniView has installed itself this way, later updates need no prompt.
-The app closes when it's replaced; a notification opens it again.
+### Betas
+
+A beta is **AniView Beta**, an app of its own that installs beside AniView on every platform, with its own data:
+`com.kidfury.aniview.beta` on Android, iOS, macOS and Linux, and its own product name, folder and uninstall entry on
+Windows. It updates from pre-releases only; AniView updates from releases only. `ANIVIEW_BETA` in the environment
+switches the native builds (`linux/CMakeLists.txt`, `windows/runner/CMakeLists.txt`, `tool/appimage.sh`,
+`tool/ios_ipa.sh`), and `--dart-define=ANIVIEW_BETA=true` the app.
+
+1. Bump `version:` to `X.Y.Z-beta.N+build`, and `changelogVersion` and the highlights, and push to `main`.
+2. Android, here:
+
+   ```sh
+   fvm flutter build apk --release --split-per-abi --android-project-arg=aniviewBeta=true \
+     --dart-define-from-file=dart_defines.env \
+     --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" --dart-define=ANIVIEW_BETA=true
+   for abi in arm64-v8a armeabi-v7a x86_64; do
+     cp build/app/outputs/flutter-apk/app-$abi-release.apk build/AniView-Beta-$abi.apk
+   done
+   ```
+
+3. Linux, here (needs WPE WebKit 2.50+): `ANIVIEW_BETA=1 fvm flutter build linux --release …` with the same defines,
+   then `ANIVIEW_BETA=1 tool/appimage.sh`.
+4. Windows, macOS and iOS in CI: run the CI workflow on `main` with **beta** ticked
+   (`gh workflow run ci.yml -f beta=true`), then `gh run download <run>` for the three packages.
+5. `gh release create vX.Y.Z-beta.N --prerelease` with all of them.
 
 ## Tracking
 

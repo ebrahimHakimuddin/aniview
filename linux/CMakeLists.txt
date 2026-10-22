@@ -8,6 +8,13 @@ set(BINARY_NAME "aniview")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.kidfury.aniview")
+set(APPLICATION_TITLE "AniView")
+# A beta (ANIVIEW_BETA in the build's environment) is an app of its own: its own id keeps its data apart and lets it
+# run beside AniView (one instance per id).
+if(DEFINED ENV{ANIVIEW_BETA})
+  set(APPLICATION_ID "com.kidfury.aniview.beta")
+  set(APPLICATION_TITLE "AniView Beta")
+endif()
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.

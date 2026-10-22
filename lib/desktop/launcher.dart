@@ -2,8 +2,17 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-/// The app's id on Linux: its window class, and the name of its menu entry.
-const launcherId = 'com.kidfury.aniview';
+import '../settings.dart' show appName, isBetaBuild;
+
+/// The app's id on Linux: its window class, and the name of its menu entry. The beta's is its own (see
+/// linux/CMakeLists.txt), so its entry sits beside AniView's.
+const launcherId = isBetaBuild
+    ? 'com.kidfury.aniview.beta'
+    : 'com.kidfury.aniview';
+
+/// What starts this app: the AppImage file itself, not the copy of it mounted for this run.
+String get launcherExec =>
+    Platform.environment['APPIMAGE'] ?? Platform.resolvedExecutable;
 
 String? get _home => Platform.environment['HOME'];
 
@@ -32,10 +41,10 @@ Future<void> installLauncher() async {
   await entry.writeAsString(
     '[Desktop Entry]\n'
     'Type=Application\n'
-    'Name=AniView\n'
+    'Name=$appName\n'
     'GenericName=Anime player\n'
     'Comment=Watch anime and keep track of it on AniList\n'
-    'Exec="${Platform.resolvedExecutable}" %U\n'
+    'Exec="$launcherExec" %U\n'
     'Icon=${icon.path}\n'
     'Terminal=false\n'
     'Categories=AudioVideo;Video;Player;\n'

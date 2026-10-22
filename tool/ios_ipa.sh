@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build an unsigned device archive and package it for AltStore/SideStore/Sideloadly to re-sign.
+# With ANIVIEW_BETA set it's AniView Beta (com.kidfury.aniview.beta), which installs beside AniView.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,6 +17,7 @@ fi
 top_sites="$("${dart_cmd[@]}" tool/top_sites.dart)"
 test -n "$top_sites"
 defines=("--dart-define=TOP_SITES=$top_sites")
+[[ -n "${ANIVIEW_BETA:-}" ]] && defines+=("--dart-define=ANIVIEW_BETA=true")
 defines_file="${DART_DEFINES_FILE:-dart_defines.env}"
 if [[ -f "$defines_file" ]]; then
   defines+=("--dart-define-from-file=$defines_file")
@@ -37,7 +39,15 @@ trap 'rm -rf "$stage"' EXIT
 mkdir "$stage/Payload"
 # Do not serialize macOS extended attributes as ._* AppleDouble files in an IPA.
 ditto --norsrc --noextattr --noqtn "$app" "$stage/Payload/Runner.app"
-ipa="$out/AniView-$version-unsigned.ipa"
+name=AniView
+if [[ -n "${ANIVIEW_BETA:-}" ]]; then
+  # Unsigned, so the bundle can still be renamed; the sideloading app signs it under this id.
+  plist="$stage/Payload/Runner.app/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.kidfury.aniview.beta' "$plist"
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName AniView Beta' "$plist"
+  name=AniView-Beta
+fi
+ipa="$out/$name-$version-unsigned.ipa"
 ditto -c -k --norsrc --noextattr --noqtn --keepParent "$stage/Payload" "$ipa"
 unzip -tq "$ipa"
 python3 tool/check_ios_bundle.py "$ipa"

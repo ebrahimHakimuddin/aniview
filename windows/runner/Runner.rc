@@ -90,12 +90,20 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.kidfury" "\0"
+#ifdef ANIVIEW_BETA
+            VALUE "FileDescription", "AniView Beta" "\0"
+#else
             VALUE "FileDescription", "aniview" "\0"
+#endif
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "aniview" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.kidfury. All rights reserved." "\0"
             VALUE "OriginalFilename", "aniview.exe" "\0"
+#ifdef ANIVIEW_BETA
+            VALUE "ProductName", "AniView Beta" "\0"
+#else
             VALUE "ProductName", "aniview" "\0"
+#endif
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

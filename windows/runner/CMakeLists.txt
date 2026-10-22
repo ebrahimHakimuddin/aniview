@@ -27,6 +27,11 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MINOR=${FLUTT
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_PATCH=${FLUTTER_VERSION_PATCH}")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTTER_VERSION_BUILD}")
 
+# A beta (ANIVIEW_BETA in the build's environment) is an app of its own: its product name, which names its data folder.
+if(DEFINED ENV{ANIVIEW_BETA})
+  target_compile_definitions(${BINARY_NAME} PRIVATE "ANIVIEW_BETA")
+endif()
+
 # Disable Windows macros that collide with C++ standard library functions.
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
