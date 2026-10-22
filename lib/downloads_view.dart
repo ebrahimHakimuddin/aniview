@@ -63,7 +63,8 @@ class DownloadsView {
     DownloadStatus.downloading =>
       '${(d.progress * 100).round()}% · ${formatBytes(d.bytes)}',
     DownloadStatus.done =>
-      '${formatBytes(d.bytes)} · ${d.dub ? 'Dub' : 'Sub'} · ${d.source}',
+      // Jellyfin keeps the file with all its audio.
+      '${formatBytes(d.bytes)} · ${d.source == 'Jellyfin' ? '' : '${d.dub ? 'Dub' : 'Sub'} · '}${d.source}',
     DownloadStatus.failed => d.error ?? 'Download failed',
   };
 }

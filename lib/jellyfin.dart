@@ -272,14 +272,25 @@ class Jellyfin extends Source {
             .single;
     final source = (item['MediaSources'] as List).first;
     final tracks = source['MediaStreams'] as List? ?? const [];
+    // Sub and dub don't apply: the file carries every audio track, picked in the player. [dub] only puts that track's
+    // transcode first among the fallbacks.
     final audio = [
       for (final t in tracks)
         if (t['Type'] == 'Audio') t,
     ];
-    Map? language(String code) =>
-        audio.where((t) => t['Language'] == code).firstOrNull;
-    final wanted = dub ? language('eng') : language('jpn') ?? audio.firstOrNull;
-    if (dub && wanted == null) return [];
+    bool isDefault(Map t) => t['Index'] == source['DefaultAudioStreamIndex'];
+    bool isEnglish(Map t) => t['Language'] == 'eng';
+    final fallbacks = [...audio]
+      ..sort(
+        (a, b) => switch ((
+          dub ? isEnglish(a) : isDefault(a),
+          dub ? isEnglish(b) : isDefault(b),
+        )) {
+          (true, false) => -1,
+          (false, true) => 1,
+          _ => 0,
+        },
+      );
     final id = item['Id'], sourceId = source['Id'];
     List<Subtitle> subtitles({required bool embedded}) => [
       for (final t in tracks)
@@ -291,31 +302,30 @@ class Jellyfin extends Source {
             '$base/Videos/$id/$sourceId/Subtitles/${t['Index']}/0/Stream.vtt?ApiKey=$token',
           ),
     ];
+    // The server's HLS plays where the file's codecs don't, but with one audio track: one per track, so switching the
+    // server switches the language (keeping the spot).
+    VideoStream transcoded(Map? track) => VideoStream(
+      track == null || audio.length < 2
+          ? 'Jellyfin (transcoded)'
+          : 'Jellyfin (transcoded · ${track['DisplayTitle'] ?? track['Language'] ?? 'Audio ${track['Index']}'})',
+      '$base/Videos/$id/master.m3u8?MediaSourceId=$sourceId'
+      '&DeviceId=${Settings.jellyfinDevice}&PlaySessionId=${Random().nextInt(1 << 32)}'
+      '${track == null ? '' : '&AudioStreamIndex=${track['Index']}'}'
+      '&VideoCodec=h264,hevc&AudioCodec=aac&TranscodingMaxAudioChannels=2'
+      '&SegmentContainer=ts&ApiKey=$token',
+      _headers,
+      subtitles: subtitles(embedded: true),
+    );
     final container = '${source['Container'] ?? 'mkv'}'.split(',').first;
-    // The file as it is plays the file's own audio, so it's offered when that's the one asked for.
-    final direct =
-        wanted == null ||
-        audio.length == 1 ||
-        wanted['Index'] == source['DefaultAudioStreamIndex'];
     return [
-      if (direct)
-        VideoStream(
-          'Jellyfin',
-          '$base/Videos/$id/stream.$container?static=true&MediaSourceId=$sourceId&ApiKey=$token',
-          _headers,
-          subtitles: subtitles(embedded: false),
-        ),
-      // The server's HLS: plays where the file's codecs don't, and picks the audio track itself.
       VideoStream(
-        'Jellyfin (transcoded)',
-        '$base/Videos/$id/master.m3u8?MediaSourceId=$sourceId'
-            '&DeviceId=${Settings.jellyfinDevice}&PlaySessionId=${Random().nextInt(1 << 32)}'
-            '${wanted == null ? '' : '&AudioStreamIndex=${wanted['Index']}'}'
-            '&VideoCodec=h264,hevc&AudioCodec=aac&TranscodingMaxAudioChannels=2'
-            '&SegmentContainer=ts&ApiKey=$token',
+        'Jellyfin',
+        '$base/Videos/$id/stream.$container?static=true&MediaSourceId=$sourceId&ApiKey=$token',
         _headers,
-        subtitles: subtitles(embedded: true),
+        subtitles: subtitles(embedded: false),
       ),
+      if (fallbacks.isEmpty) transcoded(null),
+      for (final track in fallbacks) transcoded(track),
     ];
   }
 

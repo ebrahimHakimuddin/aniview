@@ -88,7 +88,7 @@ void main() {
     },
   );
 
-  test('a dub is the server HLS on the English track when the file defaults to Japanese', () async {
+  test('the file plays with every audio track, and each track has its own transcode to fall back on', () async {
     final jf = server({
       'ids=ep': {
         'Items': [
@@ -100,8 +100,18 @@ void main() {
                 'Container': 'mkv',
                 'DefaultAudioStreamIndex': 1,
                 'MediaStreams': [
-                  {'Type': 'Audio', 'Index': 1, 'Language': 'jpn'},
-                  {'Type': 'Audio', 'Index': 2, 'Language': 'eng'},
+                  {
+                    'Type': 'Audio',
+                    'Index': 1,
+                    'Language': 'jpn',
+                    'DisplayTitle': 'Japanese',
+                  },
+                  {
+                    'Type': 'Audio',
+                    'Index': 2,
+                    'Language': 'eng',
+                    'DisplayTitle': 'English',
+                  },
                   {
                     'Type': 'Subtitle',
                     'Index': 3,
@@ -116,22 +126,29 @@ void main() {
       },
     });
     final episode = (await jf.episodesOf('movie/ep')).single;
-    final sub = await jf.streams({}, episode, dub: false);
-    expect(sub.map((s) => s.label), ['Jellyfin', 'Jellyfin (transcoded)']);
-    expect(
-      sub.first.url,
-      startsWith('http://jf.test/Videos/ep/stream.mkv?static=true'),
-    );
-    expect(
-      sub.first.subtitles,
-      isEmpty,
-    ); // embedded: the player reads it from the file
-    final dub = await jf.streams({}, episode, dub: true);
-    expect(dub.single.url, contains('AudioStreamIndex=2'));
-    expect(
-      dub.single.subtitles.single.url,
-      contains('/Subtitles/3/0/Stream.vtt'),
-    );
+    for (final dub in [false, true]) {
+      final streams = await jf.streams({}, episode, dub: dub);
+      expect(
+        streams.first.url,
+        startsWith('http://jf.test/Videos/ep/stream.mkv?static=true'),
+      );
+      // Embedded subtitles come from the file itself.
+      expect(streams.first.subtitles, isEmpty);
+      expect(streams.skip(1).map((s) => s.label), [
+        if (dub) ...[
+          'Jellyfin (transcoded · English)',
+          'Jellyfin (transcoded · Japanese)',
+        ] else ...[
+          'Jellyfin (transcoded · Japanese)',
+          'Jellyfin (transcoded · English)',
+        ],
+      ]);
+      expect(streams[1].url, contains('AudioStreamIndex=${dub ? 2 : 1}'));
+      expect(
+        streams[1].subtitles.single.url,
+        contains('/Subtitles/3/0/Stream.vtt'),
+      );
+    }
   });
 
   test(
