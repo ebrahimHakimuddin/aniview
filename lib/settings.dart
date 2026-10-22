@@ -22,6 +22,8 @@ import 'desktop.dart'
 import 'desktop/launcher.dart';
 import 'extensions.dart';
 import 'history.dart';
+import 'jellyfin.dart';
+import 'jellyseerr.dart';
 import 'notifications.dart';
 import 'sources.dart';
 import 'pairing.dart';
@@ -140,6 +142,7 @@ enum HomeSection {
   watching('Continue watching', 'The rest of your watching list'),
   planning('Plan to watch', 'Your planning list'),
   recent('Recently watched', 'Where you stopped, on this device'),
+  jellyfin('On your Jellyfin', 'Added to your Jellyfin server lately'),
   season('This season', 'Popular shows this season'),
   trending('Trending now', 'Trending on AniList'),
   topRated('Top rated', 'Highest rated shows'),
@@ -176,8 +179,14 @@ enum HomeSection {
   };
 
   /// On until the user changes the sections; the rest start off.
-  bool get byDefault =>
-      const {featured, airing, watching, season, trending}.contains(this);
+  bool get byDefault => const {
+    featured,
+    airing,
+    watching,
+    jellyfin,
+    season,
+    trending,
+  }.contains(this);
 }
 
 /// The player's picture modes, in the order its button cycles through them.
@@ -384,6 +393,40 @@ class Settings {
       _prefs.getString('desktop_download_folder') ?? '';
   static set desktopDownloadFolder(String v) =>
       _prefs.setString('desktop_download_folder', v);
+
+  /// The Jellyfin server signed in to (see jellyfin.dart); no token is signed out.
+  static String get jellyfinServer => _prefs.getString('jellyfin_server') ?? '';
+  static set jellyfinServer(String v) => _prefs.setString('jellyfin_server', v);
+  static String get jellyfinToken =>
+      (_loaded ? _prefs.getString('jellyfin_token') : null) ?? '';
+  static set jellyfinToken(String v) => _prefs.setString('jellyfin_token', v);
+  static String get jellyfinUser => _prefs.getString('jellyfin_user') ?? '';
+  static set jellyfinUser(String v) => _prefs.setString('jellyfin_user', v);
+  static String get jellyfinUserName =>
+      _prefs.getString('jellyfin_user_name') ?? '';
+  static set jellyfinUserName(String v) =>
+      _prefs.setString('jellyfin_user_name', v);
+
+  /// The Jellyseerr signed in to (see jellyseerr.dart); no cookie is signed out.
+  static String get jellyseerrServer =>
+      _prefs.getString('jellyseerr_server') ?? '';
+  static set jellyseerrServer(String v) =>
+      _prefs.setString('jellyseerr_server', v);
+  static String get jellyseerrCookie =>
+      (_loaded ? _prefs.getString('jellyseerr_cookie') : null) ?? '';
+  static set jellyseerrCookie(String v) =>
+      _prefs.setString('jellyseerr_cookie', v);
+
+  /// This install's id on the server, made once: Jellyfin keeps one session per device.
+  static String get jellyfinDevice {
+    if (_prefs.getString('jellyfin_device') case final id?) return id;
+    final id = List.generate(
+      16,
+      (_) => Random().nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+    _prefs.setString('jellyfin_device', id);
+    return id;
+  }
 
   static String get downloadFolder => _prefs.getString('download_folder') ?? '';
   static set downloadFolder(String v) => _prefs.setString('download_folder', v);
@@ -798,6 +841,189 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _jellyfinSignIn() async {
+    final server = TextEditingController(text: Settings.jellyfinServer);
+    final name = TextEditingController(text: Settings.jellyfinUserName);
+    final password = TextEditingController();
+    final how = await showDialog<String>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Connect to Jellyfin'),
+        content: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: server,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autofillHints: const [AutofillHints.url],
+                decoration: const InputDecoration(
+                  labelText: 'Server address',
+                  hintText: 'http://192.168.1.10:8096',
+                ),
+              ),
+              TextField(
+                controller: name,
+                autofillHints: const [AutofillHints.username],
+                decoration: const InputDecoration(labelText: 'Username'),
+              ),
+              TextField(
+                controller: password,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(labelText: 'Password'),
+                onSubmitted: (_) => Navigator.pop(context, 'password'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          // No typing a password with a remote: approve this device from a Jellyfin app already signed in.
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'quick'),
+            child: const Text('Quick Connect'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'password'),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (how == null) return;
+    try {
+      if (how == 'quick') {
+        if (!await _quickConnect(server.text)) return;
+      } else {
+        await Jellyfin.signIn(server.text, name.text, password.text);
+      }
+      Sites.reload();
+      if (mounted) {
+        showSuccess(context, 'Connected as ${Settings.jellyfinUserName}');
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _jellyseerrSignIn() async {
+    final server = TextEditingController(text: Settings.jellyseerrServer);
+    final name = TextEditingController(text: Settings.jellyfinUserName);
+    final password = TextEditingController();
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Connect to Jellyseerr'),
+        content: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: server,
+                autofocus: true,
+                keyboardType: TextInputType.url,
+                autofillHints: const [AutofillHints.url],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyseerr address',
+                  hintText: 'http://192.168.1.10:5055',
+                ),
+              ),
+              TextField(
+                controller: name,
+                autofillHints: const [AutofillHints.username],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyfin username',
+                ),
+              ),
+              TextField(
+                controller: password,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(
+                  labelText: 'Jellyfin password',
+                ),
+                onSubmitted: (_) => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    try {
+      await Jellyseerr.signIn(server.text, name.text, password.text);
+      if (mounted) showSuccess(context, 'Connected to Jellyseerr');
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Shows Quick Connect's code until it's approved (true) or the dialog is closed (false).
+  Future<bool> _quickConnect(String server) async {
+    final code = ValueNotifier<String?>(null);
+    var open = true;
+    final dialog = showDialog<void>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Quick Connect'),
+        content: ValueListenableBuilder(
+          valueListenable: code,
+          builder: (context, value, _) => value == null
+              ? const LinearProgressIndicator()
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'In a Jellyfin app you\'re signed in to, open Quick Connect and enter this code',
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      value,
+                      style: Theme.of(context).textTheme.displaySmall
+                          ?.copyWith(letterSpacing: 8),
+                    ),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    ).whenComplete(() => open = false);
+    try {
+      return await Jellyfin.quickConnect(
+        server,
+        showCode: (value) => code.value = value,
+        cancelled: () => !open,
+      );
+    } finally {
+      if (open && mounted) Navigator.pop(context);
+      await dialog;
+      code.dispose();
+    }
+  }
+
   Future<void> _signOut(ListProvider provider) async {
     await Tracker.signOut(provider);
     if (!mounted) return;
@@ -953,6 +1179,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
             (v) => Settings.watchedPercent = v,
           ),
         ),
+      ]),
+      _Group('Jellyfin', [
+        if (Settings.jellyfinToken.isEmpty)
+          ListTile(
+            leading: const Icon(Icons.dns_rounded),
+            title: const Text('Connect to Jellyfin'),
+            subtitle: const Text(
+              'Play shows from your own server, listed first among the sites',
+            ),
+            onTap: _jellyfinSignIn,
+          )
+        else
+          ListTile(
+            leading: const Icon(Icons.dns_rounded),
+            title: Text('Connected as ${Settings.jellyfinUserName}'),
+            subtitle: Text(Settings.jellyfinServer),
+            trailing: TextButton(
+              onPressed: () {
+                Jellyfin.signOut();
+                Sites.reload();
+                setState(() {});
+              },
+              child: const Text('Disconnect'),
+            ),
+          ),
+        if (Settings.jellyseerrCookie.isEmpty)
+          ListTile(
+            leading: const Icon(Icons.playlist_add_rounded),
+            title: const Text('Connect to Jellyseerr'),
+            subtitle: const Text(
+              'Request shows that aren\'t on your server yet. Works with Seerr too',
+            ),
+            onTap: _jellyseerrSignIn,
+          )
+        else
+          ListTile(
+            leading: const Icon(Icons.playlist_add_check_rounded),
+            title: const Text('Jellyseerr connected'),
+            subtitle: Text(Settings.jellyseerrServer),
+            trailing: TextButton(
+              onPressed: () => setState(Jellyseerr.signOut),
+              child: const Text('Disconnect'),
+            ),
+          ),
       ]),
       if (isDesktop)
         _Group('Keyboard', [

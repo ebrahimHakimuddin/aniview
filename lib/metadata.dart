@@ -10,7 +10,7 @@ class EpisodeInfo {
 }
 
 /// ani.zip's entry for a show, looked up by AniList id when there is one and by MAL id otherwise.
-Future<Map<String, dynamic>> _mappings(Map media) async {
+Future<Map<String, dynamic>> mappingsOf(Map media) async {
   final query = Show(media).onAniList
       ? 'anilist_id=${media['id']}'
       : 'mal_id=${media['idMal']}';
@@ -22,7 +22,7 @@ Future<Map<String, dynamic>> _mappings(Map media) async {
 /// still answers while AniList itself is down.
 Future<(int?, int?)> idsOf(Map media) async {
   try {
-    final ids = (await _mappings(media))['mappings'] as Map? ?? const {};
+    final ids = (await mappingsOf(media))['mappings'] as Map? ?? const {};
     return (ids['anilist_id'] as int?, ids['mal_id'] as int?);
   } on HttpException catch (e) {
     if (e.message == 'HTTP 404') return (null, null);
@@ -33,7 +33,7 @@ Future<(int?, int?)> idsOf(Map media) async {
 /// Per-episode titles, synopses and artwork from ani.zip, keyed by episode number ("1", "2", …).
 Future<Map<String, EpisodeInfo>> episodeInfo(Map media) async {
   try {
-    final json = await _mappings(media);
+    final json = await mappingsOf(media);
     final episodes = json['episodes'] as Map<String, dynamic>? ?? const {};
     return {
       for (final MapEntry(:key, :value) in episodes.entries)

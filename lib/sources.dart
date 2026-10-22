@@ -8,6 +8,7 @@ import 'package:pointycastle/export.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cloudflare.dart';
+import 'jellyfin.dart';
 import 'metadata.dart';
 import 'net.dart';
 import 'platform.dart';
@@ -34,7 +35,8 @@ class Sites {
         final sites = await load();
         final (installed, loaded) = await extensions;
         if (!loaded) _current = null;
-        return [...sites, ...installed];
+        // The user's own server first: what's there is theirs to watch.
+        return [?Jellyfin.saved(), ...sites, ...installed];
       }).catchError((Object e) {
         _current = null;
         throw e;

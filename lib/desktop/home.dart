@@ -155,6 +155,9 @@ class DeskHome extends StatelessWidget {
         );
       case HomeSection.recent:
         return _recent(context);
+      case HomeSection.jellyfin:
+        if (Settings.jellyfinToken.isEmpty) return const SizedBox.shrink();
+        return _row(section.label, feed.server, context, section: section);
       case HomeSection.season:
         final (name, year) = AniList.currentSeason;
         return _row(

@@ -590,9 +590,13 @@ class Downloads extends ChangeNotifier {
       if (streams.isEmpty) {
         throw Exception('No ${d.dub ? 'dub' : 'sub'} servers for this episode');
       }
-      // HLS first (sites), else a single file (often an extension's). Audio served as a file of its own isn't saved,
+      // HLS first (sites), else a single file (often an extension's, or Jellyfin's). Audio served as a file of its own isn't saved,
       // so those servers are passed over rather than saved silent.
       final stream =
+          // Jellyfin's file as it is, rather than the server transcoding all of it.
+          streams
+              .where((s) => d.source == 'Jellyfin' && !s.isHls)
+              .firstOrNull ??
           streams.where((s) => s.isHls && s.audios.isEmpty).firstOrNull ??
           streams.where((s) => s.audios.isEmpty).firstOrNull ??
           (throw Exception('No downloadable servers for this episode'));

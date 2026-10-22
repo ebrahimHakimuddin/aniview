@@ -457,6 +457,23 @@ class AniList {
     {'id': id},
   ))['Media'];
 
+  /// The shows with AniList [ids], in that order, 50 to a request; ones AniList doesn't have are left out.
+  static Future<List<Map>> byIds(List<int> ids) async {
+    final found = <int, Map>{};
+    for (var i = 0; i < ids.length; i += 50) {
+      for (final m
+          in (await query(
+                r'query($ids:[Int]){Page(perPage:50){media(id_in:$ids,type:ANIME){'
+                '$_media}}}',
+                {'ids': ids.sublist(i, min(i + 50, ids.length))},
+              ))['Page']['media']
+              as List) {
+        found[m['id'] as int] = m;
+      }
+    }
+    return [for (final id in ids) ?found[id]];
+  }
+
   /// Anime prequels and sequels of a show as (PREQUEL|SEQUEL, media), prequels first.
   static Future<List<(String, Map)>> relations(int id) async {
     final data = await query(

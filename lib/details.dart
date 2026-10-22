@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
+import 'jellyfin.dart';
+import 'jellyseerr.dart';
 import 'analytics.dart';
 import 'anilist.dart';
 import 'cloudflare.dart';
@@ -1455,12 +1457,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
             child: EmptyState(
               compact: true,
               icon: Icons.search_off_rounded,
-              title: 'Not found on ${current.name}',
-              message: 'The site may list it under another name. Pick it manually or try another site.',
-              action: FilledButton.tonalIcon(
-                onPressed: _fixMatch,
-                icon: const Icon(Icons.manage_search_rounded),
-                label: const Text('Find it manually'),
+              title: current is Jellyfin
+                  ? 'Not in your Jellyfin library'
+                  : 'Not found on ${current.name}',
+              message: current is Jellyfin
+                  ? 'Your server may have it under another name: pick it manually${Settings.jellyseerrCookie.isEmpty ? '' : ', or request it on Jellyseerr'}.'
+                  : 'The site may list it under another name. Pick it manually or try another site.',
+              action: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                alignment: WrapAlignment.center,
+                children: [
+                  // Not on the user's own server: it can be asked for there instead.
+                  if (current is Jellyfin &&
+                      Settings.jellyseerrCookie.isNotEmpty)
+                    FilledButton.tonalIcon(
+                      autofocus: isTv,
+                      onPressed: () => requestOnJellyseerr(context, media),
+                      icon: const Icon(Icons.playlist_add_rounded),
+                      label: const Text('Request on Jellyseerr'),
+                    ),
+                  FilledButton.tonalIcon(
+                    onPressed: _fixMatch,
+                    icon: const Icon(Icons.manage_search_rounded),
+                    label: const Text('Find it manually'),
+                  ),
+                ],
               ),
             ),
           );
