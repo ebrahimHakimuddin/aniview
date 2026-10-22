@@ -4,6 +4,7 @@ import 'history.dart';
 import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
+import 'subtitles.dart' show languageCode;
 
 /// The next episode offered near the end: [countdown] when it will start by itself.
 typedef UpNext = ({Episode next, Duration remaining, bool countdown});
@@ -139,6 +140,32 @@ class PlaybackSession {
           byLanguage('English') ??
           stream.subtitles.firstOrNull,
     );
+  }
+
+  /// The stream's own subtitle track to show when it brings no subtitle files (a whole MKV, say): in [language], else
+  /// English, passing over signs-and-songs and forced tracks while a full one is there. Null leaves the player's pick.
+  static SubtitleTrack? embeddedSubtitle(
+    List<SubtitleTrack> tracks,
+    String language,
+  ) {
+    if (language == 'Off') return null;
+    final signs = RegExp(r'sign|song|forced', caseSensitive: false);
+    bool partial(SubtitleTrack t) => signs.hasMatch(t.title ?? '');
+    bool inLanguage(SubtitleTrack t, String code) =>
+        languageCode(t.language ?? '') == code ||
+        languageCode(t.title ?? '') == code;
+    final real = [
+      for (final t in tracks)
+        if (!const {'auto', 'no', 'off'}.contains(t.id)) t,
+    ];
+    for (final code in {languageCode(language), 'eng'}) {
+      final matching = real.where((t) => inLanguage(t, code));
+      if (matching.where((t) => !partial(t)).firstOrNull ?? matching.firstOrNull
+          case final track?) {
+        return track;
+      }
+    }
+    return null;
   }
 
   /// The subtitles on offer, by what each reads: off, the stream's [files], then the player's own [tracks] that

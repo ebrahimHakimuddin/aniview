@@ -550,9 +550,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
           audio, // the one picked before, when this stream has one named alike
       rate: rate,
     );
-    if (shown != null && mounted && current == stream) {
-      setState(() => subtitle = shown);
-    }
+    if (shown == null || !mounted || current != stream) return;
+    // No subtitle file: the stream's own tracks, picked by the subtitle language rather than whatever the file marks.
+    final own = shown == 'Auto'
+        ? PlaybackSession.embeddedSubtitle(
+            player.state.subtitles,
+            Settings.subtitleLanguage,
+          )
+        : null;
+    if (own != null) return _setSubtitle(own, own.name);
+    setState(() => subtitle = shown);
   }
 
   /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that

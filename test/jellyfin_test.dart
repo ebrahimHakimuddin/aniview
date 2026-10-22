@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:aniview/anilist.dart';
 import 'package:aniview/jellyfin.dart';
 import 'package:aniview/net.dart';
+import 'package:aniview/playback.dart';
 import 'package:aniview/settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -136,11 +137,11 @@ void main() {
       expect(streams.first.subtitles, isEmpty);
       expect(streams.skip(1).map((s) => s.label), [
         if (dub) ...[
-          'Jellyfin (transcoded · English)',
+          'Jellyfin (transcoded · English Dub)',
           'Jellyfin (transcoded · Japanese)',
         ] else ...[
           'Jellyfin (transcoded · Japanese)',
-          'Jellyfin (transcoded · English)',
+          'Jellyfin (transcoded · English Dub)',
         ],
       ]);
       expect(streams[1].url, contains('AudioStreamIndex=${dub ? 2 : 1}'));
@@ -316,6 +317,74 @@ void main() {
       });
       expect(id, 'shoko///23');
       expect((await jf.episodesOf(id!)).map((e) => e.ref), ['s1e1', 's1e2']);
+    },
+  );
+
+  test(
+    'subtitles read language first, full ones before signs and songs',
+    () async {
+      final jf = server({
+        'ids=ep': {
+          'Items': [
+            {
+              'Id': 'ep',
+              'MediaSources': [
+                {
+                  'Id': 'src',
+                  'Container': 'mkv',
+                  // As Jellyfin 12 lists a typical release.
+                  'MediaStreams': [
+                    {
+                      'Type': 'Subtitle',
+                      'Index': 3,
+                      'Language': 'eng',
+                      'Title': 'Signs & Songs',
+                      'IsForced': true,
+                      'IsTextSubtitleStream': true,
+                    },
+                    {
+                      'Type': 'Subtitle',
+                      'Index': 4,
+                      'Language': 'eng',
+                      'Title': 'Full Subtitles',
+                      'IsDefault': true,
+                      'IsTextSubtitleStream': true,
+                    },
+                    {
+                      'Type': 'Subtitle',
+                      'Index': 5,
+                      'Language': 'spa',
+                      'IsTextSubtitleStream': true,
+                    },
+                    {
+                      'Type': 'Subtitle',
+                      'Index': 6,
+                      'Language': 'eng',
+                      'IsTextSubtitleStream': false, // PGS: an image, no VTT
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      });
+      final episode = (await jf.episodesOf('movie/ep')).single;
+      final transcoded = (await jf.streams({}, episode, dub: false))[1];
+      expect(transcoded.subtitles.map((s) => s.label), [
+        'English · Full Subtitles',
+        'Spanish',
+        'English · Signs & Songs (forced)',
+      ]);
+      // What the subtitle language setting picks.
+      expect(
+        PlaybackSession(
+          [episode],
+          0,
+          downloaded: (_) => null,
+        ).subtitleFor(transcoded).track?.label,
+        'English · Full Subtitles',
+      );
     },
   );
 }

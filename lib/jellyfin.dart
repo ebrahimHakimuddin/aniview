@@ -9,6 +9,7 @@ import 'history.dart';
 import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
+import 'subtitles.dart' show languageName;
 
 /// The user's own Jellyfin server, as a site. A show is matched by the ids its library items carry (AniList,
 /// AniDB, then TVDB/TMDB/IMDb from ani.zip), else by title. A series holds every season, so a match also names
@@ -292,13 +293,34 @@ class Jellyfin extends Source {
         },
       );
     final id = item['Id'], sourceId = source['Id'];
-    List<Subtitle> subtitles({required bool embedded}) => [
+    // Labelled by language first ("English · Full Subtitles"), as the subtitle language setting picks by, and full
+    // tracks before signs-and-songs (forced) ones, so the setting lands on a full one.
+    final text = [
       for (final t in tracks)
-        if (t['Type'] == 'Subtitle' &&
-            t['IsTextSubtitleStream'] == true &&
-            (embedded || t['IsExternal'] == true))
+        if (t['Type'] == 'Subtitle' && t['IsTextSubtitleStream'] == true) t,
+    ];
+    final ordered = [
+      ...text.where((t) => t['IsForced'] != true && t['IsDefault'] == true),
+      ...text.where((t) => t['IsForced'] != true && t['IsDefault'] != true),
+      ...text.where((t) => t['IsForced'] == true),
+    ];
+    String label(Map t) {
+      final language = t['Language'] is String
+          ? languageName(t['Language']) ?? t['Language']
+          : null;
+      final name = [
+        ?language,
+        if (t['Title'] case final String title when title.isNotEmpty) title,
+      ].join(' · ');
+      final shown = name.isEmpty ? '${t['DisplayTitle'] ?? 'Subtitles'}' : name;
+      return t['IsForced'] == true ? '$shown (forced)' : shown;
+    }
+
+    List<Subtitle> subtitles({required bool embedded}) => [
+      for (final t in ordered)
+        if (embedded || t['IsExternal'] == true)
           Subtitle(
-            '${t['DisplayTitle'] ?? t['Language'] ?? 'Subtitles'}',
+            label(t),
             '$base/Videos/$id/$sourceId/Subtitles/${t['Index']}/0/Stream.vtt?ApiKey=$token',
           ),
     ];
@@ -307,7 +329,7 @@ class Jellyfin extends Source {
     VideoStream transcoded(Map? track) => VideoStream(
       track == null || audio.length < 2
           ? 'Jellyfin (transcoded)'
-          : 'Jellyfin (transcoded · ${track['DisplayTitle'] ?? track['Language'] ?? 'Audio ${track['Index']}'})',
+          : 'Jellyfin (transcoded · ${track['Title'] ?? (track['Language'] is String ? languageName(track['Language']) ?? track['Language'] : null) ?? 'Audio ${track['Index']}'})',
       '$base/Videos/$id/master.m3u8?MediaSourceId=$sourceId'
       '&DeviceId=${Settings.jellyfinDevice}&PlaySessionId=${Random().nextInt(1 << 32)}'
       '${track == null ? '' : '&AudioStreamIndex=${track['Index']}'}'
