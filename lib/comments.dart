@@ -81,7 +81,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
   void initState() {
     super.initState();
     Analytics.screen('/comments', title: 'Comments');
-    if (Tracker.anilistSignedIn) _load();
+    if (Dantotsu.signedIn) _load();
   }
 
   @override
@@ -91,6 +91,16 @@ class _CommentsScreenState extends State<CommentsScreen> {
   }
 
   bool get more => page < pages;
+
+  Future<void> _signIn() async {
+    try {
+      if (!await Dantotsu.signIn(context) || !mounted) return;
+      setState(() {});
+      _load();
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
 
   Future<void> _load() async {
     if (loading) return;
@@ -286,7 +296,7 @@ class _CommentsScreenState extends State<CommentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final signedIn = Tracker.anilistSignedIn;
+    final signedIn = Dantotsu.signedIn;
     final ep = episode;
     return Scaffold(
       appBar: AppBar(
@@ -321,10 +331,20 @@ class _CommentsScreenState extends State<CommentsScreen> {
         ],
       ),
       body: !signedIn
-          ? const EmptyState(
+          ? EmptyState(
               icon: Icons.forum_outlined,
-              title: 'Sign in with AniList to see comments',
-              message: 'Comments come from Dantotsu, shared with other anime apps, and use your AniList account.',
+              title: 'Sign in to see comments',
+              message:
+                  'Comments come from Dantotsu, shared with other anime apps, and need an AniList account. '
+                  'Signing in here is for comments only${Tracker.signedIn ? ': your list stays on ${Tracker.account?.name}' : ''}.',
+              action: AniList.usable
+                  ? FilledButton.icon(
+                      autofocus: true,
+                      onPressed: _signIn,
+                      icon: const Icon(Icons.login_rounded),
+                      label: const Text('Sign in with AniList'),
+                    )
+                  : null,
             )
           : Column(
               children: [

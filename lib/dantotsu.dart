@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 
 import 'anilist.dart';
 import 'settings.dart';
 
 /// Dantotsu's shared comments (api.dantotsu.app): comments on AniList shows, tagged with their episode, shared by
-/// every app that uses it. Reading needs a session too, made from the AniList sign-in and kept for its ~6 days.
+/// every app that uses it. Reading needs a session too, made from an AniList sign-in and kept for its ~6 days: the
+/// tracker's when it's AniList, else one signed in for comments alone ([signIn]), which leaves the tracker as it is.
 class Dantotsu {
   static const _base = 'https://api.dantotsu.app';
 
@@ -30,16 +32,47 @@ class Dantotsu {
 
   static const _session = Duration(days: 5); // issued for about 6
 
-  /// The Dantotsu session, made from the AniList sign-in when there's none yet or it's run out.
+  /// The AniList sign-in comments go by: the tracker's, else the one for comments alone.
+  static String? get _anilist =>
+      AniList.token ??
+      (Settings.dantotsuAniList.isEmpty ? null : Settings.dantotsuAniList);
+
+  static bool get signedIn => _anilist != null;
+
+  /// Enough of an AniList token (the end of its signature) to tell it from another, without keeping it twice.
+  static String _tail(String token) =>
+      token.substring(token.length > 16 ? token.length - 16 : 0);
+
+  /// Whether comments have an AniList sign-in of their own (not the tracker's), which [signOut] removes.
+  static bool get ownSignIn =>
+      AniList.token == null && Settings.dantotsuAniList.isNotEmpty;
+
+  /// Signs in to AniList for comments alone; false when the page was closed.
+  static Future<bool> signIn(BuildContext context) async {
+    final token = await AniList.authorize(context);
+    if (token == null) return false;
+    Settings.dantotsuAniList = token;
+    await _token();
+    return true;
+  }
+
+  static void signOut() {
+    Settings.dantotsuAniList = '';
+    Settings.dantotsuToken = '';
+    Settings.dantotsuUser = '';
+    Settings.dantotsuUserName = '';
+  }
+
+  /// The Dantotsu session: made again when there's none, it's run out, or another AniList account is signed in.
   static Future<String> _token() async {
+    final anilist =
+        _anilist ?? (throw Exception('Sign in with AniList to see comments'));
     final at = DateTime.fromMillisecondsSinceEpoch(Settings.dantotsuTokenAt);
     if (Settings.dantotsuToken.isNotEmpty &&
+        Settings.dantotsuSource == _tail(anilist) &&
         DateTime.now().difference(at) < _session) {
       return Settings.dantotsuToken;
     }
-    final anilist =
-        AniList.token ??
-        (throw Exception('Sign in with AniList to see comments'));
     final res = await http.post(
       Uri.parse('$_base/authenticate'),
       headers: {'appauth': _appAuth},
@@ -49,6 +82,7 @@ class Dantotsu {
     final json = jsonDecode(res.body);
     Settings.dantotsuToken = json['authToken'];
     Settings.dantotsuTokenAt = DateTime.now().millisecondsSinceEpoch;
+    Settings.dantotsuSource = _tail(anilist);
     Settings.dantotsuUser = '${json['user']['user_id']}';
     Settings.dantotsuUserName = '${json['user']['username'] ?? ''}';
     return Settings.dantotsuToken;

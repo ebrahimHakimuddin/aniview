@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'analytics.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
+import 'dantotsu.dart';
 import 'downloads.dart';
 import 'desktop.dart'
     show keysLabel, rebindSearch, recordShortcut, searchShortcut;
@@ -424,6 +425,14 @@ class Settings {
   static set dantotsuTokenAt(int v) => _prefs.setInt('dantotsu_token_at', v);
   static String get dantotsuUser => _prefs.getString('dantotsu_user') ?? '';
   static set dantotsuUser(String v) => _prefs.setString('dantotsu_user', v);
+
+  /// An AniList sign-in for comments alone, when the tracker isn't AniList; and which sign-in made the session.
+  static String get dantotsuAniList =>
+      _prefs.getString('dantotsu_anilist') ?? '';
+  static set dantotsuAniList(String v) =>
+      _prefs.setString('dantotsu_anilist', v);
+  static String get dantotsuSource => _prefs.getString('dantotsu_source') ?? '';
+  static set dantotsuSource(String v) => _prefs.setString('dantotsu_source', v);
   static String get dantotsuUserName =>
       _prefs.getString('dantotsu_user_name') ?? '';
   static set dantotsuUserName(String v) =>
@@ -1286,6 +1295,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
       ]),
       _Group('Tracking', [
+        // An AniList sign-in for Dantotsu comments alone (the tracker being MyAnimeList, or none).
+        if (Dantotsu.ownSignIn)
+          ListTile(
+            leading: const Icon(Icons.forum_outlined),
+            title: const Text('Comments account'),
+            subtitle: Text(
+              Settings.dantotsuUserName.isEmpty
+                  ? 'AniList, for Dantotsu comments only'
+                  : '${Settings.dantotsuUserName} on AniList, for Dantotsu comments only',
+            ),
+            trailing: TextButton(
+              onPressed: () => setState(Dantotsu.signOut),
+              child: const Text('Sign out'),
+            ),
+          ),
         SwitchListTile(
           title: const Text('Update progress automatically'),
           subtitle: const Text('Marks the episode watched on your tracker'),

@@ -73,5 +73,6 @@ English or romaji title (its own name before another show's bracketed one). Mark
 **Skip filler** on, the up next episode, the main action and the player's next episode pass over filler.
 
 **Comments** (`lib/dantotsu.dart`, `lib/comments.dart`): Dantotsu's comments, shared across anime apps and tagged by episode,
-read and posted with a session made from the AniList sign-in (reading needs one too). Each episode's comments
+read and posted with a session made from an AniList sign-in (reading needs one too): the tracker's when it's AniList, else
+one made on the comments screen for comments alone, which leaves the tracker as it is. Each episode's comments
 button opens them; posting waits for its 10 rules to be agreed to.

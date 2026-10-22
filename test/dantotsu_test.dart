@@ -106,4 +106,45 @@ void main() {
       throwsA(predicate((e) => '$e'.contains('Sign in with AniList'))),
     );
   });
+
+  test('a sign-in for comments alone is used when the tracker isn\'t AniList, '
+      'and the session is made again for another account', () async {
+    AniList.token = null;
+    Settings.dantotsuAniList = 'comments-only-token-abcdefghijklmnop';
+    final made = <String>[];
+    Future<void> read() => http.runWithClient(
+      () => Dantotsu.comments(1, 1),
+      () => MockClient((req) async {
+        if (req.url.path == '/authenticate') {
+          made.add(req.bodyFields['token']!);
+          return http.Response(
+            jsonEncode({
+              'authToken': 'session-${made.length}',
+              'user': {'user_id': '7', 'username': 'me'},
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({'comments': [], 'totalPages': 1}),
+          200,
+        );
+      }),
+    );
+    expect(Dantotsu.signedIn, isTrue);
+    expect(Dantotsu.ownSignIn, isTrue);
+    await read();
+    await read(); // the same session
+    // Signing in to AniList as the tracker: its account goes first, with a session of its own.
+    AniList.token = 'tracker-token-qrstuvwxyz0123456789';
+    expect(Dantotsu.ownSignIn, isFalse);
+    await read();
+    expect(made, [
+      'comments-only-token-abcdefghijklmnop',
+      'tracker-token-qrstuvwxyz0123456789',
+    ]);
+    Dantotsu.signOut();
+    AniList.token = null;
+    expect(Dantotsu.signedIn, isFalse);
+  });
 }
