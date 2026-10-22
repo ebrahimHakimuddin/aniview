@@ -78,6 +78,7 @@ class WatchHistory {
     required Duration position,
     required Duration duration,
     required bool dub,
+    int? next,
   }) => _writing = _writing
       .then(
         (_) => _played(
@@ -88,6 +89,7 @@ class WatchHistory {
           position: position,
           duration: duration,
           dub: dub,
+          next: next ?? index + 1,
         ),
       )
       .catchError((Object _) {}); // one failed write mustn't block the rest
@@ -100,6 +102,7 @@ class WatchHistory {
     required Duration position,
     required Duration duration,
     required bool dub,
+    required int next,
   }) async {
     if (position < const Duration(seconds: 5)) return;
     if (!finished(position, duration)) {
@@ -112,11 +115,11 @@ class WatchHistory {
         dub: dub,
       );
     }
-    if (index + 1 >= episodes.length) return _remove(media);
+    if (next >= episodes.length) return _remove(media);
     await _save(
       media,
       source: source,
-      episode: episodes[index + 1].number,
+      episode: episodes[next].number,
       position: Duration.zero,
       dub: dub,
     );
@@ -171,6 +174,7 @@ class EpisodePlan {
   EpisodePlan(
     List<Episode> episodes, {
     required this.progress,
+    Set<num> skip = const {},
     this.record,
     this.newestFirst = false,
     int? page,
@@ -186,12 +190,15 @@ class EpisodePlan {
       for (var i = 0; i < ordered.length; i += pageSize)
         ordered.skip(i).take(pageSize).toList(),
     ];
-    upNext = ordered
-        .where((e) => !watched(e))
-        .fold<Episode?>(
-          null,
-          (low, e) => low == null || e.number < low.number ? e : low,
-        );
+    Episode? lowest(Iterable<Episode> list) => list.fold<Episode?>(
+      null,
+      (low, e) => low == null || e.number < low.number ? e : low,
+    );
+    final unwatched = ordered.where((e) => !watched(e));
+    // Passing over [skip] (filler), unless that's all there's left.
+    upNext =
+        lowest(unwatched.where((e) => !skip.contains(e.number))) ??
+        lowest(unwatched);
     final holding = pages.indexWhere((p) => p.contains(upNext));
     this.page = pages.isEmpty
         ? 0
@@ -245,7 +252,7 @@ class EpisodePlan {
   /// The page to show: the one asked for, else the one holding [upNext].
   late final int page;
 
-  /// The lowest-numbered episode not yet watched; null when all are.
+  /// The lowest-numbered episode not yet watched (and not skipped); null when all are.
   late final Episode? upNext;
 
   List<Episode> get shown => pages.isEmpty ? const [] : pages[page];
@@ -302,11 +309,12 @@ class EpisodePlan {
   static NextUp? nextUp(
     WatchRecord? record,
     List<Episode>? episodes,
-    int progress,
-  ) {
+    int progress, {
+    Set<num> skip = const {},
+  }) {
     if (record != null) return ResumeSaved(record);
     if (episodes == null) return null;
-    final next = EpisodePlan(episodes, progress: progress).upNext;
+    final next = EpisodePlan(episodes, progress: progress, skip: skip).upNext;
     return next == null ? null : StartEpisode(next, first: progress == 0);
   }
 }

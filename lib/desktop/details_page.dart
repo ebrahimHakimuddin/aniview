@@ -517,6 +517,7 @@ extension _DeskDetails on _DetailsScreenState {
         final plan = EpisodePlan(
           list,
           progress: _progress,
+          skip: _skipped,
           record: saved.data,
           newestFirst: _newestFirst(saved.data),
           page: page,
@@ -574,6 +575,7 @@ extension _DeskDetails on _DetailsScreenState {
 
     final tile = _EpisodeTile(
       episode,
+      kind: filler[episode.number],
       watched: watched,
       upNext: upNext,
       resumedPart: part,

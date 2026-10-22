@@ -417,6 +417,28 @@ class Settings {
   static set jellyseerrCookie(String v) =>
       _prefs.setString('jellyseerr_cookie', v);
 
+  /// The Dantotsu comments session (see dantotsu.dart): its token, when it was issued, and whose it is.
+  static String get dantotsuToken => _prefs.getString('dantotsu_token') ?? '';
+  static set dantotsuToken(String v) => _prefs.setString('dantotsu_token', v);
+  static int get dantotsuTokenAt => _prefs.getInt('dantotsu_token_at') ?? 0;
+  static set dantotsuTokenAt(int v) => _prefs.setInt('dantotsu_token_at', v);
+  static String get dantotsuUser => _prefs.getString('dantotsu_user') ?? '';
+  static set dantotsuUser(String v) => _prefs.setString('dantotsu_user', v);
+  static String get dantotsuUserName =>
+      _prefs.getString('dantotsu_user_name') ?? '';
+  static set dantotsuUserName(String v) =>
+      _prefs.setString('dantotsu_user_name', v);
+
+  /// Whether the Dantotsu comment rules were agreed to, which posting waits for.
+  static bool get dantotsuRulesAccepted =>
+      _prefs.getBool('dantotsu_rules') ?? false;
+  static set dantotsuRulesAccepted(bool v) =>
+      _prefs.setBool('dantotsu_rules', v);
+
+  /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
+  static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;
+  static set skipFiller(bool v) => _prefs.setBool('skip_filler', v);
+
   /// This install's id on the server, made once: Jellyfin keeps one session per device.
   static String get jellyfinDevice {
     if (_prefs.getString('jellyfin_device') case final id?) return id;
@@ -1451,6 +1473,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ]),
       _Group('Playback', [
+        SwitchListTile(
+          title: const Text('Skip filler episodes'),
+          subtitle: const Text(
+            'Up next and the next episode pass over filler (from Anime Filler List). Filler stays in the list, marked',
+          ),
+          value: Settings.skipFiller,
+          onChanged: (v) => setState(() => Settings.skipFiller = v),
+        ),
         _Choice(
           title: 'Preferred audio',
           value: Settings.preferDub ? 'Dub' : 'Sub',

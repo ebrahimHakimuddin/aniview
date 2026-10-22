@@ -13,6 +13,7 @@ import 'cloudflare.dart';
 import 'downloads.dart';
 import 'exo.dart';
 import 'history.dart';
+import 'filler.dart';
 import 'jellyfin.dart';
 import 'metadata.dart';
 import 'settings.dart';
@@ -68,6 +69,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late List<Episode> _episodes = widget.episodes;
   late PlaybackSession session = _newSession(widget.index);
 
+  /// Filler episodes, which "next" passes over when Settings say to skip them.
+  Set<num> _filler = const {};
+
   PlaybackSession _newSession(int index) => PlaybackSession(
     _episodes,
     index,
@@ -82,7 +86,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       ).streams(e, dub: widget.dub),
       null => null,
     },
-  );
+  )..skipped = _filler;
   int? _skipsRequested;
   String subtitle = 'Auto';
 
@@ -163,6 +167,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    if (Settings.skipFiller) {
+      Filler.of(widget.media).then((kinds) {
+        _filler = {
+          for (final e in kinds.entries)
+            if (e.value == EpisodeKind.filler) e.key,
+        };
+        if (mounted) setState(() => session.skipped = _filler);
+      });
+    }
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -200,7 +213,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }),
       player.stream.completed.listen((done) {
         if (done && session.advancesOnFinish) {
-          _load(index + 1);
+          _load(session.nextIndex);
         }
       }),
     ];
@@ -239,7 +252,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } else if (key == LogicalKeyboardKey.mediaRewind) {
       _seekBy(-seek);
     } else if (key == LogicalKeyboardKey.mediaTrackNext && hasNext) {
-      _load(index + 1);
+      _load(session.nextIndex);
     } else if (controls && !locked) {
       _scheduleHide(); // browsing the controls keeps them up
       // Nothing inside has focus yet (just opened): start on play/pause.
@@ -258,7 +271,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ? session.ok(player.state.position, player.state.duration)
             : PlayPause()) {
           case PlayNext():
-            _load(index + 1);
+            _load(session.nextIndex);
             return true;
           case SkipTo(:final position):
             player.seek(position);
@@ -385,7 +398,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
       }
     } else if (key == LogicalKeyboardKey.keyN && hasNext) {
-      if (event is KeyDownEvent) _load(index + 1);
+      if (event is KeyDownEvent) _load(session.nextIndex);
     } else if (key == LogicalKeyboardKey.keyF ||
         key == LogicalKeyboardKey.f11) {
       if (event is KeyDownEvent) _toggleFullscreen();
@@ -741,6 +754,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       position: position,
       duration: duration,
       dub: widget.dub,
+      next: session.nextIndex,
     );
     // A download from the server reports too; offline, the next save sends the latest spot.
     if (_sourceName == 'Jellyfin' && episode.ref is String) {
@@ -1263,7 +1277,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             child: const Text('Cancel'),
                           ),
                           TextButton(
-                            onPressed: () => _load(index + 1),
+                            onPressed: () => _load(session.nextIndex),
                             child: const Text('Play now'),
                           ),
                         ],
@@ -1731,7 +1745,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               control(
                 Icons.skip_next_rounded,
                 'Next episode',
-                hasNext ? () => _load(index + 1) : null,
+                hasNext ? () => _load(session.nextIndex) : null,
               ),
               const SizedBox(width: 24),
               if (_episodes.length > 1)
@@ -1836,7 +1850,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               const SizedBox(width: 32),
               _RoundButton(
                 Icons.skip_next_rounded,
-                hasNext ? () => _load(index + 1) : null,
+                hasNext ? () => _load(session.nextIndex) : null,
                 tooltip: 'Next episode',
               ),
             ],
@@ -2018,7 +2032,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   if (hasNext)
                     FilledButton.tonal(
-                      onPressed: () => _load(index + 1),
+                      onPressed: () => _load(session.nextIndex),
                       child: const Text('Next episode'),
                     ),
                 ],

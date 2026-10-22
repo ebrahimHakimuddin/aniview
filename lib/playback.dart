@@ -78,7 +78,19 @@ class PlaybackSession {
   bool _scrubbed = false;
 
   Episode get episode => episodes[index];
-  bool get hasNext => index + 1 < episodes.length;
+
+  /// Episode numbers "next" passes over (filler, when Settings say to skip it).
+  Set<num> skipped = const {};
+
+  /// The episode after this one: the first not [skipped], else simply the next.
+  int get nextIndex {
+    for (var i = index + 1; i < episodes.length; i++) {
+      if (!skipped.contains(episodes[i].number)) return i;
+    }
+    return index + 1;
+  }
+
+  bool get hasNext => nextIndex < episodes.length;
 
   /// Moves to episode [i], with nothing loaded, watched or dismissed yet.
   void start(int i) {
@@ -243,7 +255,7 @@ class PlaybackSession {
     );
     if (!inOutro && remaining > end) return null;
     return (
-      next: episodes[index + 1],
+      next: episodes[nextIndex],
       remaining: remaining,
       countdown: Settings.autoNext && remaining <= end,
     );

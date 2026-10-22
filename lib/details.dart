@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
+import 'comments.dart';
+import 'filler.dart';
 import 'jellyfin.dart';
 import 'jellyseerr.dart';
 import 'analytics.dart';
@@ -310,7 +312,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
     Analytics.screen('/details', title: titleOf(media));
     picked.addListener(() => setState(() {}));
     _loadSites();
+    Filler.of(media).then((kinds) {
+      if (mounted && kinds.isNotEmpty) setState(() => filler = kinds);
+    });
   }
+
+  /// The show's filler and mixed episodes (Anime Filler List), once known.
+  Map<num, EpisodeKind> filler = const {};
+
+  /// The episodes "next" passes over: the filler ones, when Settings say to skip them.
+  Set<num> get _skipped => !Settings.skipFiller
+      ? const {}
+      : {
+          for (final e in filler.entries)
+            if (e.value == EpisodeKind.filler) e.key,
+        };
 
   @override
   void dispose() {
@@ -437,10 +453,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final download = Downloads.instance.entry(media, episode.number, dub);
         if (download != null) await confirmDeleteDownload(context, download);
       case EpisodeAction.discuss:
-        await openEpisodeDiscussion(
+        await openComments(
           context,
           media,
-          episode.number,
+          episode: episode.number,
           progress: _progress,
         );
       case EpisodeAction.select:
@@ -459,10 +475,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
     final actions = [
       for (final a in eps.actionsFor(episode, watched: watched))
-        if (a != EpisodeAction.play &&
-            a != EpisodeAction.discuss &&
-            a != EpisodeAction.select)
-          a,
+        if (a != EpisodeAction.play && a != EpisodeAction.select) a,
     ];
     if (actions.isEmpty) return;
     final picked = await showSheet<EpisodeAction>(
@@ -734,6 +747,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           saved.data,
           list,
           _progress,
+          skip: _skipped,
         )) {
           ResumeSaved(:final record, :final midway) => PlayAction(
             autofocus: isTv,
@@ -876,6 +890,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
               icon: Icons.done_all_rounded,
               label: 'Mark season watched',
               onTap: () => _markWatched(EpisodePlan.progressAfter(list)),
+              destructive: false,
+            ),
+          if (show.onAniList)
+            (
+              icon: Icons.forum_outlined,
+              label: 'Comments',
+              onTap: () => openComments(context, media, progress: _progress),
               destructive: false,
             ),
         ]);
@@ -1547,6 +1568,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final plan = EpisodePlan(
           list,
           progress: _progress,
+          skip: _skipped,
           record: saved.data,
           newestFirst: newestFirst,
           page: page,
@@ -1687,16 +1709,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final picking = picked.active && !isTv;
     return _EpisodeTile(
       episode,
+      kind: filler[episode.number],
       watched: watched,
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
       selected: picking ? picked.has(episode) : null,
       onDiscuss: isTv || picking || !show.onAniList
           ? null
-          : () => openEpisodeDiscussion(
+          : () => openComments(
               context,
               media,
-              episode.number,
+              episode: episode.number,
               progress: _progress,
             ),
       onLongPress: isTv
@@ -2101,6 +2124,7 @@ class _EpisodesSkeleton extends StatelessWidget {
 class _EpisodeTile extends StatelessWidget {
   const _EpisodeTile(
     this.episode, {
+    this.kind,
     required this.watched,
     required this.onTap,
     this.upNext = false,
@@ -2111,11 +2135,14 @@ class _EpisodeTile extends StatelessWidget {
     this.onDiscuss,
   });
 
-  /// Opens the episode's AniList discussion, from a button by its name.
+  /// Opens the episode's comments, from a button by its name.
   final VoidCallback? onDiscuss;
 
   final Episode episode;
   final bool watched, upNext;
+
+  /// Filler or mixed, by Anime Filler List; null for canon (or not known).
+  final EpisodeKind? kind;
 
   /// Picking several: whether this one is picked; null when not picking.
   final bool? selected;
@@ -2151,6 +2178,18 @@ class _EpisodeTile extends StatelessWidget {
             badge.toUpperCase(),
             style: text.labelSmall?.copyWith(
               color: scheme.primary,
+              letterSpacing: .8,
+            ),
+          ),
+        ],
+        if (kind case final kind?) ...[
+          const SizedBox(width: 8),
+          Text(
+            kind.label.toUpperCase(),
+            style: text.labelSmall?.copyWith(
+              color: kind == EpisodeKind.filler
+                  ? scheme.tertiary
+                  : scheme.onSurfaceVariant,
               letterSpacing: .8,
             ),
           ),
@@ -2263,7 +2302,7 @@ class _EpisodeTile extends StatelessWidget {
                   children: [
                     if (onDiscuss != null)
                       IconButton(
-                        tooltip: 'Episode discussion',
+                        tooltip: 'Episode comments',
                         onPressed: onDiscuss,
                         color: scheme.onSurfaceVariant,
                         icon: const Icon(Icons.forum_outlined),
