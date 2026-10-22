@@ -12,8 +12,8 @@ import 'sources.dart';
 
 /// The user's own Jellyfin server, as a site. A show is matched by the ids its library items carry (AniList,
 /// AniDB, then TVDB/TMDB/IMDb from ani.zip), else by title. A series holds every season, so a match also names
-/// where the AniList entry starts in it (ani.zip's TVDB season and episode) and how many episodes it has:
-/// `<series>/<season>/<episode>/<count>`. A movie is `movie/<item>`.
+/// where the AniList entry starts in it (ani.zip's TVDB season and episode; empty for an anime-ordered series) and
+/// how many episodes it has: `<series>/<season>/<episode>/<count>`. A movie is `movie/<item>`.
 class Jellyfin extends Source {
   Jellyfin({
     required String server,
@@ -208,7 +208,13 @@ class Jellyfin extends Source {
     final item = find([for (final f in found) ...f]) ?? find(await _library);
     if (item == null) return null;
     if (movie) return 'movie/${item['Id']}';
-    final first = (zip['episodes'] as Map?)?['1'] as Map?;
+    // Found by the entry's own AniList or AniDB id, the series is that entry alone (anime-ordered): it starts at its
+    // beginning. Otherwise it's TVDB-ordered, and the entry is where ani.zip's TVDB season starts.
+    final own = item['ProviderIds'] as Map? ?? const {};
+    final anime =
+        '${own['AniList']}' == '${media['id']}' ||
+        (ids['anidb_id'] != null && '${own['AniDB']}' == '${ids['anidb_id']}');
+    final first = anime ? null : (zip['episodes'] as Map?)?['1'] as Map?;
     return '${item['Id']}/${first?['seasonNumber'] ?? ''}/'
         '${first?['episodeNumber'] ?? ''}/${media['episodes'] ?? ''}';
   }
@@ -230,13 +236,15 @@ class Jellyfin extends Source {
       for (final e in all)
         if ((e['ParentIndexNumber'] == 0) == (season == 0)) e,
     ];
-    // An anime-ordered series (one per AniList entry) has no TVDB season to find: it starts at its beginning.
-    final start = max(
-      0,
-      list.indexWhere(
-        (e) => e['ParentIndexNumber'] == season && e['IndexNumber'] == episode,
-      ),
-    );
+    // No season to find (anime-ordered, or ani.zip doesn't know): from the beginning. A season the library lacks
+    // is no episodes, not another season's, so the show reads as not on the server (and can be requested).
+    final start = season == null
+        ? 0
+        : list.indexWhere(
+            (e) =>
+                e['ParentIndexNumber'] == season && e['IndexNumber'] == episode,
+          );
+    if (start < 0) return [];
     final picked = list.skip(start).take(count ?? list.length).toList();
     return [
       for (final (n, e) in picked.indexed)

@@ -253,4 +253,52 @@ void main() {
     expect(asked, [10, 20]);
     expect([for (final m in shows) m['id']], [10, 20]);
   });
+
+  test("a season the library doesn't have is no episodes, so the show can be requested", () async {
+    final jf = server({
+      '/Shows/jjk/Episodes': {
+        'Items': [for (var n = 1; n <= 3; n++) episode(1, n)],
+      },
+    });
+    expect(await jf.episodesOf('jjk/2/1/23'), isEmpty);
+  });
+
+  test(
+    'a series found by the entry\'s own AniList id starts at its beginning',
+    () async {
+      httpClient = MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'mappings': {'thetvdb_id': 377543},
+            'episodes': {
+              '1': {'seasonNumber': 2, 'episodeNumber': 1},
+            },
+          }),
+          200,
+        ),
+      );
+      final jf = server({
+        'searchTerm=': {
+          'Items': [
+            {
+              'Id': 'shoko',
+              'Type': 'Series',
+              'Name': 'Jujutsu Kaisen 2nd Season',
+              'ProviderIds': {'AniList': '145064', 'Tvdb': '377543'},
+            },
+          ],
+        },
+        '/Shows/shoko/Episodes': {
+          'Items': [for (var n = 1; n <= 2; n++) episode(1, n)],
+        },
+      });
+      final id = await jf.match({
+        'id': 145064,
+        'episodes': 23,
+        'title': {'romaji': 'Jujutsu Kaisen 2nd Season'},
+      });
+      expect(id, 'shoko///23');
+      expect((await jf.episodesOf(id!)).map((e) => e.ref), ['s1e1', 's1e2']);
+    },
+  );
 }
