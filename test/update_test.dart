@@ -1,3 +1,4 @@
+import 'package:aniview/platform.dart';
 import 'package:aniview/settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -42,5 +43,12 @@ void main() {
     expect(pick('macos', beta: true), isNull);
     expect(pick('linux', beta: true), assets[6]);
     expect(pick('ios'), isNull);
+  });
+
+  test("a beta's version as Apple keeps it reads as the beta again", () {
+    expect(betaFromApple('2.6.0.1'), '2.6.0-beta.1');
+    expect(betaFromApple('2.6.0.12'), '2.6.0-beta.12');
+    expect(betaFromApple('2.6.0'), '2.6.0');
+    expect(isNewerVersion('v2.6.0-beta.2', betaFromApple('2.6.0.1')), isTrue);
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -24,6 +25,20 @@ bool get shortcutKeyHeld => Platform.isMacOS
     ? HardwareKeyboard.instance.isMetaPressed
     : HardwareKeyboard.instance.isControlPressed;
 
+/// Apple platforms keep only numbers in a version, so a beta's 2.6.0-beta.1 reads 2.6.0.1 there; this reads it back
+/// (in a beta build) so it compares with release tags.
+String appleBetaVersion(String version) =>
+    !const bool.fromEnvironment('ANIVIEW_BETA') ||
+        !(Platform.isMacOS || Platform.isIOS)
+    ? version
+    : betaFromApple(version);
+
+@visibleForTesting
+String betaFromApple(String version) => version.replaceFirstMapped(
+  RegExp(r'^(\d+\.\d+\.\d+)\.(\d+)$'),
+  (m) => '${m[1]}-beta.${m[2]}',
+);
+
 /// The Android side of the app: MainActivity.kt's 'aniview/app' and 'aniview/volume' channels. Off Android every
 /// call throws [MissingPluginException]; failures on Android arrive as [PlatformException] with the reason.
 class AndroidApp {
@@ -34,7 +49,7 @@ class AndroidApp {
 
   static Future<String?> version() async => Platform.isAndroid
       ? _app.invokeMethod<String>('version')
-      : (await PackageInfo.fromPlatform()).version;
+      : appleBetaVersion((await PackageInfo.fromPlatform()).version);
 
   /// "Android 14; Pixel 7"; the OS version elsewhere.
   static Future<String?> device() async => Platform.isAndroid
