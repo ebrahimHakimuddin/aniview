@@ -6,42 +6,41 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.6.0-beta.1';
+const changelogVersion = '2.6.0-beta.2';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
   (
+    icon: Icons.forum_rounded,
+    title: 'Comments on every episode',
+    body: 'Read and post Dantotsu comments, shared with other anime apps, from each episode. Sign in with AniList just for comments, even if you track with MyAnimeList.',
+  ),
+  (
+    icon: Icons.fast_forward_rounded,
+    title: 'Filler, marked and skippable',
+    body: 'Filler and mixed episodes are marked in the list. Turn on Skip filler episodes in Settings → Playback and Up next passes over them.',
+  ),
+  (
+    icon: Icons.audiotrack_rounded,
+    title: 'Jellyfin plays every audio track',
+    body: 'No more sub or dub on Jellyfin: the file plays with all its audio, and you pick the language in the player.',
+  ),
+  (
+    icon: Icons.subtitles_rounded,
+    title: 'The right subtitles',
+    body: 'Jellyfin shows the full subtitles instead of the signs-and-songs track, and files with their own subtitles get the language you picked.',
+  ),
+  (
     icon: Icons.dns_rounded,
     title: 'Your own Jellyfin',
-    body: 'Connect your Jellyfin server in Settings and its shows play like any site, listed first, with your progress sent back to it. Sign in with a password or Quick Connect.',
-  ),
-  (
-    icon: Icons.playlist_add_rounded,
-    title: 'Request it on Jellyseerr',
-    body: 'With Jellyfin picked and a show not on your server, request it on Jellyseerr or Seerr, season by season.',
-  ),
-  (
-    icon: Icons.new_releases_rounded,
-    title: 'New on your server',
-    body: 'An "On your Jellyfin" row at Home shows what was added to your server lately.',
+    body: 'Connect your Jellyfin server in Settings and its shows play like any site, with your progress sent back. Request missing ones on Jellyseerr.',
   ),
   (
     icon: Icons.system_update_rounded,
     title: 'Updates from inside the app',
-    body: 'Windows, macOS and Linux now download and install updates themselves, like Android. The beta updates to newer betas too.',
-  ),
-  (
-    icon: Icons.phone_iphone_rounded,
-    title: 'AniView on iPhone',
-    body:
-        'A first iOS build to sideload with AltStore, SideStore or Sideloadly.',
-  ),
-  (
-    icon: Icons.science_rounded,
-    title: 'A beta beside AniView',
-    body: 'AniView Beta is an app of its own on every platform, so trying it leaves your AniView and its data as they are.',
+    body: 'Windows, macOS and Linux install updates themselves, like Android, and AniView Beta installs beside AniView on every platform.',
   ),
 ];
 

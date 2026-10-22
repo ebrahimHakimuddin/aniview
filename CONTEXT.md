@@ -67,3 +67,12 @@ them: toggle, All, clear, held while a bulk change runs (`runBulk`, one request 
 **Home feed** (`lib/home_feed.dart`, `HomeFeed`): the futures behind Home, Schedule, My list and Me, built when first read and
 replaced when stale (AniList asked again at most once a minute; watch history always re-read), over a `HomeSource`. Also the
 pure rules on what they hold: a schedule day, the home list rows, and what a remote **intent** does (`decide`).
+
+**Filler** (`lib/filler.dart`, `Filler`): which episodes are filler or mixed, from Anime Filler List, matched by the show's
+English or romaji title (its own name before another show's bracketed one). Marked on the episode list; with
+**Skip filler** on, the up next episode, the main action and the player's next episode pass over filler.
+
+**Comments** (`lib/dantotsu.dart`, `lib/comments.dart`): Dantotsu's comments, shared across anime apps and tagged by episode,
+read and posted with a session made from an AniList sign-in (reading needs one too): the tracker's when it's AniList, else
+one made on the comments screen for comments alone, which leaves the tracker as it is. Each episode's comments
+button opens them; posting waits for its 10 rules to be agreed to.

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
+import 'comments.dart';
+import 'filler.dart';
 import 'jellyfin.dart';
 import 'jellyseerr.dart';
 import 'analytics.dart';
@@ -267,7 +269,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
   late final cachedSeason = _ids.then(
     (_) => Downloads.instance.season(widget.media),
   );
-  bool dub = Settings.preferDub, expanded = false, aboutFocused = false;
+  bool _dubPicked = Settings.preferDub, expanded = false, aboutFocused = false;
+
+  /// Sub or dub as picked, on sites that serve them apart. Jellyfin plays the file with all its audio, picked in the
+  /// player, so there it's always the one way (downloads and history are kept under it).
+  bool get dub => source is! Jellyfin && _dubPicked;
+
+  /// "dub " or "sub " for the counts and labels, nothing on Jellyfin.
+  String get _audioWord => source is Jellyfin ? '' : (dub ? 'dub ' : 'sub ');
 
   /// The episode order picked on this page; null follows [EpisodePlan.newestFirstFor].
   bool? newestFirstPicked;
@@ -303,7 +312,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
     Analytics.screen('/details', title: titleOf(media));
     picked.addListener(() => setState(() {}));
     _loadSites();
+    Filler.of(media).then((kinds) {
+      if (mounted && kinds.isNotEmpty) setState(() => filler = kinds);
+    });
   }
+
+  /// The show's filler and mixed episodes (Anime Filler List), once known.
+  Map<num, EpisodeKind> filler = const {};
+
+  /// The episodes "next" passes over: the filler ones, when Settings say to skip them.
+  Set<num> get _skipped => !Settings.skipFiller
+      ? const {}
+      : {
+          for (final e in filler.entries)
+            if (e.value == EpisodeKind.filler) e.key,
+        };
 
   @override
   void dispose() {
@@ -430,10 +453,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final download = Downloads.instance.entry(media, episode.number, dub);
         if (download != null) await confirmDeleteDownload(context, download);
       case EpisodeAction.discuss:
-        await openEpisodeDiscussion(
+        await openComments(
           context,
           media,
-          episode.number,
+          episode: episode.number,
           progress: _progress,
         );
       case EpisodeAction.select:
@@ -452,10 +475,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
     final actions = [
       for (final a in eps.actionsFor(episode, watched: watched))
-        if (a != EpisodeAction.play &&
-            a != EpisodeAction.discuss &&
-            a != EpisodeAction.select)
-          a,
+        if (a != EpisodeAction.play && a != EpisodeAction.select) a,
     ];
     if (actions.isEmpty) return;
     final picked = await showSheet<EpisodeAction>(
@@ -553,7 +573,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     );
                     showSuccess(
                       context,
-                      'Downloading ${toDownload.length} ${dub ? 'dub' : 'sub'} episodes',
+                      'Downloading ${toDownload.length} ${_audioWord}episodes',
                     );
                     done();
                   },
@@ -623,7 +643,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   ) async {
     final picked = await showDialog<List<Episode>>(
       context: context,
-      builder: (_) => _DownloadRangeDialog(list, progress: progress, dub: dub),
+      builder: (_) =>
+          _DownloadRangeDialog(list, progress: progress, audio: _audioWord),
     );
     if (picked == null || !mounted) return;
     final count = picked
@@ -649,7 +670,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       context,
       count == 0
           ? 'Every episode is already downloaded or queued'
-          : 'Downloading $count ${dub ? 'dub' : 'sub'} episodes',
+          : 'Downloading $count ${_audioWord}episodes',
     );
   }
 
@@ -726,6 +747,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           saved.data,
           list,
           _progress,
+          skip: _skipped,
         )) {
           ResumeSaved(:final record, :final midway) => PlayAction(
             autofocus: isTv,
@@ -746,7 +768,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             autofocus: isTv,
             title:
                 '${first ? 'Play' : 'Continue'} Episode ${epNumber(episode.number)}',
-            subtitle: '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
+            subtitle: source is Jellyfin
+                ? source!.name
+                : '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
             onPressed: () =>
                 _playEpisode(_showEpisodes(list!, source), episode),
           ),
@@ -777,14 +801,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
   // Held to the button height: the control otherwise sits shorter than the buttons beside it.
   Widget get _audio => SizedBox(height: buttonHeight, child: _audioToggle);
 
+  /// Whether to offer sub or dub: not on Jellyfin, whose files carry every audio track, chosen in the player.
+  bool get _picksAudio => source is! Jellyfin;
+
   Widget get _audioToggle => SegmentedButton<bool>(
     segments: const [
       ButtonSegment(value: false, label: Text('Sub')),
       ButtonSegment(value: true, label: Text('Dub')),
     ],
-    selected: {dub},
+    selected: {_dubPicked},
     showSelectedIcon: false,
-    onSelectionChanged: (s) => setState(() => dub = s.first),
+    onSelectionChanged: (s) => setState(() => _dubPicked = s.first),
   );
 
   /// The site to watch on, as a menu button ("#1 Anikoto").
@@ -865,6 +892,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
               onTap: () => _markWatched(EpisodePlan.progressAfter(list)),
               destructive: false,
             ),
+          if (show.onAniList)
+            (
+              icon: Icons.forum_outlined,
+              label: 'Comments',
+              onTap: () => openComments(context, media, progress: _progress),
+              destructive: false,
+            ),
         ]);
       },
     ),
@@ -925,8 +959,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       child: _sourceMenu(),
                     ),
             ),
-            const SizedBox(width: 12),
-            _audio,
+            if (_picksAudio) ...[const SizedBox(width: 12), _audio],
           ],
         ),
         // Sites that failed to load say so across the whole width, not squeezed beside the audio.
@@ -1367,7 +1400,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 _playAction(),
-                                _audio,
+                                if (_picksAudio) _audio,
                                 _sourceMenu(),
                                 if (Tracker.signedIn)
                                   FilledButton.tonalIcon(
@@ -1535,6 +1568,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final plan = EpisodePlan(
           list,
           progress: _progress,
+          skip: _skipped,
           record: saved.data,
           newestFirst: newestFirst,
           page: page,
@@ -1675,16 +1709,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final picking = picked.active && !isTv;
     return _EpisodeTile(
       episode,
+      kind: filler[episode.number],
       watched: watched,
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
       selected: picking ? picked.has(episode) : null,
       onDiscuss: isTv || picking || !show.onAniList
           ? null
-          : () => openEpisodeDiscussion(
+          : () => openComments(
               context,
               media,
-              episode.number,
+              episode: episode.number,
               progress: _progress,
             ),
       onLongPress: isTv
@@ -2089,6 +2124,7 @@ class _EpisodesSkeleton extends StatelessWidget {
 class _EpisodeTile extends StatelessWidget {
   const _EpisodeTile(
     this.episode, {
+    this.kind,
     required this.watched,
     required this.onTap,
     this.upNext = false,
@@ -2099,11 +2135,14 @@ class _EpisodeTile extends StatelessWidget {
     this.onDiscuss,
   });
 
-  /// Opens the episode's AniList discussion, from a button by its name.
+  /// Opens the episode's comments, from a button by its name.
   final VoidCallback? onDiscuss;
 
   final Episode episode;
   final bool watched, upNext;
+
+  /// Filler or mixed, by Anime Filler List; null for canon (or not known).
+  final EpisodeKind? kind;
 
   /// Picking several: whether this one is picked; null when not picking.
   final bool? selected;
@@ -2139,6 +2178,18 @@ class _EpisodeTile extends StatelessWidget {
             badge.toUpperCase(),
             style: text.labelSmall?.copyWith(
               color: scheme.primary,
+              letterSpacing: .8,
+            ),
+          ),
+        ],
+        if (kind case final kind?) ...[
+          const SizedBox(width: 8),
+          Text(
+            kind.label.toUpperCase(),
+            style: text.labelSmall?.copyWith(
+              color: kind == EpisodeKind.filler
+                  ? scheme.tertiary
+                  : scheme.onSurfaceVariant,
               letterSpacing: .8,
             ),
           ),
@@ -2251,7 +2302,7 @@ class _EpisodeTile extends StatelessWidget {
                   children: [
                     if (onDiscuss != null)
                       IconButton(
-                        tooltip: 'Episode discussion',
+                        tooltip: 'Episode comments',
                         onPressed: onDiscuss,
                         color: scheme.onSurfaceVariant,
                         icon: const Icon(Icons.forum_outlined),
@@ -2473,12 +2524,14 @@ class _DownloadRangeDialog extends StatefulWidget {
   const _DownloadRangeDialog(
     this.episodes, {
     required this.progress,
-    required this.dub,
+    required this.audio,
   });
 
   final List<Episode> episodes;
   final int progress;
-  final bool dub;
+
+  /// "dub " or "sub ", or nothing where the audio is picked in the player.
+  final String audio;
 
   @override
   State<_DownloadRangeDialog> createState() => _DownloadRangeDialogState();
@@ -2535,7 +2588,7 @@ class _DownloadRangeDialogState extends State<_DownloadRangeDialog> {
           ),
           const SizedBox(height: 16),
           Text(
-            '$count ${widget.dub ? 'dub' : 'sub'} ${count == 1 ? 'episode' : 'episodes'} · '
+            '$count ${widget.audio}${count == 1 ? 'episode' : 'episodes'} · '
             '${epNumber(sorted.first.number)}–${epNumber(sorted.last.number)} available',
             style: TextStyle(color: scheme.onSurfaceVariant),
           ),

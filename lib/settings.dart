@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'analytics.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
+import 'dantotsu.dart';
 import 'downloads.dart';
 import 'desktop.dart'
     show keysLabel, rebindSearch, recordShortcut, searchShortcut;
@@ -416,6 +417,36 @@ class Settings {
       (_loaded ? _prefs.getString('jellyseerr_cookie') : null) ?? '';
   static set jellyseerrCookie(String v) =>
       _prefs.setString('jellyseerr_cookie', v);
+
+  /// The Dantotsu comments session (see dantotsu.dart): its token, when it was issued, and whose it is.
+  static String get dantotsuToken => _prefs.getString('dantotsu_token') ?? '';
+  static set dantotsuToken(String v) => _prefs.setString('dantotsu_token', v);
+  static int get dantotsuTokenAt => _prefs.getInt('dantotsu_token_at') ?? 0;
+  static set dantotsuTokenAt(int v) => _prefs.setInt('dantotsu_token_at', v);
+  static String get dantotsuUser => _prefs.getString('dantotsu_user') ?? '';
+  static set dantotsuUser(String v) => _prefs.setString('dantotsu_user', v);
+
+  /// An AniList sign-in for comments alone, when the tracker isn't AniList; and which sign-in made the session.
+  static String get dantotsuAniList =>
+      _prefs.getString('dantotsu_anilist') ?? '';
+  static set dantotsuAniList(String v) =>
+      _prefs.setString('dantotsu_anilist', v);
+  static String get dantotsuSource => _prefs.getString('dantotsu_source') ?? '';
+  static set dantotsuSource(String v) => _prefs.setString('dantotsu_source', v);
+  static String get dantotsuUserName =>
+      _prefs.getString('dantotsu_user_name') ?? '';
+  static set dantotsuUserName(String v) =>
+      _prefs.setString('dantotsu_user_name', v);
+
+  /// Whether the Dantotsu comment rules were agreed to, which posting waits for.
+  static bool get dantotsuRulesAccepted =>
+      _prefs.getBool('dantotsu_rules') ?? false;
+  static set dantotsuRulesAccepted(bool v) =>
+      _prefs.setBool('dantotsu_rules', v);
+
+  /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
+  static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;
+  static set skipFiller(bool v) => _prefs.setBool('skip_filler', v);
 
   /// This install's id on the server, made once: Jellyfin keeps one session per device.
   static String get jellyfinDevice {
@@ -1264,6 +1295,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
       ]),
       _Group('Tracking', [
+        // An AniList sign-in for Dantotsu comments alone (the tracker being MyAnimeList, or none).
+        if (Dantotsu.ownSignIn)
+          ListTile(
+            leading: const Icon(Icons.forum_outlined),
+            title: const Text('Comments account'),
+            subtitle: Text(
+              Settings.dantotsuUserName.isEmpty
+                  ? 'AniList, for Dantotsu comments only'
+                  : '${Settings.dantotsuUserName} on AniList, for Dantotsu comments only',
+            ),
+            trailing: TextButton(
+              onPressed: () => setState(Dantotsu.signOut),
+              child: const Text('Sign out'),
+            ),
+          ),
         SwitchListTile(
           title: const Text('Update progress automatically'),
           subtitle: const Text('Marks the episode watched on your tracker'),
@@ -1451,6 +1497,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ]),
       _Group('Playback', [
+        SwitchListTile(
+          title: const Text('Skip filler episodes'),
+          subtitle: const Text(
+            'Up next and the next episode pass over filler (from Anime Filler List). Filler stays in the list, marked',
+          ),
+          value: Settings.skipFiller,
+          onChanged: (v) => setState(() => Settings.skipFiller = v),
+        ),
         _Choice(
           title: 'Preferred audio',
           value: Settings.preferDub ? 'Dub' : 'Sub',

@@ -179,6 +179,15 @@ const _shortCodes = {
   'ms': 'msa',
 };
 
+/// The English name of language [code] ("eng", "en"), for labels; null when unknown.
+String? languageName(String code) {
+  final iso = languageCode(code);
+  for (final MapEntry(:key, :value) in _languages.entries) {
+    if (value == iso) return key[0].toUpperCase() + key.substring(1);
+  }
+  return null;
+}
+
 /// The ISO 639-2 code for a subtitle labelled [label] ("English", "Spanish (Latin)", "en-US"); "und" when unknown.
 String languageCode(String label) {
   final l = label.toLowerCase().trim();

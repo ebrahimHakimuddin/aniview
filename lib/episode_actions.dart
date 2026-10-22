@@ -1,5 +1,6 @@
 import 'anilist.dart';
 import 'downloads.dart';
+import 'jellyfin.dart';
 import 'sources.dart';
 
 /// Something a show page offers for one of its episodes (see [ShowEpisodes.actionsFor]).
@@ -84,10 +85,12 @@ class ShowEpisodes {
     EpisodeAction.play => 'Play',
     EpisodeAction.markWatched => 'Mark watched up to here',
     EpisodeAction.markUnwatched => 'Mark as unwatched',
-    EpisodeAction.download => 'Download ${dub ? 'dub' : 'sub'}',
+    // Jellyfin keeps the file with all its audio.
+    EpisodeAction.download =>
+      site is Jellyfin ? 'Download' : 'Download ${dub ? 'dub' : 'sub'}',
     EpisodeAction.retryDownload => 'Retry download',
     EpisodeAction.deleteDownload => 'Delete download',
-    EpisodeAction.discuss => 'Discussion',
+    EpisodeAction.discuss => 'Comments',
     EpisodeAction.select => 'Select',
   };
 }

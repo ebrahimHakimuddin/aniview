@@ -310,4 +310,21 @@ void main() {
       ),
     );
   });
+
+  test(
+    "a file's own subtitles: the language picked, full before signs and songs",
+    () {
+      const signs = SubtitleTrack('3', title: 'Signs & Songs', language: 'eng');
+      const full = SubtitleTrack('4', title: 'Full Subtitles', language: 'en');
+      const spanish = SubtitleTrack('5', title: 'Español', language: 'spa');
+      final tracks = [SubtitleTrack.auto, signs, full, spanish];
+      expect(PlaybackSession.embeddedSubtitle(tracks, 'English'), full);
+      expect(PlaybackSession.embeddedSubtitle(tracks, 'Spanish'), spanish);
+      // Not there: English, then the player's own pick.
+      expect(PlaybackSession.embeddedSubtitle(tracks, 'German'), full);
+      expect(PlaybackSession.embeddedSubtitle([signs], 'English'), signs);
+      expect(PlaybackSession.embeddedSubtitle([spanish], 'German'), isNull);
+      expect(PlaybackSession.embeddedSubtitle(tracks, 'Off'), isNull);
+    },
+  );
 }
