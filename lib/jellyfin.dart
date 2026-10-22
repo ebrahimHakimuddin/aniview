@@ -4,6 +4,8 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import 'anilist.dart';
+import 'history.dart';
 import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
@@ -36,31 +38,84 @@ class Jellyfin extends Source {
       'MediaBrowser Client="AniView", Device="${Platform.operatingSystem}", '
       'DeviceId="${Settings.jellyfinDevice}", Version="1"${token == null ? '' : ', Token="$token"'}';
 
-  /// Signs in and saves the session; throws with a message for the user when the server says no.
-  static Future<void> signIn(
-    String server,
-    String name,
-    String password,
-  ) async {
-    server = server.trim().replaceFirst(RegExp(r'/+$'), '');
-    if (!server.startsWith('http')) server = 'http://$server';
+  static String _server(String address) {
+    final server = address.trim().replaceFirst(RegExp(r'/+$'), '');
+    return server.startsWith('http') ? server : 'http://$server';
+  }
+
+  static Future<dynamic> _post(String url, [Object? body]) async {
     final res = await http.post(
-      Uri.parse('$server/Users/AuthenticateByName'),
+      Uri.parse(url),
       headers: {
         'Authorization': _authorization(),
         'Content-Type': 'application/json',
       },
-      body: jsonEncode({'Username': name, 'Pw': password}),
+      body: body == null ? null : jsonEncode(body),
     );
     if (res.statusCode == 401) throw Exception('Wrong username or password');
     if (res.statusCode != 200) {
       throw Exception('The server answered HTTP ${res.statusCode}');
     }
-    final json = jsonDecode(res.body);
+    return jsonDecode(res.body);
+  }
+
+  static void _save(String server, Map session) {
     Settings.jellyfinServer = server;
-    Settings.jellyfinToken = json['AccessToken'];
-    Settings.jellyfinUser = json['User']['Id'];
-    Settings.jellyfinUserName = json['User']['Name'] ?? name;
+    Settings.jellyfinToken = session['AccessToken'];
+    Settings.jellyfinUser = session['User']['Id'];
+    Settings.jellyfinUserName = session['User']['Name'] ?? '';
+  }
+
+  /// Signs in and saves the session; throws with a message for the user when the server says no.
+  static Future<void> signIn(
+    String address,
+    String name,
+    String password,
+  ) async {
+    final server = _server(address);
+    _save(
+      server,
+      await _post('$server/Users/AuthenticateByName', {
+        'Username': name,
+        'Pw': password,
+      }),
+    );
+  }
+
+  /// Quick Connect: [showCode] gets the code to enter in another signed-in Jellyfin app, then this waits until it's
+  /// approved there and saves the session. Stops waiting, unsaved, once [cancelled] says so.
+  static Future<bool> quickConnect(
+    String address, {
+    required void Function(String code) showCode,
+    required bool Function() cancelled,
+  }) async {
+    final server = _server(address);
+    final enabled = await http.get(Uri.parse('$server/QuickConnect/Enabled'));
+    if (enabled.body != 'true') {
+      throw Exception('Quick Connect is turned off on this server');
+    }
+    final start = await _post('$server/QuickConnect/Initiate');
+    showCode('${start['Code']}');
+    final secret = start['Secret'];
+    while (!cancelled()) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final state = jsonDecode(
+        (await http.get(
+          Uri.parse('$server/QuickConnect/Connect?secret=$secret'),
+          headers: {'Authorization': _authorization()},
+        )).body,
+      );
+      if (state['Authenticated'] == true && !cancelled()) {
+        _save(
+          server,
+          await _post('$server/Users/AuthenticateWithQuickConnect', {
+            'Secret': secret,
+          }),
+        );
+        return true;
+      }
+    }
+    return false;
   }
 
   static void signOut() {
@@ -79,7 +134,8 @@ class Jellyfin extends Source {
           ))['Items']
           as List;
 
-  // ponytail: the whole library once per site list; a server with tens of thousands of shows wants a provider-id query
+  /// The whole library, read only when a show isn't found by searching its titles (the server can't look items up
+  /// by provider id: `AnyProviderIdEquals` is ignored).
   late final Future<List> _library = _items(
     'Fields=ProviderIds&EnableImages=false',
   );
@@ -100,10 +156,6 @@ class Jellyfin extends Source {
   @override
   Future<String?> match(Map media) async {
     final movie = media['format'] == 'MOVIE';
-    final library = [
-      for (final i in await _library)
-        if ((i['Type'] == 'Movie') == movie) i,
-    ];
     Map zip;
     try {
       zip = await mappingsOf(media);
@@ -111,24 +163,49 @@ class Jellyfin extends Source {
       zip = const {}; // ani.zip down or unaware of the show: AniList id and titles still match
     }
     final ids = zip['mappings'] as Map? ?? const {};
-    Map? by(String provider, Object? id) => id == null
-        ? null
-        : library
-              .where((i) => '${i['ProviderIds']?[provider]}' == '$id')
-              .firstOrNull;
+    // A library names a show by its first season ("Jujutsu Kaisen" for "... 2nd Season"), in any language.
+    final suffix = RegExp(
+      r'[\s:]*(\(\d{4}\)|\d+(st|nd|rd|th) Season|Season \d+|Part \d+|Cour \d+)$',
+      caseSensitive: false,
+    );
     final titles = {
-      for (final t in [media['title']['romaji'], media['title']['english']])
-        if (t is String) t.toLowerCase(),
+      for (final t in [
+        media['title']['romaji'],
+        media['title']['english'],
+        ...?(zip['titles'] as Map?)?.values,
+      ])
+        if (t is String && t.isNotEmpty) ...[
+          t.toLowerCase(),
+          t.replaceFirst(suffix, '').toLowerCase(),
+        ],
     };
-    final item =
-        by('AniList', media['id']) ??
-        by('AniDB', ids['anidb_id']) ??
-        by('Tvdb', ids['thetvdb_id']) ??
-        by('Tmdb', ids['themoviedb_id']) ??
-        by('Imdb', ids['imdb_id']) ??
-        library
-            .where((i) => titles.contains('${i['Name']}'.toLowerCase()))
-            .firstOrNull;
+    Map? find(List items) {
+      final kind = [
+        for (final i in items)
+          if ((i['Type'] == 'Movie') == movie) i,
+      ];
+      Map? by(String provider, Object? id) => id == null
+          ? null
+          : kind
+                .where((i) => '${i['ProviderIds']?[provider]}' == '$id')
+                .firstOrNull;
+      return by('AniList', media['id']) ??
+          by('AniDB', ids['anidb_id']) ??
+          by('Tvdb', ids['thetvdb_id']) ??
+          by('Tmdb', ids['themoviedb_id']) ??
+          by('Imdb', ids['imdb_id']) ??
+          kind
+              .where((i) => titles.contains('${i['Name']}'.toLowerCase()))
+              .firstOrNull;
+    }
+
+    final found = await Future.wait([
+      for (final t in titles.take(8))
+        _items(
+          'searchTerm=${Uri.encodeQueryComponent(t)}&Limit=10&Fields=ProviderIds&EnableImages=false',
+        ),
+    ]);
+    final item = find([for (final f in found) ...f]) ?? find(await _library);
     if (item == null) return null;
     if (movie) return 'movie/${item['Id']}';
     final first = (zip['episodes'] as Map?)?['1'] as Map?;
@@ -232,5 +309,56 @@ class Jellyfin extends Source {
         subtitles: subtitles(embedded: true),
       ),
     ];
+  }
+
+  /// Tells the server how far episode [item] has been watched, so its own apps resume there and mark it played.
+  Future<void> report(String item, Duration position, Duration duration) async {
+    final played = WatchHistory.finished(position, duration);
+    final res = await http.post(
+      Uri.parse('$base/UserItems/$item/UserData?userId=$user'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'Played': played,
+        // Ticks are 100 ns.
+        'PlaybackPositionTicks': played ? 0 : position.inMicroseconds * 10,
+      }),
+    );
+    if (res.statusCode != 200) {
+      throw HttpException('HTTP ${res.statusCode}', uri: res.request?.url);
+    }
+  }
+
+  /// The shows added to the server most recently, as AniList shows: by the AniList id an item carries, else
+  /// ani.zip's answer for its other ids. Items neither knows are left out.
+  Future<List> shows() async {
+    final items = await _items(
+      'SortBy=DateLastContentAdded,DateCreated&SortOrder=Descending&Limit=30'
+      '&Fields=ProviderIds&EnableImages=false',
+    );
+    final ids = await Future.wait([
+      for (final i in items) _aniListId(i['ProviderIds'] as Map? ?? const {}),
+    ]);
+    return AniList.byIds([...ids.whereType<int>().toSet()]);
+  }
+
+  static Future<int?> _aniListId(Map providers) async {
+    if (int.tryParse('${providers['AniList']}') case final id?) return id;
+    // A TMDB id names a movie or a series, so it's asked last.
+    for (final (provider, param) in const [
+      ('AniDB', 'anidb_id'),
+      ('Tvdb', 'thetvdb_id'),
+      ('Imdb', 'imdb_id'),
+      ('Tmdb', 'themoviedb_id'),
+    ]) {
+      if (providers[provider] case final String id) {
+        try {
+          return jsonDecode(
+                await fetch('https://api.ani.zip/mappings?$param=$id'),
+              )['mappings']?['anilist_id']
+              as int?;
+        } catch (_) {} // unknown to ani.zip under this id: try the next
+      }
+    }
+    return null;
   }
 }

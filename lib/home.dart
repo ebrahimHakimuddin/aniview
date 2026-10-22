@@ -1156,6 +1156,13 @@ class _HomeFeed extends StatelessWidget {
         },
       ),
       HomeSection.recent => _recentlyWatched(autofocus: first),
+      // Not even a placeholder while no server is connected.
+      HomeSection.jellyfin when Settings.jellyfinToken.isNotEmpty => _row(
+        context,
+        section.label,
+        feed.server,
+        autofocus: first,
+      ),
       HomeSection.season => _row(
         context,
         () {

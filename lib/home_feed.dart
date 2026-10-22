@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'anilist.dart';
 import 'history.dart';
+import 'jellyfin.dart';
 import 'settings.dart';
 import 'tracker.dart';
 
@@ -92,6 +93,16 @@ class HomeFeed extends ChangeNotifier {
   Future<List<Map>> get allSchedule =>
       _allScheduleLoad ??= source.airingPopular();
 
+  /// What's new on the Jellyfin server, as AniList shows; empty when none is connected. Asked again once another
+  /// server (or none) is signed in to in Settings.
+  Future<List>? _server;
+  String? _serverToken;
+  Future<List> get server {
+    if (_serverToken != Settings.jellyfinToken) _server = null;
+    _serverToken = Settings.jellyfinToken;
+    return _server ??= Jellyfin.saved()?.shows() ?? Future.value(const []);
+  }
+
   /// Every list, for My list; loaded the first time it's shown.
   Future<Map<String, List>>? _library;
   Future<Map<String, List>> get library => _library ??= source.lists(all: true);
@@ -160,6 +171,7 @@ class HomeFeed extends ChangeNotifier {
     trending = source.trending();
     season = source.season();
     _categories.clear();
+    _server = null;
     history = source.history();
     _fetchLists();
     if (_stats != null) _stats = source.stats();

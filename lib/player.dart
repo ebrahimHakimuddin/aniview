@@ -13,6 +13,7 @@ import 'cloudflare.dart';
 import 'downloads.dart';
 import 'exo.dart';
 import 'history.dart';
+import 'jellyfin.dart';
 import 'metadata.dart';
 import 'settings.dart';
 import 'site_listing.dart';
@@ -734,6 +735,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       duration: duration,
       dub: widget.dub,
     );
+    // A download from the server reports too; offline, the next save sends the latest spot.
+    if (_sourceName == 'Jellyfin' && episode.ref is String) {
+      Jellyfin.saved()
+          ?.report(episode.ref as String, position, duration)
+          .catchError((Object _) {});
+    }
   }
 
   Future<void> _syncProgress() async {

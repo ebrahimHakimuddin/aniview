@@ -141,6 +141,7 @@ enum HomeSection {
   watching('Continue watching', 'The rest of your watching list'),
   planning('Plan to watch', 'Your planning list'),
   recent('Recently watched', 'Where you stopped, on this device'),
+  jellyfin('On your Jellyfin', 'Added to your Jellyfin server lately'),
   season('This season', 'Popular shows this season'),
   trending('Trending now', 'Trending on AniList'),
   topRated('Top rated', 'Highest rated shows'),
@@ -177,8 +178,14 @@ enum HomeSection {
   };
 
   /// On until the user changes the sections; the rest start off.
-  bool get byDefault =>
-      const {featured, airing, watching, season, trending}.contains(this);
+  bool get byDefault => const {
+    featured,
+    airing,
+    watching,
+    jellyfin,
+    season,
+    trending,
+  }.contains(this);
 }
 
 /// The player's picture modes, in the order its button cycles through them.
@@ -827,7 +834,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final server = TextEditingController(text: Settings.jellyfinServer);
     final name = TextEditingController(text: Settings.jellyfinUserName);
     final password = TextEditingController();
-    final go = await showDialog<bool>(
+    final how = await showDialog<String>(
       context: context,
       builder: (context) => PanelDialog(
         title: const Text('Connect to Jellyfin'),
@@ -855,26 +862,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 obscureText: true,
                 autofillHints: const [AutofillHints.password],
                 decoration: const InputDecoration(labelText: 'Password'),
-                onSubmitted: (_) => Navigator.pop(context, true),
+                onSubmitted: (_) => Navigator.pop(context, 'password'),
               ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
+          // No typing a password with a remote: approve this device from a Jellyfin app already signed in.
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'quick'),
+            child: const Text('Quick Connect'),
+          ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(context, 'password'),
             child: const Text('Connect'),
           ),
         ],
       ),
     );
-    if (go != true) return;
+    if (how == null) return;
     try {
-      await Jellyfin.signIn(server.text, name.text, password.text);
+      if (how == 'quick') {
+        if (!await _quickConnect(server.text)) return;
+      } else {
+        await Jellyfin.signIn(server.text, name.text, password.text);
+      }
       Sites.reload();
       if (mounted) {
         showSuccess(context, 'Connected as ${Settings.jellyfinUserName}');
@@ -883,6 +899,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) showError(context, e);
     }
     if (mounted) setState(() {});
+  }
+
+  /// Shows Quick Connect's code until it's approved (true) or the dialog is closed (false).
+  Future<bool> _quickConnect(String server) async {
+    final code = ValueNotifier<String?>(null);
+    var open = true;
+    final dialog = showDialog<void>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Quick Connect'),
+        content: ValueListenableBuilder(
+          valueListenable: code,
+          builder: (context, value, _) => value == null
+              ? const LinearProgressIndicator()
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'In a Jellyfin app you\'re signed in to, open Quick Connect and enter this code',
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      value,
+                      style: Theme.of(context).textTheme.displaySmall
+                          ?.copyWith(letterSpacing: 8),
+                    ),
+                  ],
+                ),
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    ).whenComplete(() => open = false);
+    try {
+      return await Jellyfin.quickConnect(
+        server,
+        showCode: (value) => code.value = value,
+        cancelled: () => !open,
+      );
+    } finally {
+      if (open && mounted) Navigator.pop(context);
+      await dialog;
+      code.dispose();
+    }
   }
 
   Future<void> _signOut(ListProvider provider) async {

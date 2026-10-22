@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aniview/anilist.dart';
 import 'package:aniview/jellyfin.dart';
 import 'package:aniview/net.dart';
 import 'package:aniview/settings.dart';
@@ -131,5 +132,128 @@ void main() {
       dub.single.subtitles.single.url,
       contains('/Subtitles/3/0/Stream.vtt'),
     );
+  });
+
+  test(
+    'a show found by searching its titles never reads the whole library',
+    () async {
+      httpClient = MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'mappings': {'anidb_id': 9},
+          }),
+          200,
+        ),
+      );
+      final net = FakeNet({
+        'searchTerm=': jsonEncode({
+          'Items': [
+            {
+              'Id': 'a',
+              'Type': 'Series',
+              'Name': 'Frieren',
+              'ProviderIds': {'AniDB': '9'},
+            },
+          ],
+        }),
+      });
+      final jf = Jellyfin(
+        server: 'http://jf.test',
+        token: 't',
+        user: 'u',
+        net: net,
+      );
+      final id = await jf.match({
+        'id': 1,
+        'title': {'romaji': 'Sousou no Frieren 2nd Season'},
+      });
+      expect(id, startsWith('a/'));
+      expect(net.requests, everyElement(contains('searchTerm=')));
+      // The season's suffix is dropped too: libraries name a show by its first season.
+      expect(
+        net.requests,
+        contains(contains('searchTerm=sousou+no+frieren&')),
+      );
+    },
+  );
+
+  test(
+    'progress goes to the server in ticks, and a finished episode as played',
+    () async {
+      final sent = <Map>[];
+      final jf = server({});
+      await http.runWithClient(
+        () async {
+          await jf.report(
+            'ep',
+            const Duration(minutes: 5),
+            const Duration(minutes: 24),
+          );
+          await jf.report(
+            'ep',
+            const Duration(minutes: 23),
+            const Duration(minutes: 24),
+          );
+        },
+        () => MockClient((req) async {
+          expect(
+            req.url.toString(),
+            'http://jf.test/UserItems/ep/UserData?userId=u',
+          );
+          sent.add(jsonDecode(req.body));
+          return http.Response('{}', 200);
+        }),
+      );
+      expect(sent, [
+        {'Played': false, 'PlaybackPositionTicks': 3000000000},
+        {'Played': true, 'PlaybackPositionTicks': 0},
+      ]);
+    },
+  );
+
+  test("the server's new shows come back as AniList shows, by their own id or ani.zip's", () async {
+    httpClient = MockClient(
+      (req) async => http.Response(
+        jsonEncode({
+          'mappings': {
+            'anilist_id': req.url.query.contains('thetvdb_id=7') ? 20 : null,
+          },
+        }),
+        200,
+      ),
+    );
+    List? asked;
+    AniList.transport = (query, variables) async {
+      asked = variables['ids'];
+      return {
+        'Page': {
+          'media': [
+            for (final id in variables['ids']) {'id': id},
+          ],
+        },
+      };
+    };
+    addTearDown(() => AniList.transport = null);
+    final jf = server({
+      'SortBy=DateLastContentAdded': {
+        'Items': [
+          {
+            'ProviderIds': {'AniList': '10'},
+          },
+          {
+            'ProviderIds': {'Tvdb': '7'},
+          },
+          {
+            'ProviderIds': {'Tvdb': '8'},
+          }, // unknown to ani.zip
+          {
+            'ProviderIds': {'AniList': '10'},
+          }, // asked once
+        ],
+      },
+    });
+    final shows = await jf.shows();
+    expect(asked, [10, 20]);
+    expect([for (final m in shows) m['id']], [10, 20]);
   });
 }
