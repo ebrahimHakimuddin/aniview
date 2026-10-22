@@ -81,6 +81,14 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# WPE WebKit 2.54 renamed the setting flutter_inappwebview_linux still names: WPE_SETTING_DISABLE_ANIMATIONS is now
+# WPE_SETTING_REDUCED_MOTION. Drop this once the plugin uses the new name.
+pkg_check_modules(WPE_WEBKIT QUIET wpe-webkit-2.0)
+if(TARGET flutter_inappwebview_linux_plugin AND WPE_WEBKIT_VERSION VERSION_GREATER_EQUAL 2.54)
+  target_compile_definitions(flutter_inappwebview_linux_plugin PRIVATE
+    "WPE_SETTING_DISABLE_ANIMATIONS=WPE_SETTING_REDUCED_MOTION")
+endif()
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
