@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import 'anilist.dart';
 import 'hls_proxy.dart';
@@ -16,6 +17,14 @@ import 'states.dart';
 import 'stream_address.dart';
 import 'subtitles.dart';
 import 'platform.dart';
+
+enum DownloadExport { private, customFolder, gallery }
+
+DownloadExport downloadExport(bool enabled, String folder) => !enabled
+    ? DownloadExport.private
+    : folder.isNotEmpty
+    ? DownloadExport.customFolder
+    : DownloadExport.gallery;
 
 enum DownloadStatus { queued, downloading, done, failed }
 
@@ -35,6 +44,7 @@ class Download {
     this.subtitles = const [],
     this.skips = const [],
     this.storageUri,
+    this.storagePath,
     this.video,
     this.galleryUri,
   });
@@ -52,6 +62,15 @@ class Download {
   List<Subtitle> subtitles; // file names inside the download folder
   List<SkipTime> skips;
   String? storageUri;
+  String? storagePath;
+  String get relativeFolder => storagePath ?? id;
+  String get exportFolder {
+    final title = titleOf(media)
+        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), '')
+        .replaceAll(RegExp(r'[. ]+$'), '')
+        .trim();
+    return '${title.isEmpty ? "Anime" : title}/Episode ${epNumber(number)}-${dub ? "dub" : "sub"}';
+  }
 
   /// The episode's MP4 inside its folder; null while it's still (or, made before MP4s, only) an HLS playlist.
   String? video;
@@ -82,6 +101,7 @@ class Download {
     'bytes': bytes,
     'error': error,
     'storageUri': storageUri,
+    'storagePath': storagePath,
     'video': video,
     'galleryUri': galleryUri,
     'subtitles': [
@@ -112,6 +132,7 @@ class Download {
     bytes: json['bytes'] ?? 0,
     error: json['error'],
     storageUri: json['storageUri'],
+    storagePath: json['storagePath'],
     video: json['video'],
     galleryUri: json['galleryUri'],
     subtitles: [
@@ -261,11 +282,7 @@ class DownloadStore {
 
   Future<List<Download>> read() async {
     if (!await _index.exists()) return [];
-    try {
-      return readIndex(await _index.readAsString());
-    } catch (_) {
-      return []; // unreadable index: start fresh rather than crash on launch
-    }
+    return readIndex(await _index.readAsString());
   }
 
   /// Written aside and swapped in, so a failed write or closing the app mid-write leaves the old index.
@@ -290,6 +307,8 @@ class Downloads extends ChangeNotifier {
   /// Where the downloaded episodes are kept.
   String get folder => _root.path;
   late DownloadStore _store;
+  Object? storageError;
+  bool _moving = false;
   Completer<void>? _activeDone;
   bool _running = false;
   Future<void> _saving = Future.value();
@@ -308,71 +327,136 @@ class Downloads extends ChangeNotifier {
     }
   }
 
-  Future<Directory> _chosenRoot() async =>
-      Platform.isIOS || Settings.desktopDownloadFolder.isEmpty
-      ? Directory('${(await _appFolder()).path}/downloads')
-      : Directory('${Settings.desktopDownloadFolder}/AniView');
+  Future<Directory> _chosenRoot([String? parent]) async {
+    final chosen = parent ?? Settings.desktopDownloadFolder;
+    return Platform.isIOS || chosen.isEmpty
+        ? Directory(p.join((await _appFolder()).path, 'downloads'))
+        : Directory(p.join(chosen, 'AniView'));
+  }
 
   Future<void> load() async {
     _root = await _chosenRoot();
-    await _root.create(recursive: true);
     _store = DownloadStore(_root);
-    _queue = DownloadQueue(await _store.read());
+    try {
+      // Never recreate a missing external mount at startup.
+      if (Settings.desktopDownloadFolder.isNotEmpty &&
+          !await _root.parent.exists()) {
+        throw FileSystemException('Reconnect the download folder', _root.path);
+      }
+      await _root.create(recursive: true);
+      final saved = await _store.read();
+      final probe = await File(p.join(_root.path, '.write-check'))
+          .open(mode: FileMode.write);
+      await probe.close();
+      await File(p.join(_root.path, '.write-check')).delete();
+      _queue = DownloadQueue(saved);
+      storageError = null;
+      _pump();
+    } catch (e) {
+      storageError = e;
+    }
+    notifyListeners();
+  }
+
+  Future<void> reconnect() => load();
+
+  Future<void> recoverTo(String? parent) async {
+    if (_running || _moving) throw StateError('Downloads are busy');
+    final root = await _chosenRoot(parent ?? '');
+    if (parent != null && !await root.exists()) {
+      throw FileSystemException(
+        'Select the parent of your existing AniView folder',
+        root.path,
+      );
+    }
+    await root.create(recursive: true);
+    final store = DownloadStore(root);
+    final saved = await store.read();
+    await store.write(jsonEncode([for (final d in saved) d.toJson()]));
+    await Settings.setDesktopDownloadFolder(parent ?? '');
+    _root = root;
+    _store = store;
+    _queue = DownloadQueue(saved);
+    storageError = null;
+    notifyListeners();
     _pump();
   }
 
-  /// Desktop: keeps the downloads in [parent] from now on (the app's own folder when null), taking the ones already
-  /// made along. Not while one is being fetched; throws then, or when the folder can't be written.
+  void _requireStorage() {
+    if (storageError != null || _moving) {
+      throw StateError(
+        'Download storage is unavailable. Reconnect it in Settings.',
+      );
+    }
+  }
+
   Future<void> moveTo(String? parent) async {
-    if (items.any(
-      (d) =>
-          d.status == DownloadStatus.queued ||
-          d.status == DownloadStatus.downloading,
-    )) {
+    _requireStorage();
+    if (_running ||
+        items.any(
+          (d) =>
+              d.status == DownloadStatus.queued ||
+              d.status == DownloadStatus.downloading,
+        )) {
       throw 'Wait for the current downloads to finish, or cancel them, before moving the folder.';
     }
-    final before = _root, chosen = Settings.desktopDownloadFolder;
-    Settings.desktopDownloadFolder = parent ?? '';
-    final after = await _chosenRoot();
-    if (after.path == before.path) return;
+    _moving = true;
     try {
-      await after.create(recursive: true);
-      for (final entity in await before.list().toList()) {
-        final target =
-            '${after.path}/${entity.uri.pathSegments.where((s) => s.isNotEmpty).last}';
-        try {
-          await entity.rename(target);
-        } on FileSystemException {
-          // Another disk: copy, then remove.
-          await _copy(entity, target);
-          await entity.delete(recursive: true);
-        }
+      await _saving;
+      final before = _root;
+      final after = await _chosenRoot(parent ?? '');
+      if (p.equals(before.absolute.path, after.absolute.path)) return;
+      if (p.isWithin(before.absolute.path, after.absolute.path) ||
+          p.isWithin(after.absolute.path, before.absolute.path)) {
+        throw 'Choose a folder outside the current download folder.';
       }
-    } catch (_) {
-      Settings.desktopDownloadFolder = chosen;
-      rethrow;
+      if (await after.exists() && !await after.list().isEmpty) {
+        throw 'The destination AniView folder is not empty. Choose another folder.';
+      }
+      await after.parent.create(recursive: true);
+      final stage = await after.parent.createTemp('.aniview-move-');
+      try {
+        await for (final entity in before.list(followLinks: false)) {
+          await _copy(entity, p.join(stage.path, p.basename(entity.path)));
+        }
+        // Commit only a complete copy. An interrupted staging copy leaves the old root intact.
+        if (await after.exists()) await after.delete();
+        await stage.rename(after.path);
+        await Settings.setDesktopDownloadFolder(parent ?? '');
+      } catch (_) {
+        if (await stage.exists()) await stage.delete(recursive: true);
+        rethrow;
+      }
+      _root = after;
+      _store = DownloadStore(after);
+      // A cleanup failure leaves a redundant old copy, never a partial active library.
+      try {
+        await before.delete(recursive: true);
+      } catch (_) {}
+      notifyListeners();
+    } finally {
+      _moving = false;
     }
-    _root = after;
-    _store = DownloadStore(_root);
-    _queue = DownloadQueue(await _store.read());
-    notifyListeners();
   }
 
   Future<void> _copy(FileSystemEntity from, String to) async {
     if (from is File) {
-      await from.copy(to);
+      final copy = await from.copy(to);
+      if (await copy.length() != await from.length()) {
+        throw FileSystemException('Incomplete copy', to);
+      }
     } else if (from is Directory) {
       await Directory(to).create(recursive: true);
-      await for (final child in from.list()) {
-        await _copy(
-          child,
-          '$to/${child.uri.pathSegments.where((s) => s.isNotEmpty).last}',
-        );
+      await for (final child in from.list(followLinks: false)) {
+        await _copy(child, p.join(to, p.basename(child.path)));
       }
+    } else {
+      throw FileSystemException('Unsupported file in downloads', from.path);
     }
   }
 
-  Directory _dir(Download d) => Directory('${_root.path}/${d.id}');
+  Directory _dir(Download d) =>
+      Directory(p.joinAll([_root.path, ...p.posix.split(d.relativeFolder)]));
 
   int get totalBytes => items.fold(0, (sum, d) => sum + d.bytes);
 
@@ -415,7 +499,7 @@ class Downloads extends ChangeNotifier {
   VideoStream streamFor(Download d) {
     final DownloadLocation where = d.storageUri == null
         ? LocalFolder(_dir(d).path)
-        : DocumentFolder(d.storageUri!, d.id);
+        : DocumentFolder(d.storageUri!, d.relativeFolder);
     return VideoStream(
       'Downloaded',
       where.urlOf(d.video ?? 'index.m3u8'),
@@ -436,6 +520,7 @@ class Downloads extends ChangeNotifier {
     required bool dub,
     required List<Episode> season,
   }) {
+    _requireStorage();
     _queue.enqueue(media, source, episodes, dub: dub);
     _notify(save: true);
     _pump();
@@ -445,6 +530,7 @@ class Downloads extends ChangeNotifier {
   /// Retries [d] from the site it came from. The Downloads screens have no other site open; a show page retries
   /// through [enqueue] instead, with the site it has open now.
   void retry(Download d) {
+    _requireStorage();
     _queue.retry(d);
     _notify(save: true);
     _pump();
@@ -478,13 +564,14 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<void> remove(Download d) async {
+    _requireStorage();
     final activeDone = _queue.remove(d) ? _activeDone?.future : null;
     _notify(save: true);
     await activeDone;
     await _deleteGalleryCopy(d);
     try {
       if (d.storageUri case final tree?) {
-        await AndroidApp.deleteDownloadFolder(tree, d.id);
+        await AndroidApp.deleteDownloadFolder(tree, d.relativeFolder);
       } else {
         await _dir(d).delete(recursive: true);
       }
@@ -503,6 +590,7 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<void> removeAll() async {
+    _requireStorage();
     final removed = [...items];
     final activeDone = _queue.clear() ? _activeDone?.future : null;
     _notify(save: true);
@@ -511,7 +599,7 @@ class Downloads extends ChangeNotifier {
       await _deleteGalleryCopy(d);
       if (d.storageUri case final tree?) {
         try {
-          await AndroidApp.deleteDownloadFolder(tree, d.id);
+          await AndroidApp.deleteDownloadFolder(tree, d.relativeFolder);
         } catch (_) {}
       }
     }
@@ -550,20 +638,23 @@ class Downloads extends ChangeNotifier {
   void _notify({bool save = false}) {
     notifyListeners();
     _notifyProgress();
-    if (!save) return;
+    if (!save || storageError != null || _moving) return;
     final json = jsonEncode([for (final d in items) d.toJson()]);
     _saving = _saving.then((_) async {
       try {
         await _store.write(json);
-      } catch (_) {}
+      } catch (e) {
+        storageError = e;
+        notifyListeners();
+      }
     });
   }
 
   Future<void> _pump() async {
-    if (_running) return;
+    if (_running || storageError != null || _moving) return;
     _running = true;
     try {
-      while (true) {
+      while (storageError == null) {
         final next = _queue.nextQueued;
         if (next == null) break;
         await _download(next);
@@ -600,6 +691,9 @@ class Downloads extends ChangeNotifier {
           streams.where((s) => s.isHls && s.audios.isEmpty).firstOrNull ??
           streams.where((s) => s.audios.isEmpty).firstOrNull ??
           (throw Exception('No downloadable servers for this episode'));
+      if (d.storagePath == null && !await _dir(d).exists()) {
+        d.storagePath = d.exportFolder;
+      }
       final dir = await _dir(d).create(recursive: true);
       var length = Duration.zero; // AniSkip takes any length for a single file
       // An extension's playlist may sit at an address without .m3u8: the file it sends says so.
@@ -618,22 +712,31 @@ class Downloads extends ChangeNotifier {
       d
         ..skips = community.isNotEmpty ? community : stream.skips
         ..progress = 1;
-      // The folder is part of saving to the gallery; without it, episodes stay in app storage.
-      if (Platform.isAndroid &&
-          Settings.saveToGallery &&
-          Settings.downloadFolder.isNotEmpty) {
+      final folder = Settings.downloadFolder;
+      final export = Platform.isAndroid
+          ? downloadExport(Settings.saveToGallery, folder)
+          : DownloadExport.private;
+      if (export == DownloadExport.customFolder) {
         await AndroidApp.exportDownloadFolder(
-          Settings.downloadFolder,
-          d.id,
+          folder,
+          d.relativeFolder,
           dir.path,
         );
-        d.storageUri = Settings.downloadFolder;
-      }
-      _queue.markDone(d);
-      if (Platform.isAndroid && Settings.saveToGallery && d.video != null) {
+        d.storageUri = folder;
+      } else if (export == DownloadExport.gallery && d.video != null) {
         note = await _saveToGallery(d, dir);
       }
-      if (d.storageUri != null) await dir.delete(recursive: true);
+      _queue.markDone(d);
+      if (d.storageUri != null) {
+        // Persist the external location before removing its private staging copy.
+        _notify(save: true);
+        await _saving;
+        if (storageError == null) {
+          try {
+            await dir.delete(recursive: true);
+          } catch (_) {}
+        }
+      }
     } catch (e) {
       _queue.markFailed(
         d,

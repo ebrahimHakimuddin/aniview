@@ -167,36 +167,30 @@ class AniList {
       return; // signed in by the phone, or closed
     }
     if (!context.mounted) return;
-    final value = await authorize(context);
-    if (value != null) await useToken(value);
-  }
-
-  /// AniList's authorize page (in-app, or the system browser on iOS and desktop), and the token it gives; null when
-  /// closed. Nothing is saved: [login] keeps it as the tracker's, Dantotsu as its own for comments.
-  static Future<String?> authorize(BuildContext context) async {
-    const url =
-        'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token';
-    String? pick(Uri uri) => Uri.splitQueryString(uri.fragment)['access_token'];
     // iOS and desktop return from the system browser through app_links.
-    final value = isDesktop || Platform.isIOS
-        ? await signInInBrowser(
-            context,
-            url,
-            name: 'AniList',
-            callbackHost: 'auth',
-            pick: pick,
-          )
-        : await Navigator.of(context).push<String>(
-            MaterialPageRoute(
-              fullscreenDialog: true,
-              builder: (_) => LoginPage(
-                title: 'Sign in with AniList',
-                url: url,
-                pick: pick,
-              ),
-            ),
-          );
-    return value == null || value.isEmpty ? null : value;
+    if (isDesktop || Platform.isIOS) {
+      final value = await signInInBrowser(
+        context,
+        'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
+        name: 'AniList',
+        callbackHost: 'auth',
+        pick: (uri) => Uri.splitQueryString(uri.fragment)['access_token'],
+      );
+      if (value != null && value.isNotEmpty) await useToken(value);
+      return;
+    }
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => LoginPage(
+          title: 'Sign in with AniList',
+          url:
+              'https://anilist.co/api/v2/oauth/authorize?client_id=$clientId&response_type=token',
+          pick: (uri) => Uri.splitQueryString(uri.fragment)['access_token'],
+        ),
+      ),
+    );
+    if (value != null && value.isNotEmpty) await useToken(value);
   }
 
   static Future<void> useToken(String value) async {

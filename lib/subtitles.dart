@@ -462,3 +462,8 @@ List<int> _trak({
     ]),
   ]);
 }
+
+// FFmpeg treats padded blank lines in Netflix WebVTT headers as cue IDs and
+// can discard every following cue. Keep actual text and timing unchanged.
+String normalizeWebVtt(String text) =>
+    text.replaceAll(RegExp(r'^[ \t]+\r?$', multiLine: true), '');

@@ -16,8 +16,14 @@ import 'widgets.dart';
 /// off. The grid keeps loading as you scroll. With nothing typed there are recent searches, genre tiles and what's
 /// trending or on this season.
 class DeskSearch extends StatefulWidget {
-  const DeskSearch(this.request, {super.key, required this.onReload});
+  const DeskSearch(
+    this.request, {
+    super.key,
+    required this.onReload,
+    this.fetch,
+  });
 
+  final Future<(List, bool)> Function(String, SearchFilters, int)? fetch;
   final ValueNotifier<DeskSearchRequest> request;
   final void Function({bool force}) onReload;
 
@@ -27,7 +33,9 @@ class DeskSearch extends StatefulWidget {
 
 class _DeskSearchState extends State<DeskSearch> {
   late final session = SearchSession(
-    fetch: (query, filters, page) => Tracker.search(query, filters, page: page),
+    fetch:
+        widget.fetch ??
+        (query, filters, page) => Tracker.search(query, filters, page: page),
   )..addListener(() => setState(() {}));
   final _scroll = ScrollController();
   late final trending = Tracker.trending();
@@ -41,7 +49,8 @@ class _DeskSearchState extends State<DeskSearch> {
     _scroll.addListener(() {
       if (_scroll.hasClients &&
           _scroll.position.extentAfter < 900 &&
-          session.hasNext) {
+          session.hasNext &&
+          session.error == null) {
         session.more();
       }
     });
@@ -154,12 +163,18 @@ class _DeskSearchState extends State<DeskSearch> {
             ),
           ),
           SliverToBoxAdapter(
-            child: SizedBox(
-              height: 56,
-              child: session.loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : null,
-            ),
+            child: session.error != null
+                ? ErrorState(
+                    session.error!,
+                    onRetry: session.more,
+                    compact: true,
+                  )
+                : SizedBox(
+                    height: 56,
+                    child: session.loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : null,
+                  ),
           ),
         ],
       ],

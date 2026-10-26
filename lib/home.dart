@@ -21,6 +21,7 @@ import 'platform.dart';
 import 'player.dart';
 import 'search.dart';
 import 'settings.dart';
+import 'survey.dart';
 import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
@@ -102,8 +103,12 @@ class _HomeScreenState extends State<HomeScreen>
       };
     }
     checkForUpdate(context, quiet: true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) maybeShowWhatsNew(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await maybeShowWhatsNew(context);
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        await maybeShowSubscriptionSurvey(context);
+      }
     });
   }
 

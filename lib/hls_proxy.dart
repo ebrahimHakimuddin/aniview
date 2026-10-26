@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'downloads.dart' show bestVariant;
 import 'sources.dart';
 import 'platform.dart';
+import 'subtitles.dart';
 
 /// Localhost relay for HLS streams: sends each stream's headers upstream (over HTTP/2 where a host refuses
 /// FFmpeg's HTTP/1.1, via [fetchBytes]) and strips the fake image prefix some hosts put in front of MPEG-TS
@@ -13,6 +14,9 @@ import 'platform.dart';
 class HlsProxy {
   // ponytail: header sets are never evicted; one small map per opened stream is fine for a session
   static final _headers = <Map<String, String>>[];
+  static final _qualityCaps = <int, int>{};
+
+  static final _audioLanguages = <String?>[];
   static final _keys = <Uint8List?>[];
   static final _dirs = <String>[];
   static final _documents = <(String, String)>[];
@@ -33,11 +37,36 @@ class HlsProxy {
     Map<String, String> headers, {
     String ext = 'm3u8',
     Uint8List? key,
+    String? audioLanguage,
   }) async {
     final port = (await _server).port;
     _headers.add(headers);
     _keys.add(key);
+    _audioLanguages.add(audioLanguage);
     return _local(port, _headers.length - 1, upstream, ext);
+  }
+
+  // Read available heights before the desktop relay narrows the master playlist.
+  static Future<List<int>> configureQuality(String url, int maxHeight) async {
+    final uri = Uri.parse(url);
+    final path = uri.pathSegments;
+    if (uri.host != '127.0.0.1' ||
+        path.length != 3 ||
+        path.first != _token ||
+        !path.last.endsWith('.m3u8')) {
+      return const [];
+    }
+    final id = int.tryParse(path[1]);
+    if (id == null || id < 0 || id >= _headers.length) return const [];
+    _qualityCaps[id] = maxHeight;
+    final encoded = path.last.split('.').first;
+    final upstream = utf8.decode(
+      base64Url.decode(base64Url.normalize(encoded)),
+    );
+    final master = utf8.decode(
+      await fetchBytes(upstream, headers: _headers[id]),
+    );
+    return playlistHeights(master);
   }
 
   /// Serves [file] from download folder [dir] to other apps (an external player), which can't read app storage.
@@ -147,7 +176,7 @@ class HlsProxy {
         return await response.close();
       }
       final [id, file] = path;
-      final encoded = file.substring(0, file.lastIndexOf('.'));
+      final encoded = file.substring(0, file.indexOf('.'));
       final upstream = Uri.parse(
         utf8.decode(base64Url.decode(base64Url.normalize(encoded))),
       );
@@ -160,19 +189,34 @@ class HlsProxy {
         );
         response.write(
           rewritePlaylist(
-            // FFmpeg (desktop) opens every variant and rendition before playing, and mpv has no quality pick.
-            switch (utf8.decode(body, allowMalformed: true)) {
-              final text when isDesktop => oneVariant(text),
+            // Limit desktop probing to the selected variant, retaining its audio.
+            switch (selectPlaylistAudio(
+              utf8.decode(body, allowMalformed: true),
+              _audioLanguages[int.parse(id)],
+            )) {
+              final text when usesMediaKit => oneVariant(
+                text,
+                maxHeight: _qualityCaps[int.parse(id)] ?? 0,
+              ),
               final text => text,
             },
             upstream,
             (url, ext) =>
                 _local(request.requestedUri.port, int.parse(id), url, ext),
+            segmentExt: file.endsWith('.vtt.m3u8') ? 'vtt' : 'ts',
             key: _keys[int.parse(id)] == null
                 ? null
                 : 'http://127.0.0.1:${request.requestedUri.port}/$_token/key/$id',
           ),
         );
+      } else if (file.endsWith('.vtt')) {
+        final body = await fetchBytes('$upstream', headers: headers);
+        response.headers.contentType = ContentType(
+          'text',
+          'vtt',
+          charset: 'utf-8',
+        );
+        response.write(normalizeWebVtt(utf8.decode(body)));
       } else {
         // Passed on as it arrives: players give up on a large segment that takes seconds to start.
         final body = await streamBytes('$upstream', headers: headers);
@@ -191,12 +235,40 @@ class HlsProxy {
   }
 }
 
+/// Keeps the requested audio language in every HLS rendition group.
+/// Refuses an unavailable language instead of silently playing the wrong dub.
+String selectPlaylistAudio(String playlist, String? language) {
+  if (language == null || !playlist.contains('#EXT-X-STREAM-INF')) {
+    return playlist;
+  }
+  final lines = playlist.split('\n');
+  bool isAudio(String line) =>
+      line.startsWith('#EXT-X-MEDIA:') && line.contains('TYPE=AUDIO');
+  final audio = lines.where(isAudio).toList();
+  if (audio.isEmpty) return playlist;
+  bool matches(String line) => line.contains('LANGUAGE="$language"');
+  final groups = audio
+      .map((line) => RegExp(r'GROUP-ID="([^"]+)"').firstMatch(line)?[1])
+      .toSet();
+  for (final group in groups) {
+    if (!audio.any(
+      (line) => line.contains('GROUP-ID="$group"') && matches(line),
+    )) {
+      throw FormatException('Audio language $language is unavailable');
+    }
+  }
+  return [
+    for (final line in lines)
+      if (!isAudio(line) || matches(line)) line,
+  ].join('\n');
+}
+
 /// [master] cut to its best variant and that variant's default audio rendition; subtitles stay. A media playlist
 /// comes back as it is.
-String oneVariant(String master) {
+String oneVariant(String master, {int maxHeight = 0}) {
   if (!master.contains('#EXT-X-STREAM-INF')) return master;
   final lines = master.split('\n').map((l) => l.trim()).toList();
-  final uri = lines.indexOf(bestVariant(master));
+  final uri = lines.indexOf(bestVariant(master, maxHeight: maxHeight));
   final inf = lines.lastIndexWhere(
     (l) => l.startsWith('#EXT-X-STREAM-INF'),
     uri,
@@ -231,12 +303,13 @@ String rewritePlaylist(
   Uri base,
   String Function(String url, String ext) proxy, {
   String? key,
+  String segmentExt = 'ts',
 }) {
   final ext =
       playlist.contains('#EXT-X-STREAM-INF') ||
           playlist.contains('#EXT-X-MEDIA:')
       ? 'm3u8'
-      : 'ts';
+      : segmentExt;
   return playlist
       .split('\n')
       .map((line) {
@@ -246,9 +319,14 @@ String rewritePlaylist(
           return trimmed.replaceFirst(RegExp(r'URI="[^"]+"'), 'URI="$key"');
         }
         if (trimmed.startsWith('#')) {
+          final uriExt =
+              trimmed.startsWith('#EXT-X-MEDIA:') &&
+                  trimmed.contains('TYPE=SUBTITLES')
+              ? 'vtt.m3u8'
+              : ext;
           return trimmed.replaceAllMapped(
             RegExp(r'URI="([^"]+)"'),
-            (m) => 'URI="${proxy(base.resolve(m[1]!).toString(), ext)}"',
+            (m) => 'URI="${proxy(base.resolve(m[1]!).toString(), uriExt)}"',
           );
         }
         return proxy(base.resolve(trimmed).toString(), ext);
@@ -289,4 +367,16 @@ Uint8List stripToTs(Uint8List data) {
     }
   }
   return data;
+}
+
+List<int> playlistHeights(String master) {
+  final heights = <int>{};
+  for (final line in const LineSplitter().convert(master)) {
+    if (!line.trimLeft().startsWith('#EXT-X-STREAM-INF:')) continue;
+    final height = int.tryParse(
+      RegExp(r'RESOLUTION=\d+x(\d+)').firstMatch(line)?[1] ?? '',
+    );
+    if (height != null && height > 0) heights.add(height);
+  }
+  return heights.toList()..sort((a, b) => b.compareTo(a));
 }

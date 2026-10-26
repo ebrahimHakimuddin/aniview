@@ -14,9 +14,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
+import 'survey.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
-import 'dantotsu.dart';
 import 'downloads.dart';
 import 'desktop.dart'
     show keysLabel, rebindSearch, recordShortcut, searchShortcut;
@@ -392,6 +392,12 @@ class Settings {
   /// Desktop: the folder the downloads are kept in (an "AniView" folder is made inside it); empty is the app's own.
   static String get desktopDownloadFolder =>
       _prefs.getString('desktop_download_folder') ?? '';
+  static Future<void> setDesktopDownloadFolder(String v) async {
+    if (!await _prefs.setString('desktop_download_folder', v)) {
+      throw StateError('Could not save the download folder');
+    }
+  }
+
   static set desktopDownloadFolder(String v) =>
       _prefs.setString('desktop_download_folder', v);
 
@@ -417,32 +423,6 @@ class Settings {
       (_loaded ? _prefs.getString('jellyseerr_cookie') : null) ?? '';
   static set jellyseerrCookie(String v) =>
       _prefs.setString('jellyseerr_cookie', v);
-
-  /// The Dantotsu comments session (see dantotsu.dart): its token, when it was issued, and whose it is.
-  static String get dantotsuToken => _prefs.getString('dantotsu_token') ?? '';
-  static set dantotsuToken(String v) => _prefs.setString('dantotsu_token', v);
-  static int get dantotsuTokenAt => _prefs.getInt('dantotsu_token_at') ?? 0;
-  static set dantotsuTokenAt(int v) => _prefs.setInt('dantotsu_token_at', v);
-  static String get dantotsuUser => _prefs.getString('dantotsu_user') ?? '';
-  static set dantotsuUser(String v) => _prefs.setString('dantotsu_user', v);
-
-  /// An AniList sign-in for comments alone, when the tracker isn't AniList; and which sign-in made the session.
-  static String get dantotsuAniList =>
-      _prefs.getString('dantotsu_anilist') ?? '';
-  static set dantotsuAniList(String v) =>
-      _prefs.setString('dantotsu_anilist', v);
-  static String get dantotsuSource => _prefs.getString('dantotsu_source') ?? '';
-  static set dantotsuSource(String v) => _prefs.setString('dantotsu_source', v);
-  static String get dantotsuUserName =>
-      _prefs.getString('dantotsu_user_name') ?? '';
-  static set dantotsuUserName(String v) =>
-      _prefs.setString('dantotsu_user_name', v);
-
-  /// Whether the Dantotsu comment rules were agreed to, which posting waits for.
-  static bool get dantotsuRulesAccepted =>
-      _prefs.getBool('dantotsu_rules') ?? false;
-  static set dantotsuRulesAccepted(bool v) =>
-      _prefs.setBool('dantotsu_rules', v);
 
   /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
   static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;
@@ -471,6 +451,14 @@ class Settings {
         ? location.replaceFirst('primary:', 'Internal storage/')
         : location.replaceFirst(':', '/');
   }
+
+  static const _subscriptionSurveyKey = isBetaBuild
+      ? 'subscription_survey_beta_v2'
+      : 'subscription_survey_v1';
+  static String? get subscriptionSurveyState =>
+      _prefs.getString(_subscriptionSurveyKey);
+  static Future<bool> setSubscriptionSurveyState(String state) =>
+      _prefs.setString(_subscriptionSurveyKey, state);
 
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);
@@ -950,7 +938,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Desktop: keep the downloads in [folder] (the app's own when null), and say why when that can't be done.
   Future<void> _moveDownloads(String? folder) async {
     try {
-      await Downloads.instance.moveTo(folder);
+      if (Downloads.instance.storageError != null) {
+        await Downloads.instance.recoverTo(folder);
+      } else {
+        await Downloads.instance.moveTo(folder);
+      }
     } catch (e) {
       if (mounted) showError(context, e);
     }
@@ -1295,21 +1287,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
       ]),
       _Group('Tracking', [
-        // An AniList sign-in for Dantotsu comments alone (the tracker being MyAnimeList, or none).
-        if (Dantotsu.ownSignIn)
-          ListTile(
-            leading: const Icon(Icons.forum_outlined),
-            title: const Text('Comments account'),
-            subtitle: Text(
-              Settings.dantotsuUserName.isEmpty
-                  ? 'AniList, for Dantotsu comments only'
-                  : '${Settings.dantotsuUserName} on AniList, for Dantotsu comments only',
-            ),
-            trailing: TextButton(
-              onPressed: () => setState(Dantotsu.signOut),
-              child: const Text('Sign out'),
-            ),
-          ),
         SwitchListTile(
           title: const Text('Update progress automatically'),
           subtitle: const Text('Marks the episode watched on your tracker'),
@@ -1720,7 +1697,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             builder: (context, _) => ListTile(
               leading: const Icon(Icons.folder_open_rounded),
               title: const Text('Download folder'),
-              subtitle: Text(Downloads.instance.folder),
+              subtitle: Text(
+                Downloads.instance.storageError == null
+                    ? Downloads.instance.folder
+                    : 'Storage unavailable · reconnect the folder and tap Retry',
+              ),
               trailing: Settings.desktopDownloadFolder.isEmpty
                   ? null
                   : IconButton(
@@ -1728,12 +1709,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: const Icon(Icons.restore_rounded),
                       onPressed: () => _moveDownloads(null),
                     ),
-              onTap: () async {
-                final folder = await getDirectoryPath(
-                  confirmButtonText: 'Keep downloads here',
-                );
-                if (folder != null) await _moveDownloads(folder);
-              },
+              onTap: Platform.isMacOS
+                  ? null
+                  : () async {
+                      final folder = await getDirectoryPath(
+                        confirmButtonText: 'Keep downloads here',
+                      );
+                      if (folder != null) await _moveDownloads(folder);
+                    },
+            ),
+          ),
+        if (isDesktop)
+          ListenableBuilder(
+            listenable: Downloads.instance,
+            builder: (context, _) => Downloads.instance.storageError == null
+                ? const SizedBox.shrink()
+                : ListTile(
+                    title: const Text('Download storage unavailable'),
+                    subtitle: Text('${Downloads.instance.storageError}'),
+                    trailing: TextButton(
+                      onPressed: Downloads.instance.reconnect,
+                      child: const Text('Retry'),
+                    ),
+                  ),
+          ),
+        if (Platform.isMacOS)
+          const ListTile(
+            title: Text('Downloads stay in AniView'),
+            subtitle: Text(
+              'Custom folders are unavailable until persistent sandbox access is supported.',
             ),
           ),
         if (Platform.isAndroid)
@@ -1889,6 +1893,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
           trailing: const Icon(Icons.chevron_right_rounded),
           onTap: () => showChangelog(context),
         ),
+        if (Analytics.available && Settings.analytics)
+          ListTile(
+            leading: const Icon(Icons.poll_outlined),
+            title: const Text('AniView’s future'),
+            subtitle: Text(
+              Settings.subscriptionSurveyState == 'answered'
+                  ? 'Thanks for sharing your thoughts'
+                  : 'Share your thoughts on a US\$1 monthly subscription',
+            ),
+            onTap: Settings.subscriptionSurveyState == 'answered'
+                ? null
+                : () async {
+                    await showSubscriptionSurvey(context);
+                    if (mounted) setState(() {});
+                  },
+          ),
         if (Analytics.available)
           SwitchListTile(
             title: const Text('Share anonymous usage stats'),

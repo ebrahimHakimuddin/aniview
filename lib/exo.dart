@@ -95,6 +95,69 @@ class _AndroidBackend extends PlayerBackend {
   }
 }
 
+// Owns the lifetime of delayed native track additions, independently of UI loads.
+class MediaKitTrackLoader {
+  int _generation = 0;
+  Completer<void>? _cancel;
+
+  void invalidate() {
+    _generation++;
+    _cancel?.complete();
+    _cancel = null;
+  }
+
+  Future<void> open({
+    required Future<void> Function() openMedia,
+    required Stream<Duration> durations,
+    required Duration Function() duration,
+    required Future<void> Function(List<String>) command,
+    required List subtitles,
+    required List audios,
+  }) async {
+    invalidate();
+    final generation = _generation;
+    final cancelled = _cancel = Completer<void>();
+    final ready = Completer<void>();
+    // Listen before open: native duration can arrive before open completes.
+    final subscription = durations.listen((value) {
+      if (value > Duration.zero && !ready.isCompleted) ready.complete();
+    });
+    try {
+      await openMedia();
+      if (generation != _generation) return;
+      if (subtitles.isEmpty && audios.isEmpty) return;
+      if (duration() <= Duration.zero && !ready.isCompleted) {
+        await Future.any([ready.future, cancelled.future])
+            .timeout(const Duration(seconds: 20), onTimeout: () {});
+      }
+      if (generation != _generation ||
+          (!ready.isCompleted && duration() <= Duration.zero)) {
+        return;
+      }
+      for (final Map track in subtitles) {
+        if (generation != _generation) return;
+        await command([
+          'sub-add',
+          track['url'] as String,
+          'auto',
+          track['label'] as String,
+        ]);
+      }
+      for (final (index, Map track) in audios.indexed) {
+        if (generation != _generation) return;
+        await command([
+          'audio-add',
+          track['url'] as String,
+          index == 0 ? 'select' : 'auto',
+          track['label'] as String,
+        ]);
+      }
+    } finally {
+      await subscription.cancel();
+    }
+  }
+}
+
 /// media_kit on iOS and desktop, answering the same commands and events as Media3.
 /// iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture renderer.
 class _MediaKitBackend extends PlayerBackend {
@@ -104,7 +167,7 @@ class _MediaKitBackend extends PlayerBackend {
   static VideoController? _sharedVideo;
 
   final mk.Player _mpv = _sharedMpv ??= mk.Player();
-  bool _disposed = false;
+  final _tracks = MediaKitTrackLoader();
 
   /// A download carries its subtitles twice: styled files beside it, and plain copies inside (mov_text) for other
   /// apps. Only the files are listed.
@@ -171,45 +234,22 @@ class _MediaKitBackend extends PlayerBackend {
         _hideEmbedded =
             (args['subtitles']! as List).isNotEmpty &&
             !(args['url']! as String).startsWith('http');
-        await mpv.open(
-          mk.Media(
-            args['url']! as String,
-            httpHeaders: (args['headers']! as Map).cast<String, String>(),
-            start: Duration(milliseconds: args['start']! as int),
+        await _tracks.open(
+          openMedia: () => mpv.open(
+            mk.Media(
+              args['url']! as String,
+              httpHeaders: (args['headers']! as Map).cast<String, String>(),
+              start: Duration(milliseconds: args['start']! as int),
+            ),
           ),
+          durations: mpv.stream.duration,
+          duration: () => mpv.state.duration,
+          command: (args) => (mpv.platform as mk.NativePlayer).command(args),
+          subtitles: args['subtitles']! as List,
+          audios: args['audios']! as List,
         );
-        final subtitles = args['subtitles']! as List;
-        final audios = args['audios']! as List;
-        if (subtitles.isEmpty && audios.isEmpty) return;
-        // A subtitle or audio file can only join once the stream has loaded.
-        final loaded = await mpv.stream.duration
-            .firstWhere((d) => d > Duration.zero)
-            .timeout(
-              const Duration(seconds: 20),
-              onTimeout: () => Duration.zero,
-            );
-        if (loaded == Duration.zero) return;
-        for (final Map s in subtitles) {
-          // Closed meanwhile: the shared player has moved on to another video.
-          if (_disposed) return;
-          await (mpv.platform as mk.NativePlayer).command([
-            'sub-add',
-            s['url'] as String,
-            'auto',
-            s['label'] as String,
-          ]);
-        }
-        for (final Map a in audios) {
-          if (_disposed) return;
-          await (mpv.platform as mk.NativePlayer).command([
-            'audio-add',
-            a['url'] as String,
-            // The first plays, as the stream's own would; the rest wait to be picked.
-            a == audios.first ? 'select' : 'auto',
-            a['label'] as String,
-          ]);
-        }
       case 'stop':
+        _tracks.invalidate();
         await mpv.stop();
       case 'play':
         await mpv.play();
@@ -241,7 +281,7 @@ class _MediaKitBackend extends PlayerBackend {
 
   @override
   Future<void> dispose() async {
-    _disposed = true;
+    _tracks.invalidate();
     for (final sub in _events) {
       sub.cancel();
     }

@@ -9,6 +9,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 bool isDesktop = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
 /// Android keeps Media3; iOS links media_kit_libs_ios_video, not a desktop binary.
+bool get supportsExternalPlayer => Platform.isAndroid;
+bool get usesMediaKit =>
+    videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit;
+
 enum VideoBackend { exoPlayer, mediaKit }
 
 VideoBackend videoBackendFor(String os) => switch (os) {

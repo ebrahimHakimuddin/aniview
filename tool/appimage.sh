@@ -5,8 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 name=AniView out=AniView-x86_64.AppImage
 if [ -n "${ANIVIEW_BETA:-}" ]; then name="AniView Beta" out=AniView-Beta-x86_64.AppImage; fi
+out="$PWD/$out"
 bundle=build/linux/x64/release/bundle
-app=build/AppDir
+app="$PWD/build/AppDir"
 rm -rf "$app" && mkdir -p "$app/usr/bin" "$app/usr/share/applications"
 cp -r "$bundle"/. "$app/usr/bin/"
 cat > "$app/usr/share/applications/aniview.desktop" <<D

@@ -30,6 +30,24 @@ subprocess.run([
     "-hls_list_size", "0", "-hls_playlist_type", "vod",
     str(root / "index.m3u8"),
 ], check=True)
+# Separate audio rendition and real decoded sizes for quality-switch verification.
+subprocess.run([
+    "ffmpeg", "-y", "-loglevel", "error", "-i", str(root / "sample.mp4"),
+    "-map", "0:a:0", "-c:a", "copy", "-hls_time", "2", "-hls_list_size", "0",
+    "-hls_playlist_type", "vod", str(root / "audio.m3u8"),
+], check=True)
+master = ['#EXTM3U', '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Japanese",LANGUAGE="ja",DEFAULT=YES,AUTOSELECT=YES,URI="audio.m3u8"']
+for height in [360, 720, 1080]:
+    width = height * 16 // 9
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+        f"testsrc2=size={width}x{height}:rate=10", "-t", "20", "-an",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-g", "20", "-hls_time", "2", "-hls_list_size", "0", "-hls_playlist_type", "vod",
+        str(root / f"video-{height}.m3u8"),
+    ], check=True)
+    master += [f'#EXT-X-STREAM-INF:BANDWIDTH={height * 4000},RESOLUTION={width}x{height},AUDIO="audio"', f'video-{height}.m3u8']
+(root / "master.m3u8").write_text("\n".join(master) + "\n")
 (root / "en.vtt").write_text(
     "WEBVTT\n\n00:00:00.000 --> 00:00:20.000\nAniView subtitle smoke test\n"
 )

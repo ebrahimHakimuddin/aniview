@@ -69,7 +69,7 @@ itself uses AniView's existing artwork.
   without sound. Optional subtitle downloads may be unavailable if their source fails.
 - Android APK extensions, APK updates, external Android players, gallery export, Android document-tree
   storage, TV layout/remote controls and background notification settings are unavailable on iOS.
-  Their controls are hidden or guarded. The built-in Dart streaming-source adapters remain available.
+  External-player actions are hidden in both phone and desktop controls; the other controls are hidden or guarded. The built-in Dart streaming-source adapters remain available.
   The in-app recent-episode inbox remains available; it is separate from Android background jobs.
 
 ## Build a re-signable IPA

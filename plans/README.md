@@ -86,3 +86,10 @@ Opened and confirmed in the code (see `file:line`); waiting for the maintainer t
 Audit was a direct sweep at standard depth: security surfaces (tokens, on-device servers, installer, manifest), the extension host,
 tracker/history persistence, and the new uncommitted features. Not read in depth: `lib/player.dart` internals, `lib/downloads.dart`,
 `lib/social.dart`, `ExoPlayers.kt`, `EpisodeJob.kt`, `DownloadService.kt`, dependency versions (no `pub outdated` run).
+
+## Platform parity audit · 2026-10-27
+
+See [the platform parity report](platform-parity-audit-2026-10-27.md) for the
+Android phone/TV, iOS, Linux, macOS and Windows matrix, nine prioritized findings,
+intentional limitations and validation gaps. Audit complete; fixes and detailed
+executor-plan selection are pending. Existing plans 001–004 are unchanged.

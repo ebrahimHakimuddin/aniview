@@ -16,7 +16,7 @@ import 'settings.dart';
 
 export 'net.dart';
 
-/// The supported anime streaming sites from everythingmoe's ranking at build time, in rank order: loaded once, and loaded
+/// Built-in sites in preferred order (see [topSources]), loaded once and loaded
 /// afresh on the next ask after a failed load.
 class Sites {
   static Future<List<Source>>? _current;
@@ -134,6 +134,7 @@ class VideoStream {
     this.skips = const [],
     this._hls = false,
     this.key,
+    this.audioLanguage,
   });
   final String label, url;
   final Map<String, String> headers;
@@ -145,6 +146,9 @@ class VideoStream {
   /// The AES-128 key the segments open with, when the site's own player works it out rather than fetching it.
   final Uint8List? key;
 
+  /// Preferred HLS audio rendition, when a multilingual master has the wrong default.
+  final String? audioLanguage;
+
   /// The same stream, known to be an HLS playlist though its address doesn't say.
   VideoStream get asPlaylist => VideoStream(
     label,
@@ -155,6 +159,7 @@ class VideoStream {
     skips: skips,
     hls: true,
     key: key,
+    audioLanguage: audioLanguage,
   );
 
   bool get isLocal => !url.startsWith('http'); // a downloaded episode on disk
@@ -243,18 +248,31 @@ Future<void> clearMatches() async {
   }
 }
 
-/// everythingmoe's ranking, fetched when the app is built by tool/top_sites.dart.
-Future<List<Source>> topSources() async => [
-  for (final [name, origin] in _topSites.map((s) => s.split('|')))
-    // ponytail: unknown sites are skipped; add an adapter here when the ranking brings in a new one
-    ?switch (Uri.parse(origin).host) {
-      final h when h.contains('anikoto') => Anikoto(name, origin),
-      final h when h.contains('animepahe') => AnimePahe(name, origin),
-      'ani.pm' => AniPm(name, origin),
-      final h when h.contains('uniquestream') => AnimeStream(name, origin),
-      _ => null,
-    },
-];
+/// Supported ranked sites, followed by AnimeStream when absent from the ranking.
+/// animepahe remains available for saved episodes and manual use, marked unstable.
+Future<List<Source>> topSources() async => sourcesFromRanking(_topSites);
+
+@visibleForTesting
+List<Source> sourcesFromRanking(Iterable<String> ranking) {
+  final sites = <Source>[
+    for (final [name, origin] in ranking.map((s) => s.split('|')))
+      ?switch (Uri.parse(origin).host) {
+        final h when h.contains('anikoto') => Anikoto(name, origin),
+        final h when h.contains('animepahe') => AnimePahe(name, origin),
+        'ani.pm' => AniPm(name, origin),
+        'kaa.lt' || 'kaa.to' => KickAssAnime(name, 'https://kaa.lt'),
+        final h when h.contains('uniquestream') => AnimeStream(name, origin),
+        _ => null,
+      },
+  ];
+  if (!sites.any((source) => source is AnimeStream)) {
+    sites.add(AnimeStream('AnimeStream', 'https://anime.uniquestream.net'));
+  }
+  return [
+    ...sites.where((source) => source is! AnimePahe),
+    ...sites.whereType<AnimePahe>(),
+  ];
+}
 
 Iterable<String> _searchTitles(Map media) =>
     {media['title']['romaji'], media['title']['english']}.whereType<String>();
@@ -354,6 +372,169 @@ Map decodeMegaplaySource(String enc) {
     Duration(seconds: (json['start'] as num).toInt()),
     Duration(seconds: (json['end'] as num).toInt()),
   );
+}
+
+/// KickAssAnime's catalogue and current VidStreaming (Astro) player.
+class KickAssAnime extends Source {
+  KickAssAnime(super.name, super.base, {this.net = const HttpNet()});
+
+  final Net net;
+  Map<String, String> get _headers => {
+    'Referer': '$base/',
+    'User-Agent': userAgent,
+  };
+
+  Future<List<dynamic>> _search(String query) async {
+    return jsonDecode(
+      await postJson('$base/api/search', {'query': query}, headers: _headers),
+    ) as List;
+  }
+
+  @override
+  Future<List<SearchResult>> search(String query) async => [
+    for (final item in await _search(query))
+      SearchResult(
+        item['slug'],
+        item['title_en'] ?? item['title'],
+        info: _info([item['year'], item['type']]),
+      ),
+  ];
+
+  @override
+  Future<String?> match(Map media) async {
+    String key(String title) =>
+        title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    final titles = _searchTitles(media).toList();
+    final keys = titles.map(key).toSet();
+    for (final title in titles) {
+      final matches = (await _search(title)).where(
+        (item) => [
+          item['title'],
+          item['title_en'],
+        ].whereType<String>().any((t) => keys.contains(key(t))),
+      );
+      // Never guess between remakes or seasons sharing a title.
+      if (matches.length == 1) return matches.single['slug'] as String;
+    }
+    return null;
+  }
+
+  Future<List<Episode>> _episodes(String id, String language) async {
+    Future<Map> page(int number) async => jsonDecode(
+      await net.text(
+        '$base/api/show/$id/episodes?lang=$language&page=$number',
+        headers: _headers,
+      ),
+    ) as Map;
+    final first = await page(1);
+    final rows = <dynamic>[...?first['result']];
+    for (final p in first['pages'] as List? ?? []) {
+      if (p['number'] != 1) {
+        rows.addAll((await page(p['number']))['result'] as List);
+      }
+    }
+    return [
+      for (final row in rows)
+        Episode(
+          row['episode_number'],
+          ref: {
+            'show': id,
+            'episode': 'ep-${row['episode_string']}-${row['slug']}',
+            'language': language,
+            'number': row['episode_number'],
+          },
+        ),
+    ]..sort((a, b) => a.number.compareTo(b.number));
+  }
+
+  @override
+  Future<List<Episode>> episodesOf(String id) => _episodes(id, 'ja-JP');
+
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    var ref = episode.ref as Map;
+    final language = dub ? 'en-US' : 'ja-JP';
+    if (ref['language'] != language) {
+      final translated = (await _episodes(
+        ref['show'],
+        language,
+      )).where((e) => (e.ref as Map)['number'] == ref['number']).firstOrNull;
+      if (translated == null) return [];
+      ref = translated.ref as Map;
+    }
+    final detail = jsonDecode(
+      await net.text(
+        '$base/api/show/${ref['show']}/episode/${ref['episode']}',
+        headers: _headers,
+      ),
+    );
+    if (detail['language'] != language) return [];
+    final streams = <VideoStream>[];
+    for (final server in detail['servers'] as List? ?? []) {
+      try {
+        final embed = Uri.parse(base).resolve(server['src'] as String);
+        final html = await net.text('$embed', headers: _headers);
+        for (final island in RegExp(
+          r'<astro-island\b[^>]*>',
+        ).allMatches(html)) {
+          final props = RegExp(r'props="([^"]*)"').firstMatch(island[0]!);
+          if (props == null) continue;
+          final data = _astroObject(jsonDecode(_decodeHtml(props[1]!)) as Map);
+          if (data['manifest'] case final String manifest) {
+            final url = embed.resolve(manifest);
+            if (url.scheme != 'https' && url.scheme != 'http') continue;
+            streams.add(
+              VideoStream(
+                server['name'] as String? ?? 'VidStreaming',
+                '$url',
+                {
+                  'Referer': '${embed.origin}/',
+                  'Origin': embed.origin,
+                  'User-Agent': userAgent,
+                },
+                subtitles: [
+                  for (final sub in data['subtitles'] as List? ?? [])
+                    if (sub is Map && sub['src'] is String)
+                      Subtitle(
+                        sub['name'] as String? ??
+                            sub['language'] as String? ??
+                            'Subtitle',
+                        '${embed.resolve(sub['src'])}',
+                      ),
+                ],
+                hls: true,
+                audioLanguage: dub ? 'eng' : 'jpn',
+              ),
+            );
+          }
+        }
+      } on HttpException {
+        // Another server can still work.
+      } on FormatException {
+        // Older/unsupported player pages are not playable sources.
+      }
+    }
+    return streams;
+  }
+
+  static Map<String, dynamic> _astroObject(Map value) => {
+    for (final entry in value.entries)
+      entry.key as String: _astroValue(entry.value),
+  };
+
+  static dynamic _astroValue(dynamic value) {
+    if (value is! List || value.isEmpty) return null;
+    final payload = value.length > 1 ? value[1] : null;
+    return switch (value.first) {
+      0 => payload is Map ? _astroObject(payload) : payload,
+      1 => (payload as List).map(_astroValue).toList(),
+      _ => null,
+    };
+  }
 }
 
 class Anikoto extends Source {
@@ -616,6 +797,46 @@ class AnimeStream extends Source {
 
   final Net net;
 
+  Future<Uint8List?> _playlistKey(String playlist, String mediaId) async {
+    final headers = {'Referer': '$base/', 'User-Agent': userAgent};
+    var uri = Uri.parse(playlist);
+    for (var depth = 0; depth < 4; depth++) {
+      final body = await net.text('$uri', headers: headers);
+      final key = RegExp(r'#EXT-X-KEY:.*URI="([^"]+)"').firstMatch(body);
+      if (key != null) {
+        final keyUri = uri.resolve(key[1]!);
+        if (!keyUri.path.endsWith('/key.bin')) return null;
+        final wrapped = await net.text(
+          '$keyUri',
+          headers: {...headers, 'x-am-media-id': mediaId},
+        );
+        // The site's player unwraps key.bin using SHA-256-derived AES key/IV.
+        Uint8List digest(String prefix) => SHA256Digest()
+            .process(Uint8List.fromList(utf8.encode('$prefix$mediaId')))
+            .sublist(0, 16);
+        final cipher =
+            PaddedBlockCipherImpl(PKCS7Padding(), CBCBlockCipher(AESEngine()))
+              ..init(
+                false,
+                PaddedBlockCipherParameters(
+                  ParametersWithIV(KeyParameter(digest('key')), digest('iv')),
+                  null,
+                ),
+              );
+        final result = cipher.process(base64.decode(wrapped.trim()));
+        if (result.length != 16) {
+          throw const FormatException('Invalid AnimeStream HLS key length');
+        }
+        return result;
+      }
+      final variant = RegExp(r'#EXT-X-STREAM-INF:[^\r\n]*[\r\n]+([^\r\n]+)')
+          .firstMatch(body);
+      if (variant == null) return null;
+      uri = uri.resolve(variant[1]!.trim());
+    }
+    throw const FormatException('AnimeStream playlist nesting exceeds limit');
+  }
+
   Future<dynamic> _api(String path) async =>
       jsonDecode(await net.text('$base/api/v1/$path'));
 
@@ -717,10 +938,7 @@ class AnimeStream extends Source {
         'AnimeStream',
         hls['playlist'],
         {'Referer': '$base/', 'User-Agent': userAgent},
-        key: Uint8List.fromList([
-          for (var i = 0; i + 1 < id.length; i += 2)
-            int.parse(id.substring(i, i + 2), radix: 16),
-        ]),
+        key: await _playlistKey(hls['playlist'], id),
         subtitles: [
           for (final s in hls['subtitles'] as List? ?? const [])
             Subtitle(_languages[s['language']] ?? '${s['language']}', s['url']),
@@ -737,6 +955,9 @@ class AnimePahe extends Source {
     : cleared = cleared ?? CloudflareNet();
 
   final Net cleared, net;
+
+  @override
+  String get label => '$name · Unstable';
 
   Future<dynamic> _api(String query) async =>
       jsonDecode(await cleared.text('$base/api?$query'));

@@ -13,20 +13,20 @@ class Analytics {
   static const siteId = String.fromEnvironment('RYBBIT_SITE_ID');
   static const _host = String.fromEnvironment(
     'RYBBIT_HOST',
-    defaultValue: 'https://app.rybbit.io',
+    defaultValue: 'https://rybbit.clouderp.co.tz',
   );
 
   static bool get available => siteId.isNotEmpty;
 
   static String _path = '/';
-  static Future<String>? _userAgent;
+  static String? _userAgent;
 
   static void screen(String path, {String? title}) {
     _path = path;
     _send({'type': 'pageview', 'pathname': path, 'page_title': ?title});
   }
 
-  static void event(
+  static Future<bool> event(
     String name, [
     Map<String, Object?> properties = const {},
   ]) => _send({
@@ -36,20 +36,23 @@ class Analytics {
     'properties': jsonEncode(properties),
   });
 
-  static Future<void> _send(Map<String, Object?> event) async {
-    if (!available || !Settings.analytics) return;
+  static Future<bool> _send(Map<String, Object?> event) async {
+    if (!available || !Settings.analytics) return false;
     try {
       final view = PlatformDispatcher.instance.implicitView;
       final size = view == null
           ? null
           : view.physicalSize / view.devicePixelRatio;
-      await http
+      final response = await http
           .post(
             Uri.parse('$_host/api/track'),
             headers: {
               'Content-Type': 'application/json',
               // Rybbit reads the OS and device from the request's user agent.
-              'User-Agent': await (_userAgent ??= _agent()),
+              'User-Agent': _userAgent ??= await _agent().timeout(
+                const Duration(seconds: 2),
+                onTimeout: () => 'AniView',
+              ),
             },
             body: jsonEncode({
               'site_id': siteId,
@@ -64,7 +67,12 @@ class Analytics {
             }),
           )
           .timeout(const Duration(seconds: 10));
-    } catch (_) {} // analytics must never get in the way of the app
+      if (response.statusCode < 200 || response.statusCode >= 300) return false;
+      final body = jsonDecode(response.body);
+      return body is Map<String, dynamic> && body['success'] == true;
+    } catch (_) {
+      return false; // analytics must never get in the way of the app
+    }
   }
 
   static Future<String> _agent() async {

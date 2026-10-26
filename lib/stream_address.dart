@@ -26,7 +26,10 @@ sealed class DownloadLocation {
   static (DownloadLocation, String)? parse(String url) {
     if (url.startsWith('saf://')) {
       final [tree, id, file, ...] = url.substring('saf://'.length).split('/');
-      return (DocumentFolder(Uri.decodeComponent(tree), id), file);
+      return (
+        DocumentFolder(Uri.decodeComponent(tree), Uri.decodeComponent(id)),
+        file,
+      );
     }
     if (url.startsWith('http')) return null;
     return (LocalFolder(File(url).parent.path), url.split('/').last);
@@ -47,7 +50,8 @@ class DocumentFolder extends DownloadLocation {
   final String tree, id;
 
   @override
-  String urlOf(String file) => 'saf://${Uri.encodeComponent(tree)}/$id/$file';
+  String urlOf(String file) =>
+      'saf://${Uri.encodeComponent(tree)}/${Uri.encodeComponent(id)}/$file';
 }
 
 /// What a player is given to open a stream.
@@ -77,6 +81,7 @@ abstract interface class Relay {
     Map<String, String> headers,
     String ext, {
     Uint8List? key,
+    String? audioLanguage,
   });
 
   /// [file] in the app-storage folder [dir].
@@ -100,7 +105,14 @@ class _HlsRelay implements Relay {
     Map<String, String> headers,
     String ext, {
     Uint8List? key,
-  }) => HlsProxy.url(url, headers, ext: ext, key: key);
+    String? audioLanguage,
+  }) => HlsProxy.url(
+    url,
+    headers,
+    ext: ext,
+    key: key,
+    audioLanguage: audioLanguage,
+  );
 
   @override
   Future<String> localFile(String dir, String file) =>
@@ -147,7 +159,12 @@ class StreamAddress {
     required bool external,
   }) async => PlayableAddress(
     stream.isHls || stream.isLocal
-        ? await _route(stream, stream.url, external)
+        ? await _route(
+            stream,
+            stream.url,
+            external,
+            ext: stream.isHls ? 'm3u8' : null,
+          )
         : stream.url,
     headers: stream.isHls || stream.isLocal ? null : stream.headers,
     hls: stream.isHls,
@@ -193,6 +210,7 @@ class StreamAddress {
       stream.headers,
       ext ?? _extOf(url),
       key: url == stream.url ? stream.key : null,
+      audioLanguage: url == stream.url ? stream.audioLanguage : null,
     ),
   };
 }

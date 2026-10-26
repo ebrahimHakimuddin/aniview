@@ -65,6 +65,29 @@ class HttpNet implements Net {
       (await _get(url, headers)).bodyBytes;
 }
 
+Future<String> postJson(
+  String url,
+  Object body, {
+  Map<String, String>? headers,
+}) async {
+  final uri = Uri.parse(url);
+  final response = await httpClient
+      .post(
+        uri,
+        headers: {
+          'User-Agent': userAgent,
+          ...?headers,
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      )
+      .timeout(const Duration(seconds: 30));
+  if (response.statusCode != 200) {
+    throw HttpException('HTTP ${response.statusCode}', uri: uri);
+  }
+  return response.body;
+}
+
 Future<String> fetch(String url, {Map<String, String>? headers}) =>
     const HttpNet().text(url, headers: headers);
 

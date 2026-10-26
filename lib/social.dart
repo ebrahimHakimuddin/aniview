@@ -79,8 +79,8 @@ Future<void> openThread(
   );
 }
 
-/// "5m", "3h", "2d", "4mo" or "1y" since a unix time (seconds).
-String since(int? at) {
+/// "5m", "3h", "2d", "4mo" or "1y" since a unix time.
+String _since(int? at) {
   if (at == null) return '';
   final d = DateTime.now().difference(
     DateTime.fromMillisecondsSinceEpoch(at * 1000),
@@ -333,7 +333,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 ),
               ),
               Text(
-                ' · ${since(c['createdAt'] as int?)}',
+                ' · ${_since(c['createdAt'] as int?)}',
                 style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ],
@@ -456,8 +456,7 @@ class CommentText extends StatefulWidget {
 class _CommentTextState extends State<CommentText> {
   bool revealed = false;
 
-  // AniList's ~!spoiler!~, and Dantotsu's ||spoiler|| too.
-  static final _spoiler = RegExp(r'~!([\s\S]*?)!~|\|\|([\s\S]*?)\|\|');
+  static final _spoiler = RegExp(r'~!([\s\S]*?)!~');
 
   /// [source] with its markup reduced to plain text.
   static String clean(String source) => source
@@ -490,7 +489,7 @@ class _CommentTextState extends State<CommentText> {
     var at = 0;
     for (final m in _spoiler.allMatches(source)) {
       spans.add(TextSpan(text: clean(source.substring(at, m.start))));
-      final hidden = clean(m[1] ?? m[2]!);
+      final hidden = clean(m[1]!);
       spans.add(
         TextSpan(
           text: revealed ? hidden : ' Spoiler · tap to show ',
@@ -572,7 +571,7 @@ class _DiscussionListState extends State<DiscussionList> {
             ),
             title: Text(threadTitle(t), maxLines: 2),
             subtitle: Text(
-              '${t['replyCount'] ?? 0} replies · active ${since(t['repliedAt'] as int?)} ago',
+              '${t['replyCount'] ?? 0} replies · active ${_since(t['repliedAt'] as int?)} ago',
               style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
             onTap: () => openThread(context, t, spoilersPast: widget.progress),
@@ -657,7 +656,7 @@ class _FriendsListState extends State<FriendsList> {
                 [
                   ListStatus.labels[status] ?? 'On their list',
                   if (progress > 0 && status != 'COMPLETED') 'EP $progress',
-                  since(e['updatedAt'] as int?),
+                  _since(e['updatedAt'] as int?),
                 ].where((s) => s.isNotEmpty).join(' · '),
                 style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),

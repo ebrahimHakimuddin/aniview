@@ -1,7 +1,7 @@
 name: aniview
 description: "AniView: watch and track anime with AniList or MyAnimeList."
 publish_to: 'none'
-version: 2.6.0-beta.2+29
+version: 2.6.0-beta.8+35
 
 environment:
   sdk: ^3.13.3
@@ -21,6 +21,7 @@ dependencies:
   media_kit_libs_windows_video: ^1.0.11
   media_kit_video: ^2.0.1
   package_info_plus: ^10.2.2
+  path: ^1.9.1
   path_provider: ^2.1.6
   pointycastle: ^4.0.0
   screen_brightness: ^2.1.11

@@ -13,6 +13,64 @@ import '../tool/top_sites.dart';
 import 'fakes.dart';
 
 void main() {
+  test('AnimeStream unwraps the playlist key for numeric media IDs', () async {
+    final source = AnimeStream(
+      'AnimeStream',
+      'https://source.test',
+      net: FakeNet({
+        '/master.m3u8':
+            '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nvideo/index.m3u8\n',
+        '/video/index.m3u8': '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="../keys/key.bin?token=test"\n',
+        '/keys/key.bin': 'MUxrae99AhQJjv9+NbrK8R1c5Snz0nslaSTCmHxpQow=\n',
+        '/media/dash/ja-JP': jsonEncode({
+          'media_id': '82716332',
+          'hls': {
+            'locale': 'ja-JP',
+            'playlist': 'https://cdn.test/master.m3u8',
+            'original': true,
+          },
+        }),
+      }),
+    );
+    final stream = (await source.streams(
+      {},
+      Episode(2, ref: 'nf_82716332'),
+      dub: false,
+    )).single;
+    expect(stream.key, List.generate(16, (i) => i));
+  });
+
+  test(
+    'adds AnimeStream and moves unstable animepahe after working sources',
+    () {
+      final sites = sourcesFromRanking([
+        'animepahe|https://animepahe.pw',
+        'Anikoto|https://anikototv.to',
+        'ani.pm|https://ani.pm',
+        'Unsupported|https://unknown.test',
+      ]);
+      expect(sites.map((s) => s.name), [
+        'Anikoto',
+        'ani.pm',
+        'AnimeStream',
+        'animepahe',
+      ]);
+      expect(sites.last.label, 'animepahe · Unstable');
+      expect(sites.last.name, 'animepahe');
+      expect(sites[2].base, 'https://anime.uniquestream.net');
+    },
+  );
+
+  test('keeps a ranked AnimeStream without adding a duplicate', () {
+    final sites = sourcesFromRanking([
+      'AnimeStream|https://anime.uniquestream.net',
+      'ani.pm|https://ani.pm',
+    ]);
+    expect(sites.map((s) => s.name), ['AnimeStream', 'ani.pm']);
+    expect(sites.whereType<AnimeStream>(), hasLength(1));
+    expect(sourcesFromRanking([]).single, isA<AnimeStream>());
+  });
+
   test('loads the top sites once, and afresh after a failed load', () async {
     var loads = 0;
     ExtensionHost.current = FakeHost();

@@ -21,7 +21,7 @@ Future<void> detectTv({String layout = 'auto'}) async {
   applyLayout(layout);
 }
 
-/// Picks the layout; a phone in the TV layout stays in landscape, the shape it's made for.
+/// Picks the layout; phone orientation remains portrait outside playback.
 void applyLayout(String layout) {
   isTv = switch (layout) {
     'tv' => !Platform.isIOS,
@@ -33,11 +33,8 @@ void applyLayout(String layout) {
 
 /// The orientations the app allows outside the player.
 void restoreOrientation() => SystemChrome.setPreferredOrientations(
-  isTv && !deviceIsTv
-      ? const [
-          DeviceOrientation.landscapeLeft,
-          DeviceOrientation.landscapeRight,
-        ]
+  !deviceIsTv && (Platform.isAndroid || Platform.isIOS)
+      ? const [DeviceOrientation.portraitUp]
       : const [],
 );
 

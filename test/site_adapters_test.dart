@@ -281,42 +281,50 @@ void main() {
   });
 
   group('AnimeStream', () {
-    test('plays the asked-for audio with the media id as its key', () async {
-      final site = AnimeStream(
-        'AnimeStream',
-        'https://as.test',
-        net: FakeNet({
-          'media/dash/ja-JP': jsonEncode({
-            'media_id': '00ff10',
-            'hls': {
-              'locale': 'ja-JP',
-              'playlist': 'https://cdn.test/e/master.m3u8?sign=x',
-              'subtitles': [
-                {'language': 'en-US', 'url': 'https://subs.test/en-US.vtt'},
-              ],
-            },
+    test(
+      'plays the asked-for audio and preserves ordinary playlist keys',
+      () async {
+        final site = AnimeStream(
+          'AnimeStream',
+          'https://as.test',
+          net: FakeNet({
+            '/e/master.m3u8':
+                '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="ordinary.key"\n',
+            'media/dash/ja-JP': jsonEncode({
+              'media_id': '00ff10',
+              'hls': {
+                'locale': 'ja-JP',
+                'playlist': 'https://cdn.test/e/master.m3u8?sign=x',
+                'subtitles': [
+                  {'language': 'en-US', 'url': 'https://subs.test/en-US.vtt'},
+                ],
+              },
+            }),
+            // Asked for the dub of an episode without one, it answers another audio.
+            'media/dash/en-US': jsonEncode({
+              'media_id': 'aa',
+              'hls': {
+                'locale': 'zh-CN',
+                'playlist': 'https://cdn.test/zh.m3u8',
+              },
+            }),
           }),
-          // Asked for the dub of an episode without one, it answers another audio.
-          'media/dash/en-US': jsonEncode({
-            'media_id': 'aa',
-            'hls': {'locale': 'zh-CN', 'playlist': 'https://cdn.test/zh.m3u8'},
-          }),
-        }),
-      );
-      final [stream] = await site.streams(
-        {},
-        const Episode(1, ref: 'ep1'),
-        dub: false,
-      );
-      expect(stream.url, 'https://cdn.test/e/master.m3u8?sign=x');
-      expect(stream.key, [0x00, 0xff, 0x10]);
-      expect(stream.headers['Referer'], 'https://as.test/');
-      expect([for (final s in stream.subtitles) s.label], ['English']);
-      expect(
-        await site.streams({}, const Episode(1, ref: 'ep1'), dub: true),
-        isEmpty,
-      );
-    });
+        );
+        final [stream] = await site.streams(
+          {},
+          const Episode(1, ref: 'ep1'),
+          dub: false,
+        );
+        expect(stream.url, 'https://cdn.test/e/master.m3u8?sign=x');
+        expect(stream.key, isNull);
+        expect(stream.headers['Referer'], 'https://as.test/');
+        expect([for (final s in stream.subtitles) s.label], ['English']);
+        expect(
+          await site.streams({}, const Episode(1, ref: 'ep1'), dub: true),
+          isEmpty,
+        );
+      },
+    );
 
     test(
       'matches the season by MAL id, else season 1 of the same title',

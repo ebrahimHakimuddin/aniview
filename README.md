@@ -35,9 +35,14 @@ content. Any takedown or copyright concerns should be addressed to the site that
 4. `fvm flutter run --dart-define=TOP_SITES="$(fvm dart tool/top_sites.dart)" --dart-define=ANILIST_CLIENT_ID=<client id> --dart-define=MAL_CLIENT_ID=<client id> --dart-define=RYBBIT_SITE_ID=<site id>`
 
 `TOP_SITES` is everythingmoe's ranking, read when the app is built; a rebuild picks up a new ranking.
+KickAssAnime (`kaa.lt`, including the old `kaa.to` ranking entry) supports its current VidStreaming player,
+Japanese/English audio selection, and soft subtitles. Downloads of its separate-audio HLS streams are not yet supported.
+AnimeStream is also included when absent from that ranking. animepahe is marked **Unstable** and listed last
+among built-in sources because its verification frequently blocks playback; it remains selectable for existing history.
 
 Any of these can be left out: without AniList's client id there's no tracking, without MyAnimeList's no fallback,
-without a Rybbit site id no analytics. A self-hosted Rybbit is set with `--dart-define=RYBBIT_HOST=https://…`.
+without a Rybbit site id no analytics. Analytics defaults to `https://rybbit.clouderp.co.tz`;
+override it with `--dart-define=RYBBIT_HOST=https://…` when using another Rybbit instance.
 
 ## Release
 
@@ -161,3 +166,19 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 - Episode titles, synopses and thumbnails: [ani.zip](https://api.ani.zip)
 - Intro/outro/recap skip times: [AniSkip](https://api.aniskip.com), falling back to the site's own times
 - Some hosts disguise segments as PNGs; a localhost proxy (`lib/hls_proxy.dart`) strips the prefix for FFmpeg
+
+### Subscription survey
+
+The US$1/month survey appears after the version overview, once per installation. Submit is its only action;
+there is no “Not now” button. Closing it with system Back leaves it
+available in Settings → About → AniView’s future; a confirmed answer disables further submissions. It only
+appears when analytics is configured and enabled. Each choice is a separate Rybbit event, directly selectable
+in the dashboard's event-name filter: `subscription_poll_stable_pay`, `subscription_poll_stable_donate`, or
+`subscription_poll_stable_dealbreaker`. Test builds use `beta` instead of `stable` in those names. The properties
+`poll_id=subscription_1usd_v1`, `answer=pay|donate|dealbreaker`, and `channel=beta|stable` are also retained.
+`subscription_poll_beta_shown` / `subscription_poll_stable_shown` count openings, including manual reopenings.
+Beta 4 resets the beta-only local survey state so testers can submit to the new event names.
+
+An answer is saved as completed only after Rybbit returns a successful acknowledgement. Failed requests can
+be retried. This is an informal poll: reinstalling or retrying after a lost acknowledgement can produce
+duplicate events; compare unique installations as well as event counts.

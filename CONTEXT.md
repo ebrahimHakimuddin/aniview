@@ -31,7 +31,7 @@ resume point when the stream ignored it, shows the picked subtitles, keeps the a
 in tests. iOS links `media_kit_libs_ios_video` XCFrameworks and uses the native iOS texture renderer. Its downloads
 stay in sandboxed storage as HLS or direct video files, with relative names resolved against the current container.
 
-**Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, followed by the
+**Sites** (`lib/sources.dart`): the supported streaming sites from everythingmoe's ranking, in rank order, with AnimeStream included as a fallback and unstable animepahe moved last, followed by the
 sites of any installed Aniyomi **extensions** (`lib/extensions.dart`, run by `Extensions.kt`). A **source** is one site's
 adapter (Anikoto, animepahe, ani.pm, AnimeStream, an extension's `ExtensionSource`, or the user's own
 Jellyfin server, `lib/jellyfin.dart`, listed first once connected in Settings); history and downloads remember it by name.
@@ -71,8 +71,3 @@ pure rules on what they hold: a schedule day, the home list rows, and what a rem
 **Filler** (`lib/filler.dart`, `Filler`): which episodes are filler or mixed, from Anime Filler List, matched by the show's
 English or romaji title (its own name before another show's bracketed one). Marked on the episode list; with
 **Skip filler** on, the up next episode, the main action and the player's next episode pass over filler.
-
-**Comments** (`lib/dantotsu.dart`, `lib/comments.dart`): Dantotsu's comments, shared across anime apps and tagged by episode,
-read and posted with a session made from an AniList sign-in (reading needs one too): the tracker's when it's AniList, else
-one made on the comments screen for comments alone, which leaves the tracker as it is. Each episode's comments
-button opens them; posting waits for its 10 rules to be agreed to.

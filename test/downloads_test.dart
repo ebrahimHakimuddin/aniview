@@ -9,6 +9,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('gallery export chooses exactly one destination', () {
+    expect(downloadExport(false, ''), DownloadExport.private);
+    expect(downloadExport(false, 'chosen'), DownloadExport.private);
+    expect(downloadExport(true, ''), DownloadExport.gallery);
+    expect(downloadExport(true, 'chosen'), DownloadExport.customFolder);
+  });
+  test('named export folders survive restart and document address routing', () {
+    final download = Download(
+      media: {
+        'id': 7,
+        'title': {'romaji': 'Frieren: Beyond'},
+      },
+      source: 'Fixture',
+      number: 2,
+      dub: false,
+      ref: '2',
+    );
+    download.storagePath = download.exportFolder;
+    download.storageUri = 'content://tree';
+    final restored = Download.fromJson(download.toJson());
+    expect(restored.relativeFolder, 'Frieren Beyond/Episode 2-sub');
+    final (location, file) = DownloadLocation.parse(
+      Downloads.instance.streamFor(restored).url,
+    )!;
+    expect((location as DocumentFolder).id, restored.relativeFolder);
+    expect(file, 'index.m3u8');
+    expect(
+      Download.fromJson({...download.toJson(), 'storagePath': null})
+          .relativeFolder,
+      download.id,
+    );
+  });
+
   test(
     'sandbox downloads survive restart with a different container path',
     () async {

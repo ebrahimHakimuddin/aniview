@@ -75,7 +75,9 @@ extension _DeskPlayer on _PlayerScreenState {
                     ),
                     IconButton(
                       tooltip: 'Next episode  (N)',
-                      onPressed: hasNext ? () => _load(index + 1) : null,
+                      onPressed: hasNext
+                          ? () => _load(session.nextIndex)
+                          : null,
                       icon: const Icon(Icons.skip_next_rounded),
                     ),
                     const SizedBox(width: 8),
@@ -86,14 +88,15 @@ extension _DeskPlayer on _PlayerScreenState {
                     if (_hasSubtitles) _subtitleMenu(),
                     if (_hasAudios) _audioMenu(),
                     if (_canSwitchServer) _serverMenu(),
-                    if (_qualities.length > 1) _qualityMenu(),
+                    if (_qualities.isNotEmpty) _qualityMenu(),
                     _speedMenu(),
                     _fitButton(),
-                    IconButton(
-                      tooltip: 'Open in another app',
-                      icon: const Icon(Icons.open_in_new_rounded),
-                      onPressed: current == null ? null : _openExternal,
-                    ),
+                    if (supportsExternalPlayer)
+                      IconButton(
+                        tooltip: 'Open in another app',
+                        icon: const Icon(Icons.open_in_new_rounded),
+                        onPressed: current == null ? null : _openExternal,
+                      ),
                     IconButton(
                       tooltip: 'Fullscreen  (F)',
                       icon: const Icon(Icons.fullscreen_rounded),

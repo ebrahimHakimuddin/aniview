@@ -90,7 +90,7 @@ class ShowEpisodes {
       site is Jellyfin ? 'Download' : 'Download ${dub ? 'dub' : 'sub'}',
     EpisodeAction.retryDownload => 'Retry download',
     EpisodeAction.deleteDownload => 'Delete download',
-    EpisodeAction.discuss => 'Comments',
+    EpisodeAction.discuss => 'Discussion',
     EpisodeAction.select => 'Select',
   };
 }

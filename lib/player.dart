@@ -13,6 +13,7 @@ import 'cloudflare.dart';
 import 'downloads.dart';
 import 'exo.dart';
 import 'history.dart';
+import 'hls_proxy.dart';
 import 'filler.dart';
 import 'jellyfin.dart';
 import 'metadata.dart';
@@ -42,8 +43,10 @@ class PlayerScreen extends StatefulWidget {
     required this.index,
     required this.dub,
     this.sourceName,
+    this.backend,
   });
 
+  final PlayerBackend? backend;
   final Map media;
   final Source?
   source; // null when playing downloads while the site is unreachable
@@ -61,7 +64,7 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
-  final player = ExoPlayer();
+  late final player = ExoPlayer(widget.backend);
   final _scaffold = GlobalKey<ScaffoldState>();
   // The site playing: the one the page chose, until "Try another site" moves it.
   late Source? _source = widget.source;
@@ -78,14 +81,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
     media: widget.media,
     dub: widget.dub,
     site: _sourceName,
-    fetch: switch (_source) {
-      final source? => (e) => SiteListing(
-        source,
+    downloaded: (episode) {
+      final download = Downloads.instance.toPlay(
         widget.media,
-        onChallenge: uiChallenge(context),
-      ).streams(e, dub: widget.dub),
-      null => null,
+        episode.number,
+        dub: widget.dub,
+        online: _source != null,
+      );
+      return download == null ? null : Downloads.instance.streamFor(download);
     },
+    fetch: _source != null || _siteName != null
+        ? (e) async {
+            final source = _source ?? await Sites.named(_sourceName);
+            if (source == null) {
+              throw StateError(
+                '$_sourceName is unavailable. Try another site.',
+              );
+            }
+            if (!mounted) return <VideoStream>[];
+            final listing = SiteListing(
+              source,
+              widget.media,
+              onChallenge: uiChallenge(context),
+            );
+            // An offline entry may have a stale provider reference. Resolve by episode number.
+            var target = e;
+            if (_source == null) {
+              final listed = await listing.episodes();
+              target =
+                  listed.where((item) => item.number == e.number).firstOrNull ??
+                  (throw StateError(
+                    'Episode ${e.number} is unavailable on ${source.name}',
+                  ));
+            }
+            return listing.streams(target, dub: widget.dub);
+          }
+        : null,
   )..skipped = _filler;
   int? _skipsRequested;
   String subtitle = 'Auto';
@@ -109,6 +140,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// The height picked in the player for this session; 0 for Auto.
   int quality = 0;
+  List<int> _desktopHeights = const [];
+  bool _changingQuality = false;
+  int _playGeneration = 0;
   double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
   // Desktop: the volume before M muted it, the pointer's place over the seek bar (0–1), and always on top.
   double _beforeMute = 1;
@@ -497,7 +531,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         'dub': widget.dub,
         'downloaded': session.fromDownload,
       });
-      if (Platform.isAndroid && Settings.externalPlayer) {
+      if (supportsExternalPlayer && Settings.externalPlayer) {
         final stopped = await _playExternal(streams.first, at: opened.at);
         if (!mounted) return;
         if (stopped == null) {
@@ -546,9 +580,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _play(VideoStream stream, {Duration? at}) async {
+    final generation = ++_playGeneration;
     _startAt = at;
     setState(() => session.playing(stream));
     final address = await StreamAddress.instance.forPlayer(stream);
+    if (!mounted || generation != _playGeneration || current != stream) return;
+    if (usesMediaKit) {
+      final heights = await HlsProxy.configureQuality(
+        address.url,
+        quality == 0 ? Settings.streamQuality : quality,
+      );
+      if (!mounted || generation != _playGeneration || current != stream) {
+        return;
+      }
+      if (quality != 0 && !heights.contains(quality)) {
+        quality = 0;
+        await HlsProxy.configureQuality(address.url, Settings.streamQuality);
+        if (!mounted || generation != _playGeneration || current != stream) {
+          return;
+        }
+      }
+      setState(() => _desktopHeights = heights);
+    }
     final pick = session.subtitleFor(stream);
     final shown = await player.load(
       address.url,
@@ -563,7 +616,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           audio, // the one picked before, when this stream has one named alike
       rate: rate,
     );
-    if (shown == null || !mounted || current != stream) return;
+    if (shown == null ||
+        !mounted ||
+        generation != _playGeneration ||
+        current != stream) {
+      return;
+    }
     // No subtitle file: the stream's own tracks, picked by the subtitle language rather than whatever the file marks.
     final own = shown == 'Auto'
         ? PlaybackSession.embeddedSubtitle(
@@ -578,6 +636,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that
   /// position (zero when the app doesn't report it), or null when no app can play it.
   Future<Duration?> _playExternal(VideoStream stream, {Duration? at}) async {
+    if (!supportsExternalPlayer) return null;
     setState(() => session.current = stream);
     try {
       final address = await StreamAddress.instance.forExternalApp(stream);
@@ -594,8 +653,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _checkWatched(position, duration);
       _saveHistory(position, duration);
       return position;
-    } on PlatformException catch (e) {
-      _hint(e.message ?? 'No video player app', icon: Icons.error_outline);
+    } catch (e) {
+      _hint(
+        e is PlatformException
+            ? e.message ?? 'No video player app'
+            : 'Could not open video app',
+        icon: Icons.error_outline,
+      );
       return null;
     }
   }
@@ -656,8 +720,45 @@ class _PlayerScreenState extends State<PlayerScreen> {
     {0: 'Auto', for (final h in _qualities) h: '${h}p'},
     quality,
     (q) async {
-      if (!mounted) return;
+      if (!mounted || _changingQuality || q == quality) return;
       setState(() => quality = q);
+      if (usesMediaKit && current != null) {
+        _changingQuality = true;
+        final stream = current!;
+        final generation = _playGeneration + 1;
+        final wasPlaying = player.state.playing;
+        final selectedSubtitle = subtitle;
+        try {
+          await _play(stream, at: player.state.position);
+          if (!mounted || current != stream || generation != _playGeneration) {
+            return;
+          }
+          if (selectedSubtitle == 'Off') {
+            await _setSubtitle(SubtitleTrack.off, 'Off');
+          } else if ((current?.subtitles.any(
+                    (s) => s.label == selectedSubtitle,
+                  ) ??
+                  false) &&
+              await player.showSubtitleFile(selectedSubtitle)) {
+            if (mounted) setState(() => subtitle = selectedSubtitle);
+          } else {
+            final track = player.state.subtitles
+                .where((t) => t.name == selectedSubtitle)
+                .firstOrNull;
+            if (track != null) await _setSubtitle(track, selectedSubtitle);
+          }
+          if (!wasPlaying && mounted && generation == _playGeneration) {
+            await player.pause();
+          }
+        } catch (e) {
+          if (mounted && generation == _playGeneration) {
+            setState(() => error = e);
+          }
+        } finally {
+          _changingQuality = false;
+        }
+        return;
+      }
       await player.setQuality(
         q == 0 ? Settings.streamQuality : q,
         exact: q != 0,
@@ -1382,11 +1483,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool get _canSwitchServer => streams.length > 1 && streams.contains(current);
 
-  /// The stream's qualities from 480p up. Auto (0) lets the connection pick, under the Settings cap.
-  List<int> get _qualities => [
-    for (final h in player.state.heights)
-      if (h >= 480) h,
-  ];
+  List<int> get _qualities => usesMediaKit
+      ? _desktopHeights
+      : player.state.heights.where((h) => h >= 480).toList();
 
   String get _qualityLabel => quality == 0 ? 'Auto' : '${quality}p';
 
@@ -1430,9 +1529,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   );
 
   Future<void> _openExternal() async {
-    player.pause();
+    if (!supportsExternalPlayer || current == null) return;
+    final generation = _playGeneration;
+    final wasPlaying = player.state.playing;
+    await player.pause();
     final at = await _playExternal(current!, at: player.state.position);
-    if (at != null && at > Duration.zero) player.seek(at);
+    if (!mounted || generation != _playGeneration) return;
+    if (at != null && at > Duration.zero) await player.seek(at);
+    if (at == null && wasPlaying) await player.play();
   }
 
   bool get _hasSubtitles =>
@@ -1464,11 +1568,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           icon: const Icon(Icons.audiotrack_outlined),
           onPressed: _openAudio,
         ),
-      IconButton(
-        tooltip: 'Open in another app',
-        icon: const Icon(Icons.open_in_new_rounded),
-        onPressed: current == null ? null : _openExternal,
-      ),
+      if (supportsExternalPlayer)
+        IconButton(
+          tooltip: 'Open in another app',
+          icon: const Icon(Icons.open_in_new_rounded),
+          onPressed: current == null ? null : _openExternal,
+        ),
     ];
   }
 
@@ -1782,11 +1887,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
               control(_fitIcon, 'Picture · ${pictureFits[fit]}', _cycleFit),
-              control(
-                Icons.open_in_new_rounded,
-                'Open in another app',
-                current == null ? null : _openExternal,
-              ),
+              if (supportsExternalPlayer)
+                control(
+                  Icons.open_in_new_rounded,
+                  'Open in another app',
+                  current == null ? null : _openExternal,
+                ),
             ],
           ),
         ],

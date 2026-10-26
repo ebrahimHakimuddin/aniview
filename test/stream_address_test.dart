@@ -12,6 +12,7 @@ class FakeRelay implements Relay {
     Map<String, String> headers,
     String ext, {
     Uint8List? key,
+    String? audioLanguage,
   }) async =>
       'relay:$ext:$url:${headers['Referer']}${key == null ? '' : ':key${key.length}'}';
 
@@ -42,6 +43,23 @@ void main() {
 
   VideoStream stream(String url, [List<Subtitle> subtitles = const []]) =>
       VideoStream('s', url, headers, subtitles: subtitles);
+
+  test('extensionless HLS is routed as a playlist for rewriting', () async {
+    final stream = VideoStream(
+      'ani.pm',
+      'https://cdn/object/abc',
+      headers,
+      hls: true,
+    );
+    expect(
+      (await address.forPlayer(stream)).url,
+      'relay:m3u8:https://cdn/object/abc:https://site',
+    );
+    expect(
+      (await address.forExternalApp(stream)).url,
+      'relay:m3u8:https://cdn/object/abc:https://site',
+    );
+  });
 
   // stream, expected for our own player, expected for another app
   final cases = <(String, VideoStream, PlayableAddress, PlayableAddress)>[

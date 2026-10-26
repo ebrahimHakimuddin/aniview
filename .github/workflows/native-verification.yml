@@ -1,0 +1,27 @@
+name: Native verification evidence
+on:
+  workflow_dispatch:
+    inputs:
+      report:
+        description: JSON report with native device evidence for this exact commit (see docs/native-verification.md)
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate native evidence
+        env:
+          REPORT: ${{ inputs.report }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python3 -c 'import os, pathlib; pathlib.Path("report.json").write_text(os.environ["REPORT"])'
+          python3 tool/check_native_verification.py report.json --commit "$EXPECTED_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: native-verification
+          path: report.json

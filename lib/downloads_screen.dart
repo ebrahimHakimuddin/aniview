@@ -50,6 +50,12 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     body: ListenableBuilder(
       listenable: Downloads.instance,
       builder: (context, _) {
+        if (Downloads.instance.storageError != null) {
+          return ErrorState(
+            'Download storage is unavailable. Reconnect your folder, or change it in Settings.',
+            onRetry: Downloads.instance.reconnect,
+          );
+        }
         final items = Downloads.instance.items;
         if (items.isEmpty) {
           return EmptyState(

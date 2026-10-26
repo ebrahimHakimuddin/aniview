@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 
-import 'comments.dart';
 import 'filler.dart';
 import 'jellyfin.dart';
 import 'jellyseerr.dart';
@@ -320,6 +319,65 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// The show's filler and mixed episodes (Anime Filler List), once known.
   Map<num, EpisodeKind> filler = const {};
 
+  String _fillerView = 'Show all';
+  final _revealedFiller = <num>{};
+
+  List<List<Episode>> _visibleEpisodeRows(List<Episode> episodes) {
+    if (_fillerView == 'Show all' ||
+        isTv ||
+        (_fillerView == 'Hide skipped filler' && !Settings.skipFiller)) {
+      return [
+        for (final episode in episodes) [episode],
+      ];
+    }
+    final rows = <List<Episode>>[];
+    for (final episode in episodes) {
+      final collapsed =
+          filler[episode.number] == EpisodeKind.filler &&
+          !_revealedFiller.contains(episode.number);
+      if (collapsed &&
+          rows.isNotEmpty &&
+          filler[rows.last.last.number] == EpisodeKind.filler &&
+          !_revealedFiller.contains(rows.last.last.number) &&
+          (rows.last.last.number - episode.number).abs() == 1) {
+        rows.last.add(episode);
+      } else {
+        rows.add([episode]);
+      }
+    }
+    return rows;
+  }
+
+  bool _collapsedFiller(List<Episode> row) =>
+      !isTv &&
+      _fillerView != 'Show all' &&
+      (_fillerView != 'Hide skipped filler' || Settings.skipFiller) &&
+      filler[row.first.number] == EpisodeKind.filler &&
+      !_revealedFiller.contains(row.first.number);
+
+  Widget _fillerRun(List<Episode> row) => Padding(
+    padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
+    child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      tileColor: scheme.tertiaryContainer.withValues(alpha: .3),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      leading: Icon(Icons.layers_outlined, color: scheme.onSurface),
+      title: Text(
+        row.length == 1
+            ? 'Episode ${epNumber(row.first.number)} · Filler'
+            : 'Episodes ${epNumber(row.first.number)}–${epNumber(row.last.number)} · Filler',
+      ),
+      subtitle: Text(
+        _fillerView == 'Hide skipped filler'
+            ? 'Hidden while skipping · Tap to reveal'
+            : '${row.length} filler ${row.length == 1 ? 'episode' : 'episodes'} · Tap to expand',
+      ),
+      trailing: const Icon(Icons.expand_more_rounded),
+      onTap: () =>
+          setState(() => _revealedFiller.addAll(row.map((e) => e.number))),
+    ),
+  );
+
   /// The episodes "next" passes over: the filler ones, when Settings say to skip them.
   Set<num> get _skipped => !Settings.skipFiller
       ? const {}
@@ -453,10 +511,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         final download = Downloads.instance.entry(media, episode.number, dub);
         if (download != null) await confirmDeleteDownload(context, download);
       case EpisodeAction.discuss:
-        await openComments(
+        await openEpisodeDiscussion(
           context,
           media,
-          episode: episode.number,
+          episode.number,
           progress: _progress,
         );
       case EpisodeAction.select:
@@ -475,7 +533,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
     final actions = [
       for (final a in eps.actionsFor(episode, watched: watched))
-        if (a != EpisodeAction.play && a != EpisodeAction.select) a,
+        if (a != EpisodeAction.play &&
+            a != EpisodeAction.discuss &&
+            a != EpisodeAction.select)
+          a,
     ];
     if (actions.isEmpty) return;
     final picked = await showSheet<EpisodeAction>(
@@ -850,10 +911,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
       label: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            source == null
-                ? 'Pick a site'
-                : '#${all.indexOf(source!) + 1}  ${source!.label}',
+          Flexible(
+            child: Text(
+              source == null
+                  ? 'Pick a site'
+                  : '#${all.indexOf(source!) + 1}  ${source!.label}',
+            ),
           ),
           const Icon(Icons.arrow_drop_down_rounded),
         ],
@@ -890,13 +953,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
               icon: Icons.done_all_rounded,
               label: 'Mark season watched',
               onTap: () => _markWatched(EpisodePlan.progressAfter(list)),
-              destructive: false,
-            ),
-          if (show.onAniList)
-            (
-              icon: Icons.forum_outlined,
-              label: 'Comments',
-              onTap: () => openComments(context, media, progress: _progress),
               destructive: false,
             ),
         ]);
@@ -1575,8 +1631,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
           pageSize: _pageSize,
         );
         final shown = plan.shown;
-        Widget tile(BuildContext _, int i) =>
-            _episode(plan.shown[i], plan, eps);
+        final rows = _visibleEpisodeRows(shown);
+        Widget tile(BuildContext _, int i) => _collapsedFiller(rows[i])
+            ? _fillerRun(rows[i])
+            : _episode(rows[i].single, plan, eps);
         return SliverMainAxisGroup(
           slivers: [
             if (isTv)
@@ -1606,7 +1664,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ),
               )
             else
-              SliverList.builder(itemCount: shown.length, itemBuilder: tile),
+              SliverList.builder(itemCount: rows.length, itemBuilder: tile),
           ],
         );
       },
@@ -1644,6 +1702,52 @@ class _DetailsScreenState extends State<DetailsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (list.any((episode) => filler.containsKey(episode.number)))
+            Padding(
+              padding: EdgeInsets.only(left: 8, right: side, bottom: 8),
+              child: SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Skip filler'),
+                subtitle: const Text(
+                  'Up next passes over filler. Mixed episodes stay in the story. '
+                  'You can still play any episode. Labels by Anime Filler List.',
+                ),
+                value: Settings.skipFiller,
+                onChanged: (value) =>
+                    setState(() => Settings.skipFiller = value),
+              ),
+            ),
+          if (!isTv &&
+              list.any((episode) => filler.containsKey(episode.number)))
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 8),
+              child: TextButton.icon(
+                icon: const Icon(Icons.filter_list_rounded, size: 18),
+                label: Text('Filler view: $_fillerView'),
+                onPressed: () async {
+                  final view = await pickOne(context, 'Filler view', {
+                    for (final value in [
+                      'Show all',
+                      'Group filler',
+                      'Hide skipped filler',
+                    ])
+                      value: value,
+                  }, _fillerView);
+                  if (view != null && mounted) {
+                    setState(() {
+                      _fillerView = view;
+                      _revealedFiller.clear();
+                    });
+                  }
+                },
+              ),
+            ),
+          if (_revealedFiller.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => setState(_revealedFiller.clear),
+              icon: const Icon(Icons.unfold_less_rounded),
+              label: const Text('Collapse filler'),
+            ),
           if (!Settings.episodeTipSeen && list.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(left: 8),
@@ -1684,7 +1788,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ],
               ),
             ),
-          if (list.length > 1 || wrongShow != null)
+          if (wrongShow != null)
+            Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (list.length > 1) _orderButton(plan.newestFirst),
+                wrongShow,
+              ],
+            )
+          else if (list.length > 1)
             Row(
               children: [
                 // TV has it in the action row, with everything else the D-pad walks along.
@@ -1716,10 +1829,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
       selected: picking ? picked.has(episode) : null,
       onDiscuss: isTv || picking || !show.onAniList
           ? null
-          : () => openComments(
+          : () => openEpisodeDiscussion(
               context,
               media,
-              episode: episode.number,
+              episode.number,
               progress: _progress,
             ),
       onLongPress: isTv
@@ -2135,7 +2248,7 @@ class _EpisodeTile extends StatelessWidget {
     this.onDiscuss,
   });
 
-  /// Opens the episode's comments, from a button by its name.
+  /// Opens the episode's AniList discussion, from a button by its name.
   final VoidCallback? onDiscuss;
 
   final Episode episode;
@@ -2162,38 +2275,19 @@ class _EpisodeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final title = Row(
+    final title = Wrap(
+      spacing: 8,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Flexible(
-          child: Text(
-            'Episode ${epNumber(episode.number)}',
-            style: text.titleSmall?.copyWith(
-              color: watched ? scheme.onSurfaceVariant : scheme.onSurface,
-            ),
+        Text(
+          'Episode ${epNumber(episode.number)}',
+          style: text.titleSmall?.copyWith(
+            color: watched ? scheme.onSurfaceVariant : scheme.onSurface,
           ),
         ),
-        if (_badge case final badge?) ...[
-          const SizedBox(width: 8),
-          Text(
-            badge.toUpperCase(),
-            style: text.labelSmall?.copyWith(
-              color: scheme.primary,
-              letterSpacing: .8,
-            ),
-          ),
-        ],
-        if (kind case final kind?) ...[
-          const SizedBox(width: 8),
-          Text(
-            kind.label.toUpperCase(),
-            style: text.labelSmall?.copyWith(
-              color: kind == EpisodeKind.filler
-                  ? scheme.tertiary
-                  : scheme.onSurfaceVariant,
-              letterSpacing: .8,
-            ),
-          ),
-        ],
+        if (_badge case final badge?)
+          Text(badge, style: text.labelSmall?.copyWith(color: scheme.primary)),
       ],
     );
     final name = episode.title;
@@ -2302,7 +2396,7 @@ class _EpisodeTile extends StatelessWidget {
                   children: [
                     if (onDiscuss != null)
                       IconButton(
-                        tooltip: 'Episode comments',
+                        tooltip: 'Episode discussion',
                         onPressed: onDiscuss,
                         color: scheme.onSurfaceVariant,
                         icon: const Icon(Icons.forum_outlined),
@@ -2338,6 +2432,36 @@ class _EpisodeTile extends StatelessWidget {
             ),
           ),
         ),
+        if (kind case final kind?)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Banner(
+                message: kind.label.toUpperCase(),
+                location: BannerLocation.topStart,
+                color: kind == EpisodeKind.filler
+                    ? scheme.tertiaryContainer
+                    : scheme.secondaryContainer,
+                textStyle: TextStyle(
+                  fontFamily: Theme.of(context)
+                      .textTheme
+                      .labelSmall
+                      ?.fontFamily,
+                  color: kind == EpisodeKind.filler
+                      ? scheme.onTertiaryContainer
+                      : scheme.onSecondaryContainer,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: .4,
+                ),
+                child: Semantics(
+                  label: kind == EpisodeKind.filler
+                      ? 'Filler episode'
+                      : 'Mixed canon and filler episode',
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
         if (upNext)
           DecoratedBox(
             decoration: BoxDecoration(

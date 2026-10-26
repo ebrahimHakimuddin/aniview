@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      native_verification_run:
+        description: Run ID containing the native-verification artifact (report.json) for this exact commit
+        type: string
+        required: false
       beta:
         description: Package AniView Beta, which installs beside AniView (for a pre-release)
         type: boolean
@@ -13,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # A newer push to the same branch or PR supersedes a run still in progress.
 concurrency:
@@ -34,6 +39,8 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      - run: flutter test test/survey_test.dart --dart-define=RYBBIT_SITE_ID=ci-test --dart-define=ANIVIEW_BETA=true
+      - run: python3 tool/test_native_verification.py
       - run: python3 tool/check_macos_bundle.py
       - run: python3 tool/check_ios_bundle.py
 
@@ -82,10 +89,30 @@ jobs:
       - run: flutter build ${{ matrix.target }}
 
   # Linux isn't here: flutter_inappwebview_linux needs WPE WebKit 2.50+, which Ubuntu's runners don't have, so tool/appimage.sh runs on a machine that does.
+  # Packages require device evidence; compilation alone is never native certification.
+  native-release-gate:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch native verification evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERIFICATION_RUN: ${{ inputs.native_verification_run }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          test -n "$VERIFICATION_RUN" || { echo 'Native device verification is required before release packaging.'; exit 1; }
+          actual=$(gh run view "$VERIFICATION_RUN" --json headSha --jq .headSha)
+          test "$actual" = "$EXPECTED_SHA" || { echo 'Verification run is for a different commit'; exit 1; }
+          gh run download "$VERIFICATION_RUN" --name native-verification --dir native-evidence
+          python3 tool/check_native_verification.py native-evidence/report.json --commit "$EXPECTED_SHA"
+
   # Release builds you can download from the run page; the defines come from the DART_DEFINES secret (the contents of dart_defines.env).
   # With the beta input, every package is AniView Beta: its own app id, name and file names (AniView-Beta-*).
   package:
-    needs: check
+    needs: [check, native-release-gate]
     if: github.event_name != 'pull_request'
     env:
       ANIVIEW_BETA: ${{ inputs.beta && '1' || '' }}
@@ -119,6 +146,15 @@ jobs:
       - shell: bash
         run: |
           printf '%s\n' "$DART_DEFINES" > dart_defines.env
+          python3 - <<'PY'
+          from pathlib import Path
+          values = dict(line.split('=', 1) for line in Path('dart_defines.env').read_text().splitlines() if '=' in line and not line.lstrip().startswith('#'))
+          host = values.get('RYBBIT_HOST', 'https://rybbit.clouderp.co.tz').strip().strip('\"\'')
+          site = values.get('RYBBIT_SITE_ID', '').strip().strip('\"\'')
+          if host != 'https://rybbit.clouderp.co.tz' or not site:
+              raise SystemExit('Release requires the production Rybbit host and a configured site ID')
+          print('Rybbit release configuration verified')
+          PY
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env \
             ${ANIVIEW_BETA:+--dart-define=ANIVIEW_BETA=true}

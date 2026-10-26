@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:aniview/exo.dart';
+import 'package:aniview/hls_proxy.dart';
+import 'package:aniview/platform.dart';
 import 'package:aniview/sources.dart';
 import 'package:aniview/stream_address.dart';
 import 'package:flutter/material.dart';
@@ -17,15 +19,28 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'native iOS HLS, headers, subtitles, seeking and offline tracks',
+    'native HLS, headers, quality, subtitles, seeking and offline tracks',
     (tester) async {
       expect(
-        Platform.isIOS,
+        [
+          'android',
+          'ios',
+          'linux',
+          'macos',
+          'windows',
+        ].contains(Platform.operatingSystem),
         isTrue,
-        reason: 'Run on an iOS simulator or device',
+        reason: 'Run on a native device',
       );
-      MediaKit.ensureInitialized();
-      const origin = 'http://127.0.0.1:8765';
+      if (usesMediaKit) {
+        MediaKit.ensureInitialized(
+          libmpv: Platform.isLinux ? 'libmpv.so.2' : null,
+        );
+      }
+      const origin = String.fromEnvironment(
+        'FIXTURE_ORIGIN',
+        defaultValue: 'http://127.0.0.1:8765',
+      );
       const headers = {'X-AniView-Fixture': '1'};
       final directory = await Directory(
         '${(await getApplicationSupportDirectory()).path}/playback-smoke',
@@ -105,6 +120,43 @@ void main() {
         () => player.state.playing && player.state.position.inSeconds >= 10,
       );
       await player.stop();
+
+      final master = await StreamAddress.instance.forPlayer(
+        VideoStream(
+          'Quality fixture',
+          '$origin/master.m3u8',
+          headers,
+          subtitles: [Subtitle('English', '$origin/en.vtt')],
+        ),
+      );
+      for (final height in [720, 1080]) {
+        if (usesMediaKit) {
+          expect(
+            await HlsProxy.configureQuality(master.url, height),
+            containsAll([360, 720, 1080]),
+          );
+        } else {
+          await player.setQuality(height, exact: true);
+        }
+        await player.load(
+          master.url,
+          headers: master.headers,
+          hls: true,
+          start: const Duration(seconds: 4),
+          subtitles: master.subtitles,
+          subtitleFile: 'English',
+        );
+        await until(
+          () =>
+              player.state.size?.height == height &&
+              player.state.position.inSeconds >= 4,
+        );
+        await until(() => player.state.audios.isNotEmpty);
+        await until(() => player.cues.value.contains('AniView subtitle'));
+        await player.pause();
+        await until(() => !player.state.playing);
+        await player.stop();
+      }
 
       // Reopen the saved HLS with relative segment names and no network URLs.
       await save('index.m3u8');

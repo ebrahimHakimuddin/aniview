@@ -523,6 +523,7 @@ extension _DeskDetails on _DetailsScreenState {
           page: page,
           pageSize: _DetailsScreenState._pageSize,
         );
+        final rows = _visibleEpisodeRows(plan.shown);
         return SliverMainAxisGroup(
           slivers: [
             SliverToBoxAdapter(
@@ -536,9 +537,10 @@ extension _DeskDetails on _DetailsScreenState {
             SliverToBoxAdapter(child: SizedBox(key: listAnchor)),
             SliverFixedExtentList.builder(
               itemExtent: _deskRowExtent,
-              itemCount: plan.shown.length,
-              itemBuilder: (context, i) =>
-                  _deskEpisode(plan.shown[i], plan, eps),
+              itemCount: rows.length,
+              itemBuilder: (context, i) => _collapsedFiller(rows[i])
+                  ? _fillerRun(rows[i])
+                  : _deskEpisode(rows[i].single, plan, eps),
             ),
           ],
         );
@@ -813,6 +815,7 @@ extension _DeskDetails on _DetailsScreenState {
     _highlightTimer?.cancel();
     _set(() {
       page = pageOf;
+      _fillerView = 'Show all';
       highlight = target.number;
     });
     _highlightTimer = Timer(const Duration(milliseconds: 2500), () {

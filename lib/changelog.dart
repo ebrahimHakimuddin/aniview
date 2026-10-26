@@ -6,41 +6,36 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.6.0-beta.2';
+const changelogVersion = '2.6.0-beta.8';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
   (
-    icon: Icons.forum_rounded,
-    title: 'Comments on every episode',
-    body: 'Read and post Dantotsu comments, shared with other anime apps, from each episode. Sign in with AniList just for comments, even if you track with MyAnimeList.',
+    icon: Icons.video_library_outlined,
+    title: 'More ways to watch',
+    body: 'KickAssAnime and AnimeStream join the available sources, giving you more options for finding and watching your shows.',
   ),
   (
     icon: Icons.fast_forward_rounded,
     title: 'Filler, marked and skippable',
-    body: 'Filler and mixed episodes are marked in the list. Turn on Skip filler episodes in Settings → Playback and Up next passes over them.',
-  ),
-  (
-    icon: Icons.audiotrack_rounded,
-    title: 'Jellyfin plays every audio track',
-    body: 'No more sub or dub on Jellyfin: the file plays with all its audio, and you pick the language in the player.',
-  ),
-  (
-    icon: Icons.subtitles_rounded,
-    title: 'The right subtitles',
-    body: 'Jellyfin shows the full subtitles instead of the signs-and-songs track, and files with their own subtitles get the language you picked.',
+    body: 'Spot filler and mixed episodes at a glance. Show every episode, collapse filler runs, or hide skipped filler. Mixed episodes stay included.',
   ),
   (
     icon: Icons.dns_rounded,
     title: 'Your own Jellyfin',
-    body: 'Connect your Jellyfin server in Settings and its shows play like any site, with your progress sent back. Request missing ones on Jellyseerr.',
+    body: 'Connect your Jellyfin server, choose your audio language in the player, and sync progress to your library. Request missing shows through Jellyseerr.',
   ),
   (
     icon: Icons.system_update_rounded,
     title: 'Updates from inside the app',
-    body: 'Windows, macOS and Linux install updates themselves, like Android, and AniView Beta installs beside AniView on every platform.',
+    body: 'Update AniView directly on Windows, macOS and Linux. AniView Beta installs beside the stable app with its own data.',
+  ),
+  (
+    icon: Icons.build_outlined,
+    title: 'Bug fixes and improvements',
+    body: 'Fixed playback, subtitles, quality selection, and Next with filler skipping. Downloads respect your chosen destination, storage recovery is safer, desktop search can retry, and phone browsing stays in portrait.',
   ),
 ];
 

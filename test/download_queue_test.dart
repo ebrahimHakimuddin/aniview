@@ -180,17 +180,14 @@ void main() {
 
     String index(int show) => jsonEncode([download(show, 1).toJson()]);
 
-    test(
-      'reads back what it wrote, and nothing from a missing or broken index',
-      () async {
-        final store = DownloadStore(root);
-        expect(await store.read(), isEmpty);
-        await store.write(index(5));
-        expect([for (final d in await store.read()) d.media['id']], [5]);
-        File('${root.path}/index.json').writeAsStringSync('{broken');
-        expect(await store.read(), isEmpty);
-      },
-    );
+    test('reads saved downloads; a broken index requires recovery', () async {
+      final store = DownloadStore(root);
+      expect(await store.read(), isEmpty);
+      await store.write(index(5));
+      expect([for (final d in await store.read()) d.media['id']], [5]);
+      File('${root.path}/index.json').writeAsStringSync('{broken');
+      await expectLater(store.read(), throwsFormatException);
+    });
 
     test('a failed write leaves the old index intact', () async {
       final store = DownloadStore(root);
