@@ -24,6 +24,41 @@ void main() {
     'title': {'english': 'One Piece', 'romaji': 'One Piece'},
   };
 
+  testWidgets('missing media still reports a native playback error', (
+    tester,
+  ) async {
+    expect(Platform.isWindows, isTrue, reason: 'Run with -d windows');
+    isDesktop = true;
+    MediaKit.ensureInitialized();
+    final directory = await Directory.systemTemp.createTemp('aniview-missing-');
+    final player = ExoPlayer();
+    addTearDown(() async {
+      await player.dispose().timeout(const Duration(seconds: 10));
+      await directory.delete(recursive: true);
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: ExoVideo(player, subtitleStyle: const TextStyle())),
+    );
+    await configureNativeDiagnostic(player);
+    final errors = <String>[];
+    final subscription = player.stream.error.listen(errors.add);
+    addTearDown(subscription.cancel);
+    await player
+        .open(directory.uri.resolve('missing.mp4').toFilePath())
+        .timeout(const Duration(seconds: 10));
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (errors.isEmpty && DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(
+      errors,
+      isNotEmpty,
+      reason: 'Real file-open errors must reach the UI',
+    );
+    expect(player.state.duration, Duration.zero);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final source in [
     Anikoto('Anikoto', 'https://anikototv.to'),
     AniPm('ani.pm', 'https://ani.pm'),

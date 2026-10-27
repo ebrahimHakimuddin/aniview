@@ -56,6 +56,8 @@ void main() {
       ).create(recursive: true);
       final player = ExoPlayer();
       final errors = <String>[];
+      var stage = 'online HLS';
+      final nativeErrors = <String>[];
       String safe(Object error) => '$error'.replaceAll(
         RegExp(r'''https?://[^\s"'<>]+'''),
         '<redacted URL>',
@@ -66,6 +68,7 @@ void main() {
       });
       final nativeLogs = player.video?.player.stream.log.listen((log) {
         if (log.level == 'error' || log.level == 'fatal') {
+          nativeErrors.add('${log.prefix}: ${safe(log.text)}');
           stdout.writeln('Fixture native ${log.prefix}: ${safe(log.text)}');
         }
       });
@@ -84,7 +87,12 @@ void main() {
         expect(
           ready(),
           isTrue,
-          reason: 'Native player timed out; errors: $errors',
+          reason:
+              '$stage timed out; position=${player.state.position}; '
+              'duration=${player.state.duration}; playing=${player.state.playing}; '
+              'completed=${player.state.completed}; '
+              'subtitles=${player.state.subtitles.map((t) => t.name).toList()}; '
+              'errors=$errors; native=$nativeErrors',
         );
       }
 
@@ -163,6 +171,7 @@ void main() {
         ),
       );
       for (final height in [720, 1080]) {
+        stage = 'online $height quality';
         if (usesMediaKit) {
           expect(
             await HlsProxy.configureQuality(master.url, height),
@@ -192,6 +201,7 @@ void main() {
       }
 
       // Reopen the saved HLS with relative segment names and no network URLs.
+      stage = 'offline HLS';
       await save('index.m3u8');
       await save('en.vtt');
       final playlist = await File('${directory.path}/index.m3u8').readAsLines();
@@ -200,11 +210,19 @@ void main() {
       )) {
         await save(line);
       }
-      await player.load(
+      final offlineSubtitle = await player.load(
         '${directory.path}/index.m3u8',
         start: const Duration(seconds: 6),
         subtitles: [(url: '${directory.path}/en.vtt', label: 'English')],
         subtitleFile: 'English',
+      );
+      expect(
+        offlineSubtitle,
+        'English',
+        reason:
+            '$stage subtitle selection; position=${player.state.position}; '
+            'duration=${player.state.duration}; '
+            'completed=${player.state.completed}; native=$nativeErrors',
       );
       await until(
         () => player.state.position.inSeconds >= 6 && player.state.playing,
@@ -212,6 +230,7 @@ void main() {
       await player.stop();
 
       // Two embedded audio tracks in a local MP4, with no server needed for playback.
+      stage = 'offline MP4 audio selection';
       await save('sample.mp4');
       await player.load('${directory.path}/sample.mp4');
       await until(() => player.state.audios.length == 2);
