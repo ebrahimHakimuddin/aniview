@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import 'package:flutter/widget_previews.dart';
+
+import 'tv.dart';
 
 enum SubscriptionAnswer {
   pay('Yes, I’d be more than happy to pay.'),
@@ -24,6 +28,28 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
   SubscriptionAnswer? _answer;
   bool _sending = false;
   String? _error;
+  final _answerFocus = [for (final _ in SubscriptionAnswer.values) FocusNode()];
+  final _submitFocus = FocusNode();
+
+  @override
+  void dispose() {
+    for (final node in _answerFocus) {
+      node.dispose();
+    }
+    _submitFocus.dispose();
+    super.dispose();
+  }
+
+  void _moveAnswerFocus(int direction) {
+    final current = _answerFocus.indexWhere((node) => node.hasFocus);
+    if (current < 0 || _sending) return;
+    final next = current + direction;
+    if (next >= _answerFocus.length) {
+      if (_answer != null) _submitFocus.requestFocus();
+    } else if (next >= 0) {
+      _answerFocus[next].requestFocus();
+    }
+  }
 
   Future<void> _submit() async {
     if (_sending || _answer == null) return;
@@ -73,16 +99,40 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
               onChanged: (value) {
                 if (!_sending) setState(() => _answer = value);
               },
-              child: Column(
-                children: [
-                  for (final answer in SubscriptionAnswer.values)
-                    RadioListTile<SubscriptionAnswer>(
-                      value: answer,
-                      title: Text(answer.label),
-                      contentPadding: EdgeInsets.zero,
-                      enabled: !_sending,
-                    ),
-                ],
+              child: CallbackShortcuts(
+                // RadioGroup normally consumes arrows and wraps selection. TV
+                // remotes need to move focus out to Submit without changing it.
+                bindings: isTv
+                    ? {
+                        const SingleActivator(
+                          LogicalKeyboardKey.arrowDown,
+                        ): () =>
+                            _moveAnswerFocus(1),
+                        const SingleActivator(
+                          LogicalKeyboardKey.arrowRight,
+                        ): () =>
+                            _moveAnswerFocus(1),
+                        const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                            _moveAnswerFocus(-1),
+                        const SingleActivator(
+                          LogicalKeyboardKey.arrowLeft,
+                        ): () =>
+                            _moveAnswerFocus(-1),
+                      }
+                    : {},
+                child: Column(
+                  children: [
+                    for (final answer in SubscriptionAnswer.values)
+                      RadioListTile<SubscriptionAnswer>(
+                        value: answer,
+                        focusNode: _answerFocus[answer.index],
+                        autofocus: isTv && answer.index == 0,
+                        title: Text(answer.label),
+                        contentPadding: EdgeInsets.zero,
+                        enabled: !_sending,
+                      ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -104,6 +154,7 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
       ),
       actions: [
         FilledButton(
+          focusNode: _submitFocus,
           onPressed: _sending || _answer == null ? null : _submit,
           child: _sending
               ? const SizedBox.square(

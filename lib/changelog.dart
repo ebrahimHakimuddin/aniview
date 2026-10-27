@@ -6,7 +6,7 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.6.0';
+const changelogVersion = '2.6.1';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
@@ -14,48 +14,13 @@ typedef ChangelogEntry = ({IconData icon, String title, String body});
 const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.tv_rounded,
-    title: 'Easier watching on TV',
-    body: 'Sub/Dub has a clearer remote-focus highlight, and episode order sits beside Play. Switch servers from the player when more than one is available.',
-  ),
-  (
-    icon: Icons.subtitles_outlined,
-    title: 'Subtitles your way',
-    body: 'Customize subtitle size, color, background, text edge, font, bold text, and position in Settings, with a preview and reset. Burned-in subtitles cannot be changed.',
-  ),
-  (
-    icon: Icons.explore_outlined,
-    title: 'More ways to browse',
-    body: 'Enable Latest episodes in Home screen settings to see recently aired anime, or Group related seasons in Anime details settings to browse prequels and sequels together. Both start off.',
-  ),
-  (
-    icon: Icons.audiotrack_outlined,
-    title: 'Optional Sub fallback',
-    body: 'Enable Use Sub when Dub is unavailable in Playback settings to try Sub for an episode with no dub servers. Your preferred audio stays unchanged. This starts off.',
-  ),
-  (
-    icon: Icons.video_library_outlined,
-    title: 'More ways to watch',
-    body: 'KickAssAnime and AnimeStream join the available sources.',
-  ),
-  (
-    icon: Icons.fast_forward_rounded,
-    title: 'Filler, marked and skippable',
-    body: 'Spot filler and mixed episodes, collapse filler runs, or hide skipped filler. Mixed episodes stay included.',
-  ),
-  (
-    icon: Icons.dns_rounded,
-    title: 'Your own Jellyfin',
-    body: 'Connect your server, select audio in the player, sync watch progress, and request missing shows through Jellyseerr.',
+    title: 'Complete the survey with your remote',
+    body: 'Use the D-pad to move between answers, press OK to select, then move down to Submit. Moving focus keeps your chosen answer.',
   ),
   (
     icon: Icons.system_update_rounded,
-    title: 'Updates from inside the app',
-    body: 'Update on Windows, macOS, and Linux. AniView Beta installs beside stable AniView with its own data.',
-  ),
-  (
-    icon: Icons.build_outlined,
-    title: 'Bug fixes and improvements',
-    body: 'Fixed playback, subtitles, quality selection, and Next with filler skipping. Downloads respect your chosen destination, storage recovery is safer, desktop search can retry, and phone browsing stays in portrait.',
+    title: 'Updates before the survey',
+    body: 'The startup update check finishes before the survey appears, so TV users can install an available update first.',
   ),
 ];
 

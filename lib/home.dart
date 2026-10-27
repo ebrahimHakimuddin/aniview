@@ -103,8 +103,9 @@ class _HomeScreenState extends State<HomeScreen>
         return true;
       };
     }
-    checkForUpdate(context, quiet: true);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await checkForUpdate(context, quiet: true);
       if (!mounted) return;
       await maybeShowWhatsNew(context);
       if (mounted && ModalRoute.of(context)?.isCurrent == true) {

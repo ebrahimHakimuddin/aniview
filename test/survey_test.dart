@@ -6,6 +6,7 @@ import 'package:aniview/settings.dart';
 import 'package:aniview/survey.dart';
 import 'package:aniview/survey_dialog.dart';
 import 'package:aniview/ui.dart';
+import 'package:aniview/tv.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +35,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTheme(),
+        builder: (context, child) => isTv ? TvInput(child: child!) : child!,
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
@@ -51,6 +53,154 @@ void main() {
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
   }
+
+  for (final answer in SubscriptionAnswer.values) {
+    testWidgets('TV remote selects ${answer.name} and reaches Submit', (
+      tester,
+    ) async {
+      isTv = true;
+      addTearDown(() => isTv = false);
+      final answers = <SubscriptionAnswer>[];
+      await open(tester, (value) async {
+        answers.add(value);
+        return true;
+      });
+      for (var i = 0; i < answer.index; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<RadioGroup<SubscriptionAnswer>>(
+              find.byType(RadioGroup<SubscriptionAnswer>),
+            )
+            .groupValue,
+        answer,
+      );
+      for (var i = answer.index; i < SubscriptionAnswer.values.length; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+      }
+      expect(
+        tester
+            .widget<FilledButton>(find.byType(FilledButton))
+            .focusNode!
+            .hasFocus,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<RadioGroup<SubscriptionAnswer>>(
+              find.byType(RadioGroup<SubscriptionAnswer>),
+            )
+            .groupValue,
+        answer,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      expect(answers, [answer]);
+      expect(find.byType(SubscriptionSurveyDialog), findsNothing);
+    });
+  }
+
+  testWidgets('TV remote can change an answer and retry a failed submission', (
+    tester,
+  ) async {
+    isTv = true;
+    addTearDown(() => isTv = false);
+    final answers = <SubscriptionAnswer>[];
+    await open(tester, (answer) async {
+      answers.add(answer);
+      return answers.length > 1;
+    });
+    Future<void> key(LogicalKeyboardKey key) async {
+      await tester.sendKeyEvent(key);
+      await tester.pumpAndSettle();
+    }
+
+    await key(LogicalKeyboardKey.select);
+    for (var i = 0; i < 3; i++) {
+      await key(LogicalKeyboardKey.arrowDown);
+    }
+    await key(LogicalKeyboardKey.arrowUp);
+    await key(LogicalKeyboardKey.select);
+    expect(
+      tester
+          .widget<RadioGroup<SubscriptionAnswer>>(
+            find.byType(RadioGroup<SubscriptionAnswer>),
+          )
+          .groupValue,
+      SubscriptionAnswer.dealbreaker,
+    );
+    await key(LogicalKeyboardKey.arrowDown);
+    await key(LogicalKeyboardKey.select);
+    expect(find.textContaining('Couldn’t send'), findsOneWidget);
+    // Retrying must not require touch after the disabled sending state.
+    await key(LogicalKeyboardKey.select);
+    expect(answers, [
+      SubscriptionAnswer.dealbreaker,
+      SubscriptionAnswer.dealbreaker,
+    ]);
+    expect(find.byType(SubscriptionSurveyDialog), findsNothing);
+  });
+
+  testWidgets('TV updater opens above a blocked survey with analytics off', (
+    tester,
+  ) async {
+    isTv = true;
+    addTearDown(() => isTv = false);
+    Settings.analytics = false;
+    PackageInfo.setMockInitialValues(
+      appName: 'AniView',
+      packageName: 'com.kidfury.aniview',
+      version: '2.6.0',
+      buildNumber: '36',
+      buildSignature: '',
+    );
+    const channel = MethodChannel('aniview/app');
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    await open(tester, (_) async => false);
+    final context = tester.element(find.text('Open', skipOffstage: false));
+    final release = {
+      'tag_name': 'v2.6.1',
+      'prerelease': true,
+      'draft': false,
+      'html_url': 'https://example.com/release',
+      'assets': <Object>[],
+    };
+    await http.runWithClient(
+      () async {
+        final updating = checkForUpdate(context, quiet: true);
+        await tester.pumpAndSettle();
+        expect(find.text('$appName 2.6.1 is available'), findsOneWidget);
+        // OK activates the updater above the survey, without answering it.
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await tester.pumpAndSettle();
+        await updating;
+        expect(calls.single.method, 'open');
+        expect(calls.single.arguments, 'https://example.com/release');
+        expect(find.byType(SubscriptionSurveyDialog), findsOneWidget);
+      },
+      () => MockClient(
+        (_) async =>
+            http.Response(jsonEncode(isBetaBuild ? [release] : release), 200),
+      ),
+    );
+  });
 
   Future<void> tryDismiss(WidgetTester tester) async {
     await tester.binding.handlePopRoute();
