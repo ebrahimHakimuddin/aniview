@@ -14,6 +14,7 @@ import 'downloads.dart';
 import 'downloads_screen.dart';
 import 'history.dart';
 import 'home_feed.dart';
+import 'latest_episodes_section.dart';
 import 'library.dart';
 import 'notifications.dart';
 import 'pairing.dart';
@@ -1061,6 +1062,11 @@ class _HomeFeed extends StatelessWidget {
     }
     return switch (section) {
       HomeSection.featured => const SizedBox.shrink(), // the carousel
+      HomeSection.latestEpisodes => LatestEpisodesSection(
+        key: ValueKey(('latest', feed.latestGeneration, Settings.hideNsfw)),
+        autofocus: first,
+        onBack: onReload,
+      ),
       HomeSection.newEpisodes => FutureBuilder(
         future: feed.released,
         builder: (context, snap) {

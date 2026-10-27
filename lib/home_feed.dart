@@ -57,6 +57,8 @@ class HomeFeed extends ChangeNotifier {
   /// How long fetched lists and airing are good for; see [reload].
   static const staleAfter = Duration(minutes: 1);
 
+  int latestGeneration = 0;
+
   final HomeSource source;
   final DateTime Function() _now;
 
@@ -143,6 +145,7 @@ class HomeFeed extends ChangeNotifier {
 
   /// Fetches the lists and what airs, and everything built on them.
   void _fetchLists() {
+    latestGeneration++;
     _fetched = _now();
     if (_library != null) _library = source.lists(all: true);
     lists = _lists();

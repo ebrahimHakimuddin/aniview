@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:aniview/exo.dart';
+import 'package:aniview/history.dart';
 import 'package:aniview/player.dart';
 import 'package:aniview/platform.dart';
 import 'package:aniview/settings.dart';
@@ -56,7 +57,67 @@ class SourceFixture extends Source {
   }
 }
 
+class FallbackSource extends SourceFixture {
+  final audioRequests = <bool>[];
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async {
+    audioRequests.add(dub);
+    if (dub) return [];
+    return super.streams(media, episode, dub: dub);
+  }
+}
+
 void main() {
+  testWidgets('player announces sub fallback and records the actual audio', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'fallback_to_sub': true,
+      'prefer_dub': true,
+      'resume': false,
+    });
+    await Settings.load();
+    final source = FallbackSource();
+    final backend = Backend();
+    final media = {
+      'id': 8192837,
+      'title': {'romaji': 'Fixture'},
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: PlayerScreen(
+          media: media,
+          source: source,
+          episodes: [Episode(1, ref: '1')],
+          index: 0,
+          dub: true,
+          backend: backend,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(source.audioRequests, [true, false]);
+    expect(find.text('Dub unavailable · playing Sub'), findsOneWidget);
+    backend.emit({
+      'position': 30000,
+      'buffer': 30000,
+      'duration': 100000,
+      'playing': true,
+    });
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    final record = await WatchHistory.of(media);
+    expect(record?.dub, isFalse);
+    expect(Settings.preferDub, isTrue);
+  });
+
   testWidgets(
     'offline entry streams an unsaved episode from its saved source',
     (tester) async {

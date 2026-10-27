@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
 import 'survey.dart';
+import 'subtitle_appearance.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
 import 'downloads.dart';
@@ -132,6 +133,10 @@ enum TitleLanguage {
 /// Rows of the home screen, in their default order.
 enum HomeSection {
   featured('Featured', 'Trending shows at the top'),
+  latestEpisodes(
+    'Latest episodes',
+    'Recently aired anime across the catalog, not just your list',
+  ),
   newEpisodes(
     'New episodes this week',
     "Episodes that aired in the past 7 days of shows you're watching",
@@ -241,6 +246,12 @@ class Settings {
   static bool get preferDub => _prefs.getBool('prefer_dub') ?? false;
   static set preferDub(bool v) => _prefs.setBool('prefer_dub', v);
 
+  static bool get fallbackToSub => _prefs.getBool('fallback_to_sub') ?? false;
+  static set fallbackToSub(bool v) => _prefs.setBool('fallback_to_sub', v);
+
+  static bool get groupSeasons => _prefs.getBool('group_seasons') ?? false;
+  static set groupSeasons(bool v) => _prefs.setBool('group_seasons', v);
+
   /// The version whose "What's new" the person has dismissed; null until they have (see [maybeShowWhatsNew]).
   static String? get changelogSeen => _prefs.getString('changelog_seen');
   static set changelogSeen(String? v) => v == null
@@ -314,8 +325,23 @@ class Settings {
   static set subtitleLanguage(String v) =>
       _prefs.setString('subtitle_language', v);
 
-  static double get subtitleSize => _prefs.getDouble('subtitle_size') ?? 22;
-  static set subtitleSize(double v) => _prefs.setDouble('subtitle_size', v);
+  static SubtitleAppearance get subtitleAppearance {
+    try {
+      final saved = jsonDecode(_prefs.getString('subtitle_appearance') ?? '{}');
+      return SubtitleAppearance.fromJson({
+        'size': _prefs.getDouble('subtitle_size') ?? 22,
+        if (saved is Map) ...saved,
+      });
+    } catch (_) {
+      return const SubtitleAppearance();
+    }
+  }
+
+  static set subtitleAppearance(SubtitleAppearance v) =>
+      _prefs.setString('subtitle_appearance', jsonEncode(v.toJson()));
+  static double get subtitleSize => subtitleAppearance.size;
+  static set subtitleSize(double v) =>
+      subtitleAppearance = subtitleAppearance.copyWith(size: v);
 
   /// Search's shortcut on a desktop: the key's id and its modifiers; null for Ctrl+F (see [searchShortcut]).
   static List<String>? get searchShortcut =>
@@ -1420,6 +1446,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChanged: (v) => setState(() => Settings.hideNsfw = v),
         ),
       ]),
+      _Group('Anime details', [
+        SwitchListTile(
+          title: const Text('Group related seasons'),
+          subtitle: const Text(
+            'Show the prequel and sequel chain together on anime details',
+          ),
+          value: Settings.groupSeasons,
+          onChanged: (v) => setState(() => Settings.groupSeasons = v),
+        ),
+      ]),
       // A phone that has never paired a TV sets one up; "remote" only once there's a TV to control.
       if (!Platform.isIOS)
         _Group(isTv ? 'Remote' : 'TV', [
@@ -1491,6 +1527,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Settings.preferDub,
             (v) => Settings.preferDub = v,
           ),
+        ),
+        SwitchListTile(
+          title: const Text('Use Sub when Dub is unavailable'),
+          subtitle: const Text(
+            'Try Japanese audio for that episode. Your preferred audio stays unchanged.',
+          ),
+          value: Settings.fallbackToSub,
+          onChanged: (v) => setState(() => Settings.fallbackToSub = v),
         ),
         FutureBuilder(
           future: Sites.all(),
@@ -1644,6 +1688,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ]),
       _Group('Subtitles', [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: ColoredBox(
+            color: const Color(0xff263238),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'This is your subtitle preview',
+                textAlign: TextAlign.center,
+                style: Settings.subtitleAppearance.style(),
+              ),
+            ),
+          ),
+        ),
         _Choice(
           title: 'Language',
           value: Settings.subtitleLanguage,
@@ -1668,6 +1726,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
             {18.0: 'Small', 22.0: 'Medium', 28.0: 'Large'},
             Settings.subtitleSize,
             (v) => Settings.subtitleSize = v,
+          ),
+        ),
+        _Choice(
+          title: 'Text color',
+          value: SubtitleAppearance.colors[Settings.subtitleAppearance.color]!,
+          onTap: () => _choose(
+            'Subtitle color',
+            SubtitleAppearance.colors,
+            Settings.subtitleAppearance.color,
+            (v) => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(color: v),
+          ),
+        ),
+        _Choice(
+          title: 'Background',
+          value: SubtitleAppearance
+              .backgrounds[Settings.subtitleAppearance.background]!,
+          onTap: () => _choose(
+            'Subtitle background',
+            SubtitleAppearance.backgrounds,
+            Settings.subtitleAppearance.background,
+            (v) => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(background: v),
+          ),
+        ),
+        _Choice(
+          title: 'Text edge',
+          value: SubtitleAppearance.edges[Settings.subtitleAppearance.edge]!,
+          onTap: () => _choose(
+            'Subtitle edge',
+            SubtitleAppearance.edges,
+            Settings.subtitleAppearance.edge,
+            (v) => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(edge: v),
+          ),
+        ),
+        _Choice(
+          title: 'Font',
+          value: SubtitleAppearance.fonts[Settings.subtitleAppearance.font]!,
+          onTap: () => _choose(
+            'Subtitle font',
+            SubtitleAppearance.fonts,
+            Settings.subtitleAppearance.font,
+            (v) => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(font: v),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Bold subtitles'),
+          value: Settings.subtitleAppearance.bold,
+          onChanged: (v) => setState(
+            () => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(bold: v),
+          ),
+        ),
+        _Choice(
+          title: 'Vertical position',
+          value:
+              SubtitleAppearance.positions[Settings.subtitleAppearance.bottom]!,
+          onTap: () => _choose(
+            'Subtitle position',
+            SubtitleAppearance.positions,
+            Settings.subtitleAppearance.bottom,
+            (v) => Settings.subtitleAppearance = Settings.subtitleAppearance
+                .copyWith(bottom: v),
+          ),
+        ),
+        ListTile(
+          title: const Text('Reset subtitle appearance'),
+          onTap: () => setState(
+            () => Settings.subtitleAppearance = const SubtitleAppearance(),
           ),
         ),
       ]),

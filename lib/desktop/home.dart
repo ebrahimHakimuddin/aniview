@@ -4,6 +4,7 @@ import '../anilist.dart';
 import '../downloads.dart';
 import '../history.dart';
 import '../home_feed.dart';
+import '../latest_episodes_section.dart';
 import '../library.dart' show RecentlyWatchedScreen;
 import '../search.dart';
 import '../settings.dart';
@@ -135,6 +136,11 @@ class DeskHome extends StatelessWidget {
         );
       case HomeSection.featured:
         return const SizedBox.shrink();
+      case HomeSection.latestEpisodes:
+        return LatestEpisodesSection(
+          key: ValueKey(('latest', feed.latestGeneration, Settings.hideNsfw)),
+          onBack: onReload,
+        );
       case HomeSection.newEpisodes:
         return SwapFuture(
           future: feed.released,

@@ -351,21 +351,35 @@ void main() {
       },
     );
 
-    test('streams follow the audio asked for, and all of them when only the other exists', () async {
-      final host = FakeHost()
-        ..videoList = [
+    test(
+      'streams never silently substitute explicitly labelled audio',
+      () async {
+        final host = FakeHost()
+          ..videoList = [
+            VideoStream('Server - Dub', 'https://cdn.test/dub.m3u8', {}),
+            VideoStream('Server - Sub', 'https://cdn.test/sub.m3u8', {}),
+          ];
+        final source = ExtensionSource('1', 'T', 'https://t.test', host: host);
+        final episode = Episode(1, ref: {});
+        expect(
+          (await source.streams(media, episode, dub: true)).map((s) => s.url),
+          ['https://cdn.test/dub.m3u8'],
+        );
+        host.videoList = [host.videoList.last];
+        expect(await source.streams(media, episode, dub: true), isEmpty);
+        expect(await source.streams(media, episode, dub: false), hasLength(1));
+        host.videoList = [
           VideoStream('Server - Dub', 'https://cdn.test/dub.m3u8', {}),
-          VideoStream('Server - Sub', 'https://cdn.test/sub.m3u8', {}),
         ];
-      final source = ExtensionSource('1', 'T', 'https://t.test', host: host);
-      final episode = Episode(1, ref: {});
-      expect(
-        (await source.streams(media, episode, dub: true)).map((s) => s.url),
-        ['https://cdn.test/dub.m3u8'],
-      );
-      host.videoList = [host.videoList.last];
-      expect(await source.streams(media, episode, dub: true), hasLength(1));
-    });
+        expect(await source.streams(media, episode, dub: false), isEmpty);
+        // Unlabelled extension streams may contain selectable audio tracks.
+        host.videoList = [
+          VideoStream('Server 1080p', 'https://cdn.test/video.m3u8', {}),
+        ];
+        expect(await source.streams(media, episode, dub: true), hasLength(1));
+        expect(await source.streams(media, episode, dub: false), hasLength(1));
+      },
+    );
 
     test(
       'installing and uninstalling make the site list load afresh',

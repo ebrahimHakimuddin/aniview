@@ -33,6 +33,9 @@ class PlaybackSession {
     this.dub = false,
     this.site = 'Downloads',
     this.fetch,
+    this.fetchSub,
+    this.allowSubFallback = false,
+    this.downloadedDub,
     VideoStream? Function(Episode)? downloaded,
   }) : downloaded =
            downloaded ??
@@ -50,6 +53,12 @@ class PlaybackSession {
   int index;
   final Map media;
   final bool dub;
+  final bool allowSubFallback;
+  final Future<List<VideoStream>> Function(Episode)? fetchSub;
+  final bool Function(Episode)? downloadedDub;
+  late bool playingDub = dub;
+  bool get fellBackToSub => dub && !playingDub && !fromDownload;
+  int _openGeneration = 0;
 
   /// The site's name, for messages.
   final String site;
@@ -94,6 +103,8 @@ class PlaybackSession {
 
   /// Moves to episode [i], with nothing loaded, watched or dismissed yet.
   void start(int i) {
+    _openGeneration++;
+    playingDub = dub;
     index = i;
     streams = [];
     current = null;
@@ -109,25 +120,35 @@ class PlaybackSession {
   /// was started meanwhile, and nothing changed. Throws when it can't be played.
   Future<({Duration? at})?> open(int i, {Duration? at}) async {
     start(i);
+    final generation = _openGeneration;
     final target = episode;
     final from = at ?? await WatchHistory.resumePoint(media, target.number);
+    if (generation != _openGeneration) return null;
     final download = downloaded(target);
-    final List<VideoStream> found;
+    List<VideoStream> found;
+    var loadedDub = dub;
     if (download != null) {
       found = [download];
+      loadedDub = downloadedDub?.call(target) ?? dub;
     } else if (fetch case final fetch?) {
       found = await fetch(target);
+      if (generation != _openGeneration) return null;
+      if (found.isEmpty && dub && allowSubFallback && fetchSub != null) {
+        found = await fetchSub!(target);
+        loadedDub = false;
+      }
     } else {
       throw Exception(
         "Episode ${epNumber(target.number)} isn't downloaded and $site can't be reached",
       );
     }
-    if (index != i) return null;
+    if (generation != _openGeneration) return null;
     if (found.isEmpty) {
       throw Exception(
         'No ${dub ? 'dub' : 'sub'} servers for this episode on $site',
       );
     }
+    playingDub = loadedDub;
     streams = found;
     fromDownload = download != null;
     return (at: from);

@@ -23,6 +23,7 @@ import 'player.dart';
 import 'search.dart';
 import 'selection.dart';
 import 'settings.dart';
+import 'season_group_section.dart';
 import 'social.dart';
 import 'site_listing.dart';
 import 'sources.dart';
@@ -871,7 +872,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       ButtonSegment(value: true, label: Text('Dub')),
     ],
     selected: {_dubPicked},
-    showSelectedIcon: false,
+    showSelectedIcon: isTv,
     onSelectionChanged: (s) => setState(() => _dubPicked = s.first),
   );
 
@@ -1076,21 +1077,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
     ),
   );
 
-  Widget _related() => FutureBuilder(
-    future: relations,
-    builder: (context, snap) {
-      final found = snap.data ?? const <(String, Map)>[];
-      if (found.isEmpty) return const SizedBox.shrink();
-      return MediaRow(
-        'Related',
-        [for (final (_, m) in found) m],
-        subtitles: [
-          for (final (type, _) in found)
-            type == 'PREQUEL' ? 'Prequel' : 'Sequel',
-        ],
-      );
-    },
-  );
+  Widget _related() => Settings.groupSeasons
+      ? SeasonGroupSection(media, key: ValueKey(media['id']))
+      : FutureBuilder(
+          future: relations,
+          builder: (context, snap) {
+            final found = snap.data ?? const <(String, Map)>[];
+            if (found.isEmpty) return const SizedBox.shrink();
+            return MediaRow(
+              'Related',
+              [for (final (_, m) in found) m],
+              subtitles: [
+                for (final (type, _) in found)
+                  type == 'PREQUEL' ? 'Prequel' : 'Sequel',
+              ],
+            );
+          },
+        );
 
   /// The tabs lead the section (shows AniList knows get its social side); what the episodes come from (site,
   /// audio) sits inside the Episodes tab, as it's about them alone.
@@ -1447,8 +1450,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             ),
                           ),
                           const SizedBox(height: 24),
-                          // The actions on one line, ⋮ at its end; fixing the match and the order on a quieter one
-                          // under it (all on one wrapped onto a line of its own, ⋮ alone on the next).
+                          // Keep episode order beside Play for remote navigation.
                           TvRow(
                             child: Wrap(
                               spacing: 12,
@@ -1456,6 +1458,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 _playAction(),
+                                FutureBuilder(
+                                  future: record,
+                                  builder: (context, saved) =>
+                                      _orderButton(_newestFirst(saved.data)),
+                                ),
                                 if (_picksAudio) _audio,
                                 _sourceMenu(),
                                 if (Tracker.signedIn)
@@ -1479,14 +1486,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             child: Wrap(
                               spacing: 12,
                               runSpacing: 12,
-                              children: [
-                                if (source != null) _wrongShow(),
-                                FutureBuilder(
-                                  future: record,
-                                  builder: (context, saved) =>
-                                      _orderButton(_newestFirst(saved.data)),
-                                ),
-                              ],
+                              children: [if (source != null) _wrongShow()],
                             ),
                           ),
                         ],
@@ -2191,17 +2191,21 @@ class _EpisodesSkeleton extends StatelessWidget {
     if (isTv) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(tvMargin, 8, 0, 24),
-        child: Row(
-          children: [
-            for (var i = 0; i < 4; i++)
-              Padding(
-                padding: EdgeInsets.only(right: gutter),
-                child: const Skeleton(
-                  width: _EpisodeRow.width,
-                  height: _EpisodeRow.width * 9 / 16,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          child: Row(
+            children: [
+              for (var i = 0; i < 4; i++)
+                Padding(
+                  padding: EdgeInsets.only(right: gutter),
+                  child: const Skeleton(
+                    width: _EpisodeRow.width,
+                    height: _EpisodeRow.width * 9 / 16,
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       );
     }

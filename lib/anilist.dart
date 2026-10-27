@@ -578,6 +578,27 @@ class AniList {
       ..sort((a, b) => (a['airingAt'] as int).compareTo(b['airingAt'] as int));
   }
 
+  static Future<(List<Map>, bool)> latestEpisodes({
+    required int page,
+    required int before,
+  }) async {
+    final data = await query(
+      r'query($page:Int,$before:Int,$after:Int){Page(page:$page,perPage:30){pageInfo{hasNextPage} '
+      r'airingSchedules(airingAt_lesser:$before,airingAt_greater:$after,sort:TIME_DESC){episode airingAt media{isAdult '
+      '$_media}}}}',
+      {'page': page, 'before': before, 'after': before - 7 * 24 * 3600},
+    );
+    final result = data['Page'];
+    return (
+      [
+        for (final item in result['airingSchedules'] as List)
+          if (item['media'] is Map && item['media']['isAdult'] != true)
+            item as Map,
+      ],
+      result['pageInfo']['hasNextPage'] == true,
+    );
+  }
+
   /// From [airingAround]: the latest episode that has aired of each show in [ids], newest first.
   static List<Map> latestAired(List<Map> airing, Set<int> ids) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;

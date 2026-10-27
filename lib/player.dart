@@ -90,34 +90,51 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       return download == null ? null : Downloads.instance.streamFor(download);
     },
-    fetch: _source != null || _siteName != null
-        ? (e) async {
-            final source = _source ?? await Sites.named(_sourceName);
-            if (source == null) {
-              throw StateError(
-                '$_sourceName is unavailable. Try another site.',
-              );
-            }
-            if (!mounted) return <VideoStream>[];
-            final listing = SiteListing(
-              source,
+    downloadedDub: (episode) =>
+        Downloads.instance
+            .toPlay(
               widget.media,
-              onChallenge: uiChallenge(context),
-            );
-            // An offline entry may have a stale provider reference. Resolve by episode number.
-            var target = e;
-            if (_source == null) {
-              final listed = await listing.episodes();
-              target =
-                  listed.where((item) => item.number == e.number).firstOrNull ??
-                  (throw StateError(
-                    'Episode ${e.number} is unavailable on ${source.name}',
-                  ));
-            }
-            return listing.streams(target, dub: widget.dub);
-          }
+              episode.number,
+              dub: widget.dub,
+              online: _source != null,
+            )
+            ?.dub ??
+        widget.dub,
+    allowSubFallback: Settings.fallbackToSub,
+    fetch: _source != null || _siteName != null
+        ? (e) => _fetchEpisode(e, dub: widget.dub)
+        : null,
+    fetchSub: _source != null || _siteName != null
+        ? (e) => _fetchEpisode(e, dub: false)
         : null,
   )..skipped = _filler;
+
+  Future<List<VideoStream>> _fetchEpisode(
+    Episode episode, {
+    required bool dub,
+  }) async {
+    final source = _source ?? await Sites.named(_sourceName);
+    if (source == null) {
+      throw StateError('$_sourceName is unavailable. Try another site.');
+    }
+    if (!mounted) return [];
+    final listing = SiteListing(
+      source,
+      widget.media,
+      onChallenge: uiChallenge(context),
+    );
+    var target = episode;
+    if (_source == null) {
+      final listed = await listing.episodes();
+      target =
+          listed.where((item) => item.number == episode.number).firstOrNull ??
+          (throw StateError(
+            'Episode ${episode.number} is unavailable on ${source.name}',
+          ));
+    }
+    return listing.streams(target, dub: dub);
+  }
+
   int? _skipsRequested;
   String subtitle = 'Auto';
 
@@ -524,11 +541,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       final opened = await session.open(i, at: at);
       if (!mounted || opened == null) return;
+      if (session.fellBackToSub) {
+        _hint('Dub unavailable · playing Sub', icon: Icons.audiotrack_outlined);
+      }
       Analytics.event('episode_play', {
         'media_id': widget.media['id'],
         'episode': episode.number,
         'source': _sourceName,
-        'dub': widget.dub,
+        'dub': session.playingDub,
         'downloaded': session.fromDownload,
       });
       if (supportsExternalPlayer && Settings.externalPlayer) {
@@ -854,7 +874,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       index: index,
       position: position,
       duration: duration,
-      dub: widget.dub,
+      dub: session.playingDub,
       next: session.nextIndex,
     );
     // A download from the server reports too; offline, the next save sends the latest spot.
@@ -978,16 +998,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _video = ExoVideo(
         player,
         fit: fit,
-        subtitleStyle: TextStyle(
-          // On a desktop the picture is as big as the window, so the text follows it (22 is for a 720p-high one).
-          fontSize:
-              Settings.subtitleSize *
-              (isDesktop
-                  ? (MediaQuery.sizeOf(context).height / 720).clamp(.8, 2.2)
-                  : 1),
-          color: Colors.white,
-          height: 1.3,
-          shadows: const [Shadow(blurRadius: 8), Shadow(blurRadius: 2)],
+        subtitleBottom: Settings.subtitleAppearance.bottom,
+        subtitleStyle: Settings.subtitleAppearance.style(
+          scale: isDesktop
+              ? (MediaQuery.sizeOf(context).height / 720).clamp(.8, 2.2)
+              : 1,
         ),
       );
     }

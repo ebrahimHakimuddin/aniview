@@ -343,16 +343,24 @@ ThemeData buildTheme() {
         ),
         side: WidgetStateProperty.resolveWith(
           (s) => BorderSide(
-            color: s.contains(WidgetState.selected) ? scheme.primary : hairline,
+            color: isTv && s.contains(WidgetState.focused)
+                ? scheme.onSurface
+                : s.contains(WidgetState.selected)
+                ? scheme.primary
+                : hairline,
           ),
         ),
         backgroundColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
+          (s) => isTv && s.contains(WidgetState.focused)
+              ? scheme.onSurface
+              : s.contains(WidgetState.selected)
               ? scheme.primary.withValues(alpha: .12)
               : Colors.transparent,
         ),
         foregroundColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
+          (s) => isTv && s.contains(WidgetState.focused)
+              ? scheme.surface
+              : s.contains(WidgetState.selected)
               ? scheme.primary
               : scheme.onSurface,
         ),
@@ -431,6 +439,22 @@ ThemeData _buildMaterialTheme() {
         padding: WidgetStatePropertyAll(_segmentPadding),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         shape: WidgetStatePropertyAll(controlShape),
+        backgroundColor: isTv
+            ? WidgetStateProperty.resolveWith(
+                (s) =>
+                    s.contains(WidgetState.focused) ? colors.onSurface : null,
+              )
+            : null,
+        foregroundColor: isTv
+            ? WidgetStateProperty.resolveWith(
+                (s) => s.contains(WidgetState.focused) ? colors.surface : null,
+              )
+            : null,
+        iconColor: isTv
+            ? WidgetStateProperty.resolveWith(
+                (s) => s.contains(WidgetState.focused) ? colors.surface : null,
+              )
+            : null,
       ),
     ),
     cardTheme: CardThemeData(

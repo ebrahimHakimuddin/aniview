@@ -1281,10 +1281,20 @@ class ExtensionSource extends Source {
     required bool dub,
   }) async {
     final streams = await host.videos(id, episode);
-    // Extensions name sub and dub in the video title, when they serve both.
-    bool isDub(VideoStream s) => s.label.toLowerCase().contains('dub');
-    final picked = streams.where((s) => isDub(s) == dub).toList();
-    return picked.isEmpty ? streams : picked;
+    // Leave explicit language fallback to PlaybackSession so the setting and
+    // recorded language agree. Unlabelled streams may carry multiple audio tracks.
+    final dubLabel = RegExp(r'\bdub(?:bed)?\b', caseSensitive: false);
+    final subLabel = RegExp(r'\bsub(?:bed)?\b', caseSensitive: false);
+    final wanted = dub ? dubLabel : subLabel;
+    final picked = streams.where((s) => wanted.hasMatch(s.label)).toList();
+    return picked.isNotEmpty
+        ? picked
+        : streams
+              .where(
+                (s) =>
+                    !dubLabel.hasMatch(s.label) && !subLabel.hasMatch(s.label),
+              )
+              .toList();
   }
 }
 

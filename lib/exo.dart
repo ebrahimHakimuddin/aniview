@@ -582,11 +582,13 @@ class ExoVideo extends StatelessWidget {
     super.key,
     this.fit = BoxFit.contain,
     required this.subtitleStyle,
+    this.subtitleBottom = 32,
   });
 
   final ExoPlayer player;
   final BoxFit fit;
   final TextStyle subtitleStyle;
+  final double subtitleBottom;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -634,7 +636,7 @@ class ExoVideo extends StatelessWidget {
         Positioned(
           left: 24,
           right: 24,
-          bottom: 32,
+          bottom: subtitleBottom,
           child: ValueListenableBuilder(
             valueListenable: player.cues,
             builder: (context, text, _) =>
