@@ -188,9 +188,9 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 
 ### Subscription survey
 
-The US$1/month survey appears after the version overview, once per installation. Submit is its only action;
-there is no “Not now” button. Closing it with system Back leaves it
-available in Settings → About → AniView’s future; a confirmed answer disables further submissions. It only
+The US$1/month survey appears after the version overview until answered. Submit is its only action;
+there is no “Not now” button. Back, Escape, and outside taps cannot dismiss it, including while sending or
+after a failed request. Previously dismissed surveys appear again; a confirmed answer disables further submissions. It only
 appears when analytics is configured and enabled. Each choice is a separate Rybbit event, directly selectable
 in the dashboard's event-name filter: `subscription_poll_stable_pay`, `subscription_poll_stable_donate`, or
 `subscription_poll_stable_dealbreaker`. Test builds use `beta` instead of `stable` in those names. The properties

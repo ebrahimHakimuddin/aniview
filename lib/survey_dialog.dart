@@ -51,7 +51,7 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !_sending,
+    canPop: false,
     child: AlertDialog(
       scrollable: true,
       constraints: const BoxConstraints(maxWidth: 560),

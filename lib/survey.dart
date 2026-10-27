@@ -9,7 +9,7 @@ const subscriptionSurveyId = 'subscription_1usd_v1';
 bool _surveyOpen = false;
 
 Future<void> maybeShowSubscriptionSurvey(BuildContext context) async {
-  if (Settings.subscriptionSurveyState != null) return;
+  if (Settings.subscriptionSurveyState == 'answered') return;
   await showSubscriptionSurvey(context);
 }
 
@@ -52,8 +52,6 @@ Future<void> showSubscriptionSurvey(BuildContext context) async {
           'Thanks for sharing your thoughts. Your feedback helps shape AniView’s future.',
         );
       }
-    } else {
-      await Settings.setSubscriptionSurveyState('dismissed');
     }
   } finally {
     _surveyOpen = false;

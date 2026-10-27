@@ -7,6 +7,7 @@ import 'package:aniview/survey.dart';
 import 'package:aniview/survey_dialog.dart';
 import 'package:aniview/ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -38,6 +39,7 @@ void main() {
             builder: (context) => TextButton(
               onPressed: () => showDialog<bool>(
                 context: context,
+                barrierDismissible: false,
                 builder: (_) => SubscriptionSurveyDialog(onSubmit: submit),
               ),
               child: const Text('Open'),
@@ -48,6 +50,16 @@ void main() {
     );
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
+  }
+
+  Future<void> tryDismiss(WidgetTester tester) async {
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pump();
+    expect(find.byType(SubscriptionSurveyDialog), findsOneWidget);
   }
 
   testWidgets(
@@ -64,11 +76,13 @@ void main() {
         isNull,
       );
       expect(find.text('Not now'), findsNothing);
+      await tryDismiss(tester);
       await tester.tap(find.text(SubscriptionAnswer.pay.label));
       await tester.pump();
       await tester.tap(find.text('Submit answer'));
       await tester.pump();
       expect(answers, [SubscriptionAnswer.pay]);
+      await tryDismiss(tester);
       expect(
         tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
         isNull,
@@ -90,6 +104,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Couldn’t send'), findsOneWidget);
     expect(find.byType(SubscriptionSurveyDialog), findsOneWidget);
+    await tryDismiss(tester);
     await tester.tap(find.text('Submit answer'));
     await tester.pumpAndSettle();
     expect(attempts, 2);
@@ -97,7 +112,7 @@ void main() {
   });
 
   testWidgets(
-    'small screen and enlarged text remain scrollable and dismissible',
+    'small screen and enlarged text remain usable without allowing dismissal',
     (tester) async {
       tester.view.physicalSize = const Size(360, 640);
       tester.view.devicePixelRatio = 1;
@@ -108,15 +123,14 @@ void main() {
       await open(tester, (_) async => throw StateError('should not submit'));
       expect(tester.takeException(), isNull);
       expect(find.text('Not now'), findsNothing);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byType(SubscriptionSurveyDialog), findsNothing);
+      await tryDismiss(tester);
     },
   );
 
-  testWidgets('dismissal is persisted and automatic prompt does not repeat', (
+  testWidgets('legacy dismissal prompts again until an answer is submitted', (
     tester,
   ) async {
+    await Settings.setSubscriptionSurveyState('dismissed');
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -133,9 +147,14 @@ void main() {
       await tester.tap(find.text('Launch'));
       await tester.pumpAndSettle();
       expect(find.text('Not now'), findsNothing);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
+      expect(find.byType(SubscriptionSurveyDialog), findsOneWidget);
+      await tryDismiss(tester);
       expect(Settings.subscriptionSurveyState, 'dismissed');
+      await tester.tap(find.text(SubscriptionAnswer.donate.label));
+      await tester.pump();
+      await tester.tap(find.text('Submit answer'));
+      await tester.pumpAndSettle();
+      expect(Settings.subscriptionSurveyState, 'answered');
       await tester.tap(find.text('Launch'));
       await tester.pumpAndSettle();
       expect(find.byType(SubscriptionSurveyDialog), findsNothing);
