@@ -35,22 +35,22 @@ const changelogHighlights = <ChangelogEntry>[
   (
     icon: Icons.video_library_outlined,
     title: 'More ways to watch',
-    body: 'KickAssAnime and AnimeStream join the available sources, giving you more options for finding and watching your shows.',
+    body: 'KickAssAnime and AnimeStream join the available sources.',
   ),
   (
     icon: Icons.fast_forward_rounded,
     title: 'Filler, marked and skippable',
-    body: 'Spot filler and mixed episodes at a glance. Show every episode, collapse filler runs, or hide skipped filler. Mixed episodes stay included.',
+    body: 'Spot filler and mixed episodes, collapse filler runs, or hide skipped filler. Mixed episodes stay included.',
   ),
   (
     icon: Icons.dns_rounded,
     title: 'Your own Jellyfin',
-    body: 'Connect your Jellyfin server, choose your audio language in the player, and sync progress to your library. Request missing shows through Jellyseerr.',
+    body: 'Connect your server, select audio in the player, sync watch progress, and request missing shows through Jellyseerr.',
   ),
   (
     icon: Icons.system_update_rounded,
     title: 'Updates from inside the app',
-    body: 'Update AniView directly on Windows, macOS and Linux. AniView Beta installs beside the stable app with its own data.',
+    body: 'Update on Windows, macOS, and Linux. AniView Beta installs beside stable AniView with its own data.',
   ),
   (
     icon: Icons.build_outlined,
