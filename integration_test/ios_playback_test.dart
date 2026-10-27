@@ -12,6 +12,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:media_kit/media_kit.dart' show MediaKit;
 import 'package:path_provider/path_provider.dart';
 
+import 'native_diagnostic.dart';
+
 // First run: python3 tool/ios_media_fixture.py
 // Then: flutter test integration_test/ios_playback_test.dart -d <iPhone simulator>
 // This exercises the actual iOS libraries, not the fake PlayerBackend in unit tests.
@@ -105,6 +107,7 @@ void main() {
           ),
         ),
       );
+      await configureNativeDiagnostic(player);
       final address = await StreamAddress.instance.forPlayer(
         VideoStream(
           'Fixture',

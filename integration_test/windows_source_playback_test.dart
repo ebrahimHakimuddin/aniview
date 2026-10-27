@@ -9,6 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:media_kit/media_kit.dart' show MediaKit, NativePlayer;
 
+import 'native_diagnostic.dart';
+
 // Opt-in live Windows check. The separate native fixture is the offline control.
 // flutter test integration_test/windows_source_playback_test.dart -d windows
 String _safe(Object error) =>
@@ -71,6 +73,7 @@ void main() {
         await player.video!.platform.future.timeout(
           const Duration(seconds: 20),
         );
+        await configureNativeDiagnostic(player);
         await player.pause().timeout(const Duration(seconds: 10));
         final native = player.video!.player.platform as NativePlayer;
         final version = await native
@@ -88,7 +91,15 @@ void main() {
         final episodes = await source
             .episodesOf(id!)
             .timeout(const Duration(seconds: 60));
-        final episode = episodes.firstWhere((e) => e.number == 1180);
+        final matching = episodes.where((e) => e.number == 1180);
+        expect(
+          matching,
+          isNotEmpty,
+          reason:
+              'Source returned ${episodes.length} episodes but no episode '
+              '1180; playback was not attempted',
+        );
+        final episode = matching.first;
         stage = 'stream extraction';
         stdout.writeln('${source.name}: $stage');
         final streams = await source
@@ -133,11 +144,12 @@ void main() {
                   player.state.playing &&
                   player.state.position.inSeconds >= 12,
             );
-            expect(
-              startupErrors,
-              isEmpty,
-              reason: 'PlayerScreen would report a startup failure',
-            );
+            // Include recovered playback in assertion output: a native startup
+            // log alone does not prove decoding or the relay failed.
+            final startupEvidence =
+                'Playback reached ${player.state.position.inSeconds}s; '
+                'duration=${player.state.duration.inSeconds}s; '
+                'size=${player.state.size}; errors=$allErrors';
             stage = 'server ${index + 1}: seek';
             await player.seek(const Duration(seconds: 30));
             await until(
@@ -145,6 +157,14 @@ void main() {
                   player.state.position.inSeconds >= 32 &&
                   player.state.position.inSeconds < 45 &&
                   player.state.playing,
+            );
+            expect(
+              startupErrors,
+              isEmpty,
+              reason:
+                  'PlayerScreen would report a startup failure. '
+                  '$startupEvidence; seek reached '
+                  '${player.state.position.inSeconds}s',
             );
             stdout.writeln(
               '${source.name} server ${index + 1}: '
