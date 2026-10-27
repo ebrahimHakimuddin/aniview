@@ -46,6 +46,10 @@ requires `remote_navigation`; Android phone and iOS require `orientation`.
   relaunch, including legacy ID folders. Verify no duplicate gallery entry.
 - Unsupported external-player controls are absent on iOS/desktop. Android handoff
   saves returned progress and restores prior playback on failure.
+- TV Details: D-pad focus and selected Sub/Dub remain distinguishable in every theme; Sort is beside Play.
+  Test dub fallback both off and on, including a missing dub followed by an episode with dub, network failure,
+  and saved playback language. Customize subtitles and restart; check font, size, contrast, edge, and position.
+  Toggle the global latest-episodes row and season grouping on/off; paginate and retry without losing results.
 - Phone UI stays portrait with system auto-rotation enabled; player orientation is
   unchanged. TV navigation, focus, back and playback work with a remote.
 

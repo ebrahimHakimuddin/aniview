@@ -119,6 +119,25 @@ Progress goes to AniList only. A save AniList can't take (down, or you're offlin
 retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
 MyAnimeList get their AniList id from ani.zip when opened.
 
+## TV controls and optional browsing
+
+On TV, Sub/Dub shows both the selected audio and a distinct remote-focus highlight. Episode order sits beside
+Play on the details page.
+
+- Settings → Playback → **Use Sub when Dub is unavailable** defaults off. When enabled, an episode with no dub
+  servers tries sub and shows a message. The next episode tries the preferred audio again; history records
+  the audio actually played. Network failures do not trigger a language change. Extension streams with explicit
+  Sub/Dub labels follow the same policy. Downloads keep their selected audio.
+- Settings → Subtitles includes language, size, text color, background, shadow/outline, font, bold text, and
+  vertical position, with a text preview and appearance reset. These controls style soft subtitles; subtitles
+  burned into the video cannot be changed.
+- Settings → Home screen → Sections → **Latest episodes** defaults off. It shows recently aired anime across
+  the catalog, newest first, with explicit pagination and retry. It uses AniList airing dates, not streaming-source
+  availability, and keeps the existing adult/NSFW filters. **New episodes this week** remains the separate followed-show row.
+- Settings → Anime details → **Group related seasons** defaults off. It follows prequel/sequel links and shows
+  those entries together, including the current entry. Each keeps its own episode list and tracking ID. Long
+  chains load in batches; failed lookups retain the entries already found and offer Retry.
+
 ## New episode notifications
 
 An Android background job (`EpisodeJob.kt`) runs hourly while online, with the app closed and across reboots. It
