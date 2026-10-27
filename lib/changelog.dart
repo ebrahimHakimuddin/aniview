@@ -6,12 +6,32 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.6.0-beta.8';
+const changelogVersion = '2.6.0';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
+  (
+    icon: Icons.tv_rounded,
+    title: 'Easier watching on TV',
+    body: 'Sub/Dub has a clearer remote-focus highlight, and episode order sits beside Play. Switch servers from the player when more than one is available.',
+  ),
+  (
+    icon: Icons.subtitles_outlined,
+    title: 'Subtitles your way',
+    body: 'Customize subtitle size, color, background, text edge, font, bold text, and position in Settings, with a preview and reset. Burned-in subtitles cannot be changed.',
+  ),
+  (
+    icon: Icons.explore_outlined,
+    title: 'More ways to browse',
+    body: 'Enable Latest episodes in Home screen settings to see recently aired anime, or Group related seasons in Anime details settings to browse prequels and sequels together. Both start off.',
+  ),
+  (
+    icon: Icons.audiotrack_outlined,
+    title: 'Optional Sub fallback',
+    body: 'Enable Use Sub when Dub is unavailable in Playback settings to try Sub for an episode with no dub servers. Your preferred audio stays unchanged. This starts off.',
+  ),
   (
     icon: Icons.video_library_outlined,
     title: 'More ways to watch',
