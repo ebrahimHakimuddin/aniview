@@ -193,7 +193,14 @@ class _MediaKitBackend extends PlayerBackend {
       s.playing.listen((v) => on({'playing': v})),
       s.buffering.listen((v) => on({'buffering': v})),
       s.completed.listen((v) => on({'completed': v})),
-      s.error.listen((e) => on({'error': e})),
+      s.error.listen((e) {
+        // mpv falls back to software decoding when hardware device allocation
+        // fails. media_kit forwards this log as an error before duration arrives,
+        // which would make PlayerScreen abandon a working stream. Keep it in
+        // the native log, but let subsequent decoder/open failures report errors.
+        if (e == 'Failed to allocate AVHWDeviceContext.') return;
+        on({'error': e});
+      }),
       s.subtitle.listen((lines) => on({'cues': lines.join('\n').trim()})),
       s.tracks.listen(
         (t) => on({
