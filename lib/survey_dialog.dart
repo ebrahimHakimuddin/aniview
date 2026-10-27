@@ -65,7 +65,7 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
             const Text(
               'A subscription would support development and let me dedicate more '
               'time to maintaining the embedded servers, fixing bugs, and releasing '
-              'new features faster—while keeping the app polished and reliable.',
+              'new features faster while keeping the app polished and reliable.',
             ),
             const SizedBox(height: 16),
             RadioGroup<SubscriptionAnswer>(
@@ -87,7 +87,7 @@ class _SubscriptionSurveyDialogState extends State<SubscriptionSurveyDialog> {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Nothing is changing yet—your feedback will help me decide.',
+              'Nothing is changing yet. Your feedback will help me decide.',
             ),
             if (_error != null) ...[
               const SizedBox(height: 16),
