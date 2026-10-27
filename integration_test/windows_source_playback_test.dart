@@ -51,28 +51,12 @@ void main() {
       addTearDown(() async {
         await nativeLogs.cancel();
         await subscription.cancel();
-        await player.dispose();
+        await player.dispose().timeout(const Duration(seconds: 10));
       });
-      var stage = 'source match';
+      var stage = 'video surface initialization';
       try {
-        await player.pause();
-        final native = player.video!.player.platform as NativePlayer;
-        final version = await native.getProperty('mpv-version');
-        stdout.writeln('${source.name}: native player $version');
-        final id = await source
-            .match(media)
-            .timeout(const Duration(seconds: 60));
-        expect(id, isNotNull);
-        stage = 'episode listing';
-        final episodes = await source
-            .episodesOf(id!)
-            .timeout(const Duration(seconds: 60));
-        final episode = episodes.firstWhere((e) => e.number == 1180);
-        stage = 'stream extraction';
-        final streams = await source
-            .streams(media, episode, dub: false)
-            .timeout(const Duration(seconds: 90));
-        expect(streams, isNotEmpty);
+        // VideoController waits for a post-frame callback before completing
+        // initialization. Native commands wait for that controller in turn.
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
@@ -83,6 +67,34 @@ void main() {
             ),
           ),
         );
+        stdout.writeln('${source.name}: $stage');
+        await player.video!.platform.future.timeout(
+          const Duration(seconds: 20),
+        );
+        await player.pause().timeout(const Duration(seconds: 10));
+        final native = player.video!.player.platform as NativePlayer;
+        final version = await native
+            .getProperty('mpv-version')
+            .timeout(const Duration(seconds: 10));
+        stdout.writeln('${source.name}: native player $version');
+        stage = 'source match';
+        stdout.writeln('${source.name}: $stage');
+        final id = await source
+            .match(media)
+            .timeout(const Duration(seconds: 60));
+        expect(id, isNotNull);
+        stage = 'episode listing';
+        stdout.writeln('${source.name}: $stage');
+        final episodes = await source
+            .episodesOf(id!)
+            .timeout(const Duration(seconds: 60));
+        final episode = episodes.firstWhere((e) => e.number == 1180);
+        stage = 'stream extraction';
+        stdout.writeln('${source.name}: $stage');
+        final streams = await source
+            .streams(media, episode, dub: false)
+            .timeout(const Duration(seconds: 90));
+        expect(streams, isNotEmpty);
 
         Future<void> until(bool Function() ready) async {
           final deadline = DateTime.now().add(const Duration(seconds: 45));
@@ -98,10 +110,12 @@ void main() {
           allErrors.clear();
           try {
             stage = 'server ${index + 1}: relay setup';
+            stdout.writeln('${source.name}: $stage');
             final address = await StreamAddress.instance
                 .forPlayer(stream)
                 .timeout(const Duration(seconds: 45));
             stage = 'server ${index + 1}: native open at 10 seconds';
+            stdout.writeln('${source.name}: $stage');
             await player
                 .load(
                   address.url,

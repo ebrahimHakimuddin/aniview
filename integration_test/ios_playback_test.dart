@@ -42,15 +42,35 @@ void main() {
         defaultValue: 'http://127.0.0.1:8765',
       );
       const headers = {'X-AniView-Fixture': '1'};
+      // Verify the fixture is still reachable from inside the app process.
+      final preflight = await http
+          .get(Uri.parse('$origin/index.m3u8'), headers: headers)
+          .timeout(const Duration(seconds: 10));
+      expect(preflight.statusCode, 200, reason: 'Fixture HTTP preflight');
+      expect(preflight.body, startsWith('#EXTM3U'));
+      stdout.writeln('Fixture HTTP preflight passed');
       final directory = await Directory(
         '${(await getApplicationSupportDirectory()).path}/playback-smoke',
       ).create(recursive: true);
       final player = ExoPlayer();
       final errors = <String>[];
-      final subscription = player.stream.error.listen(errors.add);
+      String safe(Object error) => '$error'.replaceAll(
+        RegExp(r'''https?://[^\s"'<>]+'''),
+        '<redacted URL>',
+      );
+      final subscription = player.stream.error.listen((error) {
+        errors.add(safe(error));
+        stdout.writeln('Fixture player error: ${safe(error)}');
+      });
+      final nativeLogs = player.video?.player.stream.log.listen((log) {
+        if (log.level == 'error' || log.level == 'fatal') {
+          stdout.writeln('Fixture native ${log.prefix}: ${safe(log.text)}');
+        }
+      });
       addTearDown(() async {
+        await nativeLogs?.cancel();
         await subscription.cancel();
-        await player.dispose();
+        await player.dispose().timeout(const Duration(seconds: 10));
         await directory.delete(recursive: true);
       });
 
@@ -93,6 +113,12 @@ void main() {
           subtitles: [Subtitle('English', '$origin/en.vtt')],
         ),
       );
+      final relay = await http
+          .get(Uri.parse(address.url))
+          .timeout(const Duration(seconds: 10));
+      expect(relay.statusCode, 200, reason: 'Relay HTTP preflight');
+      expect(relay.body, startsWith('#EXTM3U'));
+      stdout.writeln('Relay HTTP preflight passed; opening native video');
       final shown = await player.load(
         address.url,
         headers: address.headers,
@@ -102,7 +128,11 @@ void main() {
         subtitleFile: 'English',
         rate: 1.5,
       );
-      expect(shown, 'English');
+      expect(
+        shown,
+        'English',
+        reason: 'duration=${player.state.duration}; errors=$errors',
+      );
       await until(
         () => player.state.size != null && player.state.position.inSeconds >= 4,
       );

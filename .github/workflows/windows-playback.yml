@@ -46,11 +46,13 @@ jobs:
           if (-not $ready) { throw 'Fixture server did not become ready' }
       - name: Native synthetic playback control
         id: fixture
+        timeout-minutes: 12
         shell: pwsh
         run: |
           flutter test integration_test/native_playback_test.dart -d windows --reporter expanded 2>&1 | Tee-Object diagnostic-logs/native-fixture.log
           exit $LASTEXITCODE
       - name: Live One Piece 1180 playback
+        timeout-minutes: 20
         if: ${{ !cancelled() && steps.fixture.outcome != 'skipped' }}
         shell: pwsh
         run: |
