@@ -210,10 +210,20 @@ void main() {
       )) {
         await save(line);
       }
+      final offline = await StreamAddress.instance.forPlayer(
+        VideoStream(
+          'Downloaded fixture',
+          '${directory.path}/index.m3u8',
+          const {},
+          subtitles: [Subtitle('English', '${directory.path}/en.vtt')],
+        ),
+      );
       final offlineSubtitle = await player.load(
-        '${directory.path}/index.m3u8',
+        offline.url,
+        headers: offline.headers,
+        hls: offline.hls,
         start: const Duration(seconds: 6),
-        subtitles: [(url: '${directory.path}/en.vtt', label: 'English')],
+        subtitles: offline.subtitles,
         subtitleFile: 'English',
       );
       expect(
@@ -227,6 +237,7 @@ void main() {
       await until(
         () => player.state.position.inSeconds >= 6 && player.state.playing,
       );
+      expect(player.state.duration.inSeconds, greaterThanOrEqualTo(19));
       await player.stop();
 
       // Two embedded audio tracks in a local MP4, with no server needed for playback.

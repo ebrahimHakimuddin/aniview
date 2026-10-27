@@ -127,6 +127,15 @@ void main() {
             .episodesOf(id!)
             .timeout(const Duration(seconds: 60));
         final matching = episodes.where((e) => e.number == 1180);
+        // AnimeStream is supplemental coverage, not one of the two sources in
+        // the reported failure. An unavailable episode cannot test playback.
+        if (matching.isEmpty && source is AnimeStream) {
+          markTestSkipped(
+            'AnimeStream returned ${episodes.length} episodes without 1180; '
+            'no playback coverage for this source',
+          );
+          return;
+        }
         expect(
           matching,
           isNotEmpty,
