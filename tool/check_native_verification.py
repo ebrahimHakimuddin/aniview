@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail release packaging unless every native target has evidence for this commit."""
+"""Block publication unless every native target has evidence for this commit."""
 import argparse
 import json
 from pathlib import Path

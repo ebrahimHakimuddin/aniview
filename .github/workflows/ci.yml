@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      prepare_draft:
+        description: Attach test packages to an unpublished GitHub draft (never publishes)
+        type: boolean
+        default: false
       native_verification_run:
         description: Run ID containing the native-verification artifact (report.json) for this exact commit
         type: string
@@ -89,10 +93,11 @@ jobs:
       - run: flutter build ${{ matrix.target }}
 
   # Linux isn't here: flutter_inappwebview_linux needs WPE WebKit 2.50+, which Ubuntu's runners don't have, so tool/appimage.sh runs on a machine that does.
-  # Packages require device evidence; compilation alone is never native certification.
+  # Optional certification for a later publication. Test packages can be built first.
+  # Publishing still requires this job to pass for the exact release commit.
   native-release-gate:
     needs: check
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' && inputs.native_verification_run != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -103,16 +108,18 @@ jobs:
           VERIFICATION_RUN: ${{ inputs.native_verification_run }}
           EXPECTED_SHA: ${{ github.sha }}
         run: |
-          test -n "$VERIFICATION_RUN" || { echo 'Native device verification is required before release packaging.'; exit 1; }
-          actual=$(gh run view "$VERIFICATION_RUN" --json headSha --jq .headSha)
+          gh api "repos/$GH_REPO/actions/runs/$VERIFICATION_RUN" > verification-run.json
+          actual=$(jq -r .head_sha verification-run.json)
           test "$actual" = "$EXPECTED_SHA" || { echo 'Verification run is for a different commit'; exit 1; }
+          jq -e '.conclusion == "success" and .path == ".github/workflows/native-verification.yml"' verification-run.json
           gh run download "$VERIFICATION_RUN" --name native-verification --dir native-evidence
           python3 tool/check_native_verification.py native-evidence/report.json --commit "$EXPECTED_SHA"
 
-  # Release builds you can download from the run page; the defines come from the DART_DEFINES secret (the contents of dart_defines.env).
+  # Unverified test packages; building them does not authorize publication.
+  # The defines come from the DART_DEFINES secret (the contents of dart_defines.env).
   # With the beta input, every package is AniView Beta: its own app id, name and file names (AniView-Beta-*).
   package:
-    needs: [check, native-release-gate]
+    needs: check
     if: github.event_name != 'pull_request'
     env:
       ANIVIEW_BETA: ${{ inputs.beta && '1' || '' }}
@@ -191,3 +198,49 @@ jobs:
         with:
           name: aniview-${{ matrix.target }}
           path: ${{ matrix.out }}
+          if-no-files-found: error
+
+  # Explicitly requested drafts only. This job never publishes or announces.
+  draft:
+    needs: [check, ios, build, package]
+    if: github.event_name == 'workflow_dispatch' && inputs.prepare_draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Attach packages to an unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          BETA: ${{ inputs.beta }}
+        run: |
+          version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
+          if [[ "$BETA" == true && "$version" != *-beta.* ]] || [[ "$BETA" != true && "$version" == *-* ]]; then
+            echo 'Package channel does not match pubspec version'; exit 1
+          fi
+          tag="v$version"
+          gh api --paginate "repos/$GH_REPO/releases" --jq ".[] | select(.tag_name == \"$tag\")" > existing.json
+          if [ -s existing.json ]; then
+            jq -e --arg sha "$EXPECTED_SHA" '.draft == true and .target_commitish == $sha' existing.json
+          else
+            python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('lib/changelog.dart').read_text()
+          entries = re.findall(r"title: '([^']*)',\s+body: '([^']*)'", text)
+          if not entries:
+              raise SystemExit('No changelog entries found')
+          Path('notes.md').write_text('\n\n'.join(f'**{title}**\n{body}' for title, body in entries) + '\n')
+          PY
+            gh release create "$tag" --draft --target "$EXPECTED_SHA" --title "AniView $version" --notes-file notes.md
+          fi
+          gh run download "$RUN_ID" --pattern 'aniview-*' --dir packages
+          mapfile -d '' assets < <(find packages -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.ipa' \) -print0)
+          test "${#assets[@]}" -ge 3 || { echo 'Expected Windows, macOS and iOS packages'; exit 1; }
+          gh release upload "$tag" "${assets[@]}" --clobber
+          gh release view "$tag" --json isDraft --jq .isDraft | grep -qx true
+          echo 'Draft packages uploaded. Native verification and explicit approval are required before publication.' >> "$GITHUB_STEP_SUMMARY"

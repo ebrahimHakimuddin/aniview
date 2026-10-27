@@ -1,8 +1,11 @@
 # Native release verification
 
-Release packaging in CI depends on `native-release-gate`. Builds and unit tests
-remain useful checks, but do not certify native behavior. Missing, failed, skipped,
-or pending native outcomes block packaging. Evidence must match the exact commit.
+CI builds unverified test packages before device verification. Dispatch CI with
+`prepare_draft=true` to attach Windows, macOS and iOS packages to an unpublished
+GitHub draft. Android and Linux test packages are built locally. Builds and unit
+tests do not certify native behavior. Publication requires a passing
+`native-release-gate` for the exact commit: missing, failed, skipped, or pending
+native outcomes block publication. Never publish a draft based only on package success.
 No platform has been certified by adding this gate.
 
 1. Build the candidate commit on Android phone, Android TV, iOS device, Linux,
@@ -21,6 +24,8 @@ No platform has been certified by adding this gate.
 4. Submit the JSON report through **Native verification evidence** on the candidate
    ref. Then dispatch **CI** on the same ref, supplying that run ID in
    `native_verification_run`. A changed commit requires new verification.
+   Confirm `native-release-gate` passed before any publication. Without a report
+   this job is skipped, which permits draft packaging but does not authorize publication.
    The evidence workflow validates reports; it does not run devices or infer passes.
 
 Each target requires `sign_in_callback`, `source_loading`, `native_playback`,
@@ -76,5 +81,7 @@ Report shape (repeat for all six platform keys; never fill untested checks with 
 Validate locally with `python3 tool/check_native_verification.py report.json --commit SHA`.
 The gate checks report completeness and commit identity; the tester owns the
 accuracy of evidence. Keep pending/failed outcomes in reports so blockers remain visible.
-Local packaging scripts produce development artifacts; publish only artifacts from
-the gated CI run, after all native outcomes pass.
+Keep test packages in the draft until all native outcomes pass for their source
+commit and the maintainer explicitly approves publication. The draft-upload job
+refuses published releases or drafts targeting another commit. There is no automatic
+publisher; maintainers must check the successful gate before publishing manually.
