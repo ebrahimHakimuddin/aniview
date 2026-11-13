@@ -302,4 +302,46 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
     });
   });
+
+  testWidgets('media_kit ignores an error once the video has loaded', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'resume': false});
+    await Settings.load();
+    expect(usesMediaKit, isTrue);
+    final previous = configureQuality;
+    configureQuality = (_, _) async => const [];
+    addTearDown(() => configureQuality = previous);
+    final backend = Backend();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: PlayerScreen(
+          media: {
+            'id': 7007008,
+            'title': {'romaji': 'Fixture'},
+          },
+          source: ServersSource([
+            VideoStream('Live', 'https://live.test/video.mp4', {}),
+            VideoStream('Other', 'https://other.test/video.mp4', {}),
+          ]),
+          episodes: [Episode(1, ref: '1')],
+          index: 0,
+          dub: false,
+          backend: backend,
+        ),
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(backend.opened, ['https://live.test/video.mp4']);
+    backend.emit({'error': 'demuxer: some log line'});
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(backend.opened, ['https://live.test/video.mp4']);
+    expect(find.text("Couldn't play this episode"), findsNothing);
+    expect(find.textContaining('reloading'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
