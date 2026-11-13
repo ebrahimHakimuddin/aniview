@@ -278,6 +278,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     onRemoteSeek = (to) =>
         player.seek(PlaybackSession.clamp(to, player.state.duration));
     _lifecycle;
+    player.playingOn.addListener(_movedOffMpv);
     player.setQuality(Settings.streamQuality).ignore();
     ScreenBrightness().application.then((v) => brightness = v).ignore();
     Analytics.screen('/player', title: 'Player');
