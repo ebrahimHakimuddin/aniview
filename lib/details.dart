@@ -983,7 +983,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _orderButton(bool newestFirst) => TextButton.icon(
     onPressed: () => setState(() {
       Settings.newestFirst = newestFirstPicked = !newestFirst;
-      page = null;
+      page = 0; // the start of the new order, not the page holding up next
     }),
     icon: const Icon(Icons.swap_vert_rounded, size: 18),
     label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
