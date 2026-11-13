@@ -243,7 +243,7 @@ class PartySession {
   /// Leaves the room; when the host leaves, the room ends for everyone.
   Future<void> leave() async {
     if (_ended) return;
-    _send({'t': 'bye'});
+    _send({'t': 'bye'}, always: true);
     _end();
     await transport.close();
   }
@@ -644,11 +644,12 @@ class PartySession {
     _changed();
   }
 
-  /// Sends [body], keeping ourselves to 5 messages a second, the most peers accept.
-  bool _send(Map<String, Object?> body) {
+  /// Sends [body], keeping ourselves to 5 messages a second unless it must go [always]: a goodbye lost to the
+  /// limit would leave the room waiting out the host's silence.
+  bool _send(Map<String, Object?> body, {bool always = false}) {
     final now = _clock();
     _sentAt.removeWhere((t) => now - t >= 1000);
-    if (_ended || _sentAt.length >= 5) return false;
+    if (_ended || (!always && _sentAt.length >= 5)) return false;
     _sentAt.add(now);
     _lastSent = now;
     transport.send(jsonEncode({...body, 'from': id, 'n': _n++})).ignore();
