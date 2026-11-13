@@ -95,18 +95,26 @@ analyze clean, 381 tests passing.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 005  | Stop a queued progress save from overwriting a newer one | P0 | S | — | DONE, reviewed (`advisor/005-superseded-queued-saves` `dfd15b3`; awaiting merge) |
-| 006  | Bound every network wait; keep the MyAnimeList session when renewal fails temporarily | P0 | S–M | — | DONE, reviewed (`advisor/006-bound-network-waits` `242da04`; executor died mid-run, finished by the reviewer; awaiting merge) |
-| 007  | Try the next server when one fails before the player loads (iOS, desktop) | P1 | S–M | — | DONE, reviewed (`advisor/007-fallback-before-load` `f0baf73`; tests rewritten by the reviewer; awaiting merge) |
-| 008  | Read every airing slot for Schedule and episode notifications | P1 | S | — (same file as 006, different function) | DONE, reviewed (`advisor/008-read-all-airing-slots` `2f7beac`; Kotlin compiled, not run on a device; awaiting merge) |
-| 009  | Give two shows with the same title separate download folders | P1 | S | — | DONE, reviewed (`advisor/009-download-folder-per-show` `a74df5b`; awaiting merge) |
-| 010  | KickAssAnime: one failing server must not fail the episode | P2 | S | — | DONE, reviewed (`advisor/010-kickassanime-isolate-servers` 14c4098, includes a reviewer follow-up commit; awaiting merge) |
+| 005  | Stop a queued progress save from overwriting a newer one | P0 | S | — | DONE, reviewed (`advisor/005-superseded-queued-saves` `dfd15b3`; merged) |
+| 006  | Bound every network wait; keep the MyAnimeList session when renewal fails temporarily | P0 | S–M | — | DONE, reviewed (`advisor/006-bound-network-waits` `242da04`; executor died mid-run, finished by the reviewer; merged) |
+| 007  | Try the next server when one fails before the player loads (iOS, desktop) | P1 | S–M | — | DONE, reviewed (`advisor/007-fallback-before-load` `f0baf73`; tests rewritten by the reviewer; merged) |
+| 008  | Read every airing slot for Schedule and episode notifications | P1 | S | — (same file as 006, different function) | DONE, reviewed (`advisor/008-read-all-airing-slots` `2f7beac`; Kotlin compiled, not run on a device; merged) |
+| 009  | Give two shows with the same title separate download folders | P1 | S | — | DONE, reviewed (`advisor/009-download-folder-per-show` `a74df5b`; merged) |
+| 010  | KickAssAnime: one failing server must not fail the episode | P2 | S | — | DONE, reviewed (`advisor/010-kickassanime-isolate-servers` 14c4098, includes a reviewer follow-up commit; merged) |
 
-Vetted in the same audit and not planned yet: player errors after load on Android (needs a device), index write
-versus file deletion order in `Downloads.remove` (needs a decision for a full disk), TV pairing without confirmation
-on the TV (needs a UX decision), show titles in analytics page views, desktop "Group related seasons" and analytics,
-MyAnimeList described as read-only in `README.md`/`CONTEXT.md`, no disk cache for posters, `.fvmrc` floating while CI
-pins Flutter 3.47.3.
+Second batch, same day. Plans 005–010 and 011–015 are all merged into `main`; with everything merged, analyze is clean
+and 404 tests pass.
+
+| Plan | Title | Priority | Effort | Status |
+|------|-------|----------|--------|--------|
+| 011  | Recover or report when the Android player fails mid-episode | P1 | M | DONE, merged (`60e88eb`); needs a run on an Android device |
+| 012  | Deleting a download must not leave the index and the disk disagreeing | P1 | M | DONE, merged (`eab6855`) |
+| 013  | Pairing a phone needs a confirmation on the TV | P1 | M | DONE, merged (`3be9a13`); needs a run on a TV and a phone |
+| 014  | Desktop honours "Group related seasons" and reports screen views | P2 | S–M | DONE, merged (`80a6c7b`, `d7eb943`) |
+| 015  | Keep posters on disk between launches | P2 | M | DONE, merged (`2df4a94`) |
+
+Also done directly: `README.md`/`CONTEXT.md` no longer call MyAnimeList read-only (`bd9facf`). Left as is: show titles in
+analytics page views (the show's id is already sent), and `.fvmrc` floating while CI pins Flutter 3.47.3.
 
 ## Platform parity audit · 2026-10-27
 
