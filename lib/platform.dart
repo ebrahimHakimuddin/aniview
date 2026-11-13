@@ -10,13 +10,23 @@ bool isDesktop = Platform.isLinux || Platform.isWindows || Platform.isMacOS;
 
 /// Android keeps Media3; iOS links media_kit_libs_ios_video, not a desktop binary.
 bool get supportsExternalPlayer => Platform.isAndroid;
-bool get usesMediaKit =>
-    videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit;
+
+/// The OS the player is set up for (`Platform.operatingSystem`); a test sets it to play as another.
+String playbackOs = Platform.operatingSystem;
+
+/// Whether every video plays through mpv here (iOS and desktop). Android plays through Media3 unless upscaling is
+/// on when a player opens (see [videoBackendFor]), and each player keeps the backend it opened with.
+bool get usesMediaKit => videoBackendFor(playbackOs) == VideoBackend.mediaKit;
+
+/// Android, where the player is Media3 unless upscaling asks for mpv.
+bool get playsOnAndroid => playbackOs == 'android';
 
 enum VideoBackend { exoPlayer, mediaKit }
 
-VideoBackend videoBackendFor(String os) => switch (os) {
-  'android' => VideoBackend.exoPlayer,
+/// What plays video on [os]: mpv (media_kit) on iOS and desktop; on Android Media3, or mpv for a player opened with
+/// [upscale] on, since only mpv runs the Anime4K shaders.
+VideoBackend videoBackendFor(String os, {bool upscale = false}) => switch (os) {
+  'android' => upscale ? VideoBackend.mediaKit : VideoBackend.exoPlayer,
   'ios' || 'macos' || 'linux' || 'windows' => VideoBackend.mediaKit,
   _ => throw UnsupportedError('Video playback is not available on $os'),
 };

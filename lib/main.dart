@@ -26,7 +26,8 @@ Future<void> main() async {
   if (Platform.isIOS) AppLinks();
   // Watch party invites (aniview://party/<code>) open the join dialog; Android, iOS and desktop.
   listenForPartyLinks();
-  // iOS and desktop bundle their own libmpv. Android keeps ExoPlayer and has no libmpv. On Linux,
+  // iOS and desktop bundle their own libmpv. Android plays through ExoPlayer and loads its libmpv only when an
+  // upscaling player first needs it (exo.dart), so it isn't initialized here. On Linux,
   // name the soname the video plugin links: plain 'libmpv.so' can load the host's copy beside an AppImage's own, and
   // two libmpvs abort on the first video.
   if (videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit) {

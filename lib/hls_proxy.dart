@@ -189,15 +189,16 @@ class HlsProxy {
         );
         response.write(
           rewritePlaylist(
-            // Limit desktop probing to the selected variant, retaining its audio.
+            // Limit mpv's probing to the selected variant, retaining its audio: every stream on iOS and desktop,
+            // and on Android those an upscaling player (mpv) set a cap for in configureQuality.
             switch (selectPlaylistAudio(
               utf8.decode(body, allowMalformed: true),
               _audioLanguages[int.parse(id)],
             )) {
-              final text when usesMediaKit => oneVariant(
-                text,
-                maxHeight: _qualityCaps[int.parse(id)] ?? 0,
-              ),
+              final text
+                  when usesMediaKit ||
+                      _qualityCaps.containsKey(int.parse(id)) =>
+                oneVariant(text, maxHeight: _qualityCaps[int.parse(id)] ?? 0),
               final text => text,
             },
             upstream,

@@ -494,12 +494,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ('appearance', 'Appearance', Icons.palette_outlined, _appearance),
     ('home', 'Home & search', Icons.home_outlined, _homeAndSearch),
     ('playback', 'Playback', Icons.play_circle_outline_rounded, _playback),
-    (
-      'video',
-      'Video enhancement',
-      Icons.auto_awesome_outlined,
-      usesMediaKit ? _video : null,
-    ),
+    ('video', 'Video enhancement', Icons.auto_awesome_outlined, _video),
     ('subtitles', 'Subtitles', Icons.subtitles_outlined, _subtitles),
     ('sources', 'Sources & extensions', Icons.extension_outlined, _sources),
     (
@@ -527,20 +522,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Groups of a single row, which sits on the top list rather than a page of its own.
   static const _rowGroups = {'devices', 'notifications'};
 
-  /// Only where the player is mpv, which runs the shaders: not Android's Media3.
-  List<Widget> _video() => [
-    _Choice(
-      title: 'Anime upscaling (Anime4K)',
-      value: Settings.upscale.label,
-      subtitle: 'Sharpens anime shown larger than its source; uses more GPU',
-      onTap: () => _choose(
-        'Anime upscaling (Anime4K)',
-        {for (final t in Upscale.values) t: t.label},
-        Settings.upscale,
-        (v) => Settings.upscale = v,
+  /// mpv runs the shaders. Android plays through Media3, and through mpv instead for a video opened with upscaling
+  /// on, so there it applies from the next video and costs battery; a TV box gets Off and Fast only.
+  List<Widget> _video() {
+    final tv = playsOnAndroid && deviceIsTv;
+    final tier = offeredTier(Settings.upscale, tv: tv);
+    return [
+      _Choice(
+        title: 'Anime upscaling (Anime4K)',
+        value: tier.label,
+        subtitle: playsOnAndroid
+            ? 'Sharpens anime shown larger than its source; uses more battery. '
+                  'Applies from the next video'
+            : 'Sharpens anime shown larger than its source; uses more GPU',
+        onTap: () => _choose(
+          'Anime upscaling (Anime4K)',
+          {for (final t in upscaleTiers(tv: tv)) t: t.label},
+          tier,
+          (v) => Settings.upscale = v,
+        ),
       ),
-    ),
-  ];
+    ];
+  }
 
   List<Widget> _accounts() => [
     for (final p in [Tracker.anilist, Tracker.mal])
