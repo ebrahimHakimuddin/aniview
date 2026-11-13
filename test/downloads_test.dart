@@ -105,6 +105,7 @@ void main() {
   );
 
   desktopFolderTests();
+  sameTitleTests();
   test('one unreadable download is skipped, not the whole list', () {
     final good = Download(
       media: {'id': 1},
@@ -196,5 +197,87 @@ void desktopFolderTests() {
     expect(File('${b.path}/AniView/abc/ep.ts').existsSync(), isTrue);
     expect(Directory('${a.path}/AniView/abc').existsSync(), isFalse);
     expect(Settings.desktopDownloadFolder, b.path);
+  });
+}
+
+Download _episode(int id, num number, {String? folder}) => Download(
+  media: {
+    'id': id,
+    'title': {'romaji': 'Hunter x Hunter'},
+  },
+  source: 'Anikoto',
+  number: number,
+  dub: false,
+  ref: '$number',
+  status: DownloadStatus.done,
+  storagePath: folder,
+);
+
+void sameTitleTests() {
+  test('a show downloaded alone keeps the plain title folder', () {
+    final only = _episode(1, 1);
+    expect(newDownloadFolder(only, [only]), 'Hunter x Hunter/Episode 1-sub');
+  });
+
+  test('same-titled shows get separate folders, a show never splits', () {
+    final first = _episode(1, 1);
+    first.storagePath = newDownloadFolder(first, [first]);
+    final second = _episode(2, 1);
+    second.storagePath = newDownloadFolder(second, [first, second]);
+    expect(first.relativeFolder, 'Hunter x Hunter/Episode 1-sub');
+    expect(second.relativeFolder, 'Hunter x Hunter [2]/Episode 1-sub');
+
+    final next = _episode(2, 2);
+    expect(
+      newDownloadFolder(next, [first, second, next]),
+      'Hunter x Hunter [2]/Episode 2-sub',
+    );
+    final firstNext = _episode(1, 2);
+    expect(
+      newDownloadFolder(firstNext, [first, second, firstNext]),
+      'Hunter x Hunter/Episode 2-sub',
+    );
+  });
+
+  test('a title differing only in case still gets its own folder', () {
+    final first = _episode(1, 1, folder: 'hunter x hunter/Episode 1-sub');
+    final second = _episode(2, 1);
+    expect(
+      newDownloadFolder(second, [first, second]),
+      'Hunter x Hunter [2]/Episode 1-sub',
+    );
+  });
+
+  test('removing one show leaves the same-titled show on disk', () async {
+    final parent = Directory.systemTemp.createTempSync('aniview_same_title');
+    addTearDown(() => parent.deleteSync(recursive: true));
+    final root = Directory('${parent.path}/AniView')..createSync();
+    final first = _episode(1, 1, folder: 'Hunter x Hunter/Episode 1-sub');
+    final second = _episode(2, 1, folder: 'Hunter x Hunter [2]/Episode 1-sub');
+    for (final d in [first, second]) {
+      File('${root.path}/${d.relativeFolder}/index.m3u8')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('#EXTM3U');
+    }
+    await DownloadStore(root)
+        .write(jsonEncode([first.toJson(), second.toJson()]));
+    SharedPreferences.setMockInitialValues({
+      'desktop_download_folder': parent.path,
+    });
+    await Settings.load();
+    await Downloads.instance.load();
+
+    await Downloads.instance.remove(Downloads.instance.items.first);
+
+    expect(
+      Directory('${root.path}/Hunter x Hunter/Episode 1-sub').existsSync(),
+      isFalse,
+    );
+    expect(
+      File('${root.path}/Hunter x Hunter [2]/Episode 1-sub/index.m3u8')
+          .existsSync(),
+      isTrue,
+    );
+    expect([for (final d in Downloads.instance.items) d.media['id']], [2]);
   });
 }
