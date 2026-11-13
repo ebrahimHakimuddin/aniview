@@ -1,0 +1,96 @@
+name: Windows playback diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [diagnostic/windows-playback]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-playback-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playback:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.47.3
+          cache: true
+      - run: flutter pub get
+      - name: Native synthetic playback control (software decoding)
+        id: fixture
+        timeout-minutes: 14
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force diagnostic-logs | Out-Null
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $env:Path
+          }
+          $process = Start-Process python -ArgumentList '-u', 'tool/ios_media_fixture.py' -PassThru -RedirectStandardOutput diagnostic-logs/fixture-server.log -RedirectStandardError diagnostic-logs/fixture-server-errors.log
+          $process.Id | Set-Content diagnostic-logs/fixture.pid
+          # Keep the fixture in the same PowerShell step as its consumer.
+          # A child started by a completed step may not survive on Windows.
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 120; $i++) {
+              if ($process.HasExited) { throw 'Fixture process exited before it was ready' }
+              try {
+                $response = Invoke-WebRequest 'http://127.0.0.1:8765/index.m3u8' -Headers @{'X-AniView-Fixture' = '1'} -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $ready = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Fixture server did not become ready' }
+            flutter test integration_test/native_playback_test.dart -d windows --dart-define=WINDOWS_SOFTWARE_CONTROL=true --reporter expanded 2>&1 | Tee-Object diagnostic-logs/native-fixture.log
+            $testExit = $LASTEXITCODE
+          } finally {
+            Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+          }
+          exit $testExit
+      - name: Live One Piece 1180 software control
+        timeout-minutes: 12
+        if: ${{ !cancelled() && steps.fixture.outcome != 'skipped' }}
+        shell: pwsh
+        run: |
+          flutter test integration_test/windows_source_playback_test.dart -d windows --dart-define=WINDOWS_SOFTWARE_CONTROL=true --reporter expanded 2>&1 | Tee-Object diagnostic-logs/live-software.log
+          exit $LASTEXITCODE
+      - name: Live One Piece 1180 default player
+        timeout-minutes: 12
+        if: ${{ !cancelled() && steps.fixture.outcome != 'skipped' }}
+        shell: pwsh
+        run: |
+          flutter test integration_test/windows_source_playback_test.dart -d windows --reporter expanded 2>&1 | Tee-Object diagnostic-logs/live-sources.log
+          exit $LASTEXITCODE
+      - name: Record bundled player and scope
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force diagnostic-logs | Out-Null
+          Get-ChildItem build/windows -Recurse -Filter '*mpv*.dll' -ErrorAction SilentlyContinue | Get-FileHash -Algorithm SHA256 | Format-List | Out-File diagnostic-logs/player-library.txt
+          @'
+          Tests run on Windows Server 2022 using the Windows app and bundled media_kit libraries.
+          Synthetic and live software controls use hwdec=no and ao=null for the hosted runner.
+          A separate live run retains default player settings and startup-error assertions.
+          Controls do not certify GPU decoding or audible output.
+          Live checks cover One Piece episode 1180 (sub), startup, resume and seek.
+          This is diagnostic evidence, not Windows 11 GPU certification or release approval.
+          '@ | Out-File diagnostic-logs/scope.txt
+          Get-Content diagnostic-logs/scope.txt >> $env:GITHUB_STEP_SUMMARY
+          if (Test-Path diagnostic-logs/fixture.pid) {
+            Stop-Process -Id (Get-Content diagnostic-logs/fixture.pid) -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: windows-playback-diagnostic
+          path: diagnostic-logs/
+          if-no-files-found: warn
+          retention-days: 7
