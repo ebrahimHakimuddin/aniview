@@ -12,6 +12,8 @@ import 'package:integration_test/integration_test.dart';
 import 'package:media_kit/media_kit.dart' show MediaKit;
 import 'package:path_provider/path_provider.dart';
 
+import 'native_diagnostic.dart';
+
 // First run: python3 tool/ios_media_fixture.py
 // Then: flutter test integration_test/ios_playback_test.dart -d <iPhone simulator>
 // This exercises the actual iOS libraries, not the fake PlayerBackend in unit tests.
@@ -42,15 +44,38 @@ void main() {
         defaultValue: 'http://127.0.0.1:8765',
       );
       const headers = {'X-AniView-Fixture': '1'};
+      // Verify the fixture is still reachable from inside the app process.
+      final preflight = await http
+          .get(Uri.parse('$origin/index.m3u8'), headers: headers)
+          .timeout(const Duration(seconds: 10));
+      expect(preflight.statusCode, 200, reason: 'Fixture HTTP preflight');
+      expect(preflight.body, startsWith('#EXTM3U'));
+      stdout.writeln('Fixture HTTP preflight passed');
       final directory = await Directory(
         '${(await getApplicationSupportDirectory()).path}/playback-smoke',
       ).create(recursive: true);
       final player = ExoPlayer();
       final errors = <String>[];
-      final subscription = player.stream.error.listen(errors.add);
+      var stage = 'online HLS';
+      final nativeErrors = <String>[];
+      String safe(Object error) => '$error'.replaceAll(
+        RegExp(r'''https?://[^\s"'<>]+'''),
+        '<redacted URL>',
+      );
+      final subscription = player.stream.error.listen((error) {
+        errors.add(safe(error));
+        stdout.writeln('Fixture player error: ${safe(error)}');
+      });
+      final nativeLogs = player.video?.player.stream.log.listen((log) {
+        if (log.level == 'error' || log.level == 'fatal') {
+          nativeErrors.add('${log.prefix}: ${safe(log.text)}');
+          stdout.writeln('Fixture native ${log.prefix}: ${safe(log.text)}');
+        }
+      });
       addTearDown(() async {
+        await nativeLogs?.cancel();
         await subscription.cancel();
-        await player.dispose();
+        await player.dispose().timeout(const Duration(seconds: 10));
         await directory.delete(recursive: true);
       });
 
@@ -62,7 +87,12 @@ void main() {
         expect(
           ready(),
           isTrue,
-          reason: 'Native player timed out; errors: $errors',
+          reason:
+              '$stage timed out; position=${player.state.position}; '
+              'duration=${player.state.duration}; playing=${player.state.playing}; '
+              'completed=${player.state.completed}; '
+              'subtitles=${player.state.subtitles.map((t) => t.name).toList()}; '
+              'errors=$errors; native=$nativeErrors',
         );
       }
 
@@ -85,6 +115,7 @@ void main() {
           ),
         ),
       );
+      await configureNativeDiagnostic(player);
       final address = await StreamAddress.instance.forPlayer(
         VideoStream(
           'Fixture',
@@ -93,6 +124,12 @@ void main() {
           subtitles: [Subtitle('English', '$origin/en.vtt')],
         ),
       );
+      final relay = await http
+          .get(Uri.parse(address.url))
+          .timeout(const Duration(seconds: 10));
+      expect(relay.statusCode, 200, reason: 'Relay HTTP preflight');
+      expect(relay.body, startsWith('#EXTM3U'));
+      stdout.writeln('Relay HTTP preflight passed; opening native video');
       final shown = await player.load(
         address.url,
         headers: address.headers,
@@ -102,7 +139,11 @@ void main() {
         subtitleFile: 'English',
         rate: 1.5,
       );
-      expect(shown, 'English');
+      expect(
+        shown,
+        'English',
+        reason: 'duration=${player.state.duration}; errors=$errors',
+      );
       await until(
         () => player.state.size != null && player.state.position.inSeconds >= 4,
       );
@@ -130,6 +171,7 @@ void main() {
         ),
       );
       for (final height in [720, 1080]) {
+        stage = 'online $height quality';
         if (usesMediaKit) {
           expect(
             await HlsProxy.configureQuality(master.url, height),
@@ -159,6 +201,7 @@ void main() {
       }
 
       // Reopen the saved HLS with relative segment names and no network URLs.
+      stage = 'offline HLS';
       await save('index.m3u8');
       await save('en.vtt');
       final playlist = await File('${directory.path}/index.m3u8').readAsLines();
@@ -167,18 +210,38 @@ void main() {
       )) {
         await save(line);
       }
-      await player.load(
-        '${directory.path}/index.m3u8',
+      final offline = await StreamAddress.instance.forPlayer(
+        VideoStream(
+          'Downloaded fixture',
+          '${directory.path}/index.m3u8',
+          const {},
+          subtitles: [Subtitle('English', '${directory.path}/en.vtt')],
+        ),
+      );
+      final offlineSubtitle = await player.load(
+        offline.url,
+        headers: offline.headers,
+        hls: offline.hls,
         start: const Duration(seconds: 6),
-        subtitles: [(url: '${directory.path}/en.vtt', label: 'English')],
+        subtitles: offline.subtitles,
         subtitleFile: 'English',
+      );
+      expect(
+        offlineSubtitle,
+        'English',
+        reason:
+            '$stage subtitle selection; position=${player.state.position}; '
+            'duration=${player.state.duration}; '
+            'completed=${player.state.completed}; native=$nativeErrors',
       );
       await until(
         () => player.state.position.inSeconds >= 6 && player.state.playing,
       );
+      expect(player.state.duration.inSeconds, greaterThanOrEqualTo(19));
       await player.stop();
 
       // Two embedded audio tracks in a local MP4, with no server needed for playback.
+      stage = 'offline MP4 audio selection';
       await save('sample.mp4');
       await player.load('${directory.path}/sample.mp4');
       await until(() => player.state.audios.length == 2);

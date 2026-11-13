@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import 'hls_proxy.dart';
 import 'platform.dart';
 import 'sources.dart';
@@ -32,7 +34,7 @@ sealed class DownloadLocation {
       );
     }
     if (url.startsWith('http')) return null;
-    return (LocalFolder(File(url).parent.path), url.split('/').last);
+    return (LocalFolder(p.dirname(url)), p.basename(url));
   }
 }
 
@@ -41,7 +43,7 @@ class LocalFolder extends DownloadLocation {
   final String path;
 
   @override
-  String urlOf(String file) => '$path/$file';
+  String urlOf(String file) => p.join(path, file);
 }
 
 /// Folder [id] inside the document tree [tree].
@@ -138,9 +140,11 @@ class _HlsRelay implements Relay {
 }
 
 /// Turns a [VideoStream] into the address a player opens: a document in a picked folder, a local file, an HLS
-/// stream, or a direct file (mp4) fetched with its headers. Only HLS and subtitles need the relay (to send the
-/// stream's headers, and to strip the fake image prefix some hosts put on segments); our own player reads local
-/// files itself, while another app can't read app storage.
+/// stream, or a direct file (mp4) fetched with its headers.
+///
+/// HLS and subtitles use the relay for headers and segment cleanup. Windows HLS
+/// downloads also use it so relative segments resolve correctly; other local
+/// playback reads files directly. External apps use the relay for app storage.
 class StreamAddress {
   const StreamAddress([this.relay = const _HlsRelay()]);
   static const instance = StreamAddress();
@@ -204,7 +208,12 @@ class StreamAddress {
       file,
     ),
     (LocalFolder(:final path), final file) =>
-      external ? relay.localFile(path, file) : Future.value(url),
+      // media_kit prefixes Windows file paths with \\?\, which FFmpeg's HLS
+      // resolver cannot use to locate relative segments. Serve downloaded HLS
+      // and its sidecars through the existing on-device relay instead.
+      external || (Platform.isWindows && stream.isHls)
+          ? relay.localFile(path, file)
+          : Future.value(url),
     _ => relay.remote(
       url,
       stream.headers,
