@@ -7,6 +7,7 @@ import 'analytics.dart';
 import 'anilist.dart';
 import 'desktop/motion.dart' show DeskPageTransitions;
 import 'details.dart';
+import 'image_cache.dart';
 import 'platform.dart';
 import 'selection.dart';
 import 'settings.dart';
@@ -1273,9 +1274,9 @@ Color? hexColor(String? hex) => hex == null || hex.length != 7
     ? null
     : Color(int.parse('FF${hex.substring(1)}', radix: 16));
 
-/// A network image that fades in over its show's colour, decoded at the size it's shown (a 1080p still decoded
-/// whole is ~8 MB, and a row of them thrashes the image cache). [full] decodes as-is, for backdrops cropped to
-/// fill a wide box.
+/// A network image, kept on disk between launches ([posterCache]), that fades in over its show's colour, decoded at
+/// the size it's shown (a 1080p still decoded whole is ~8 MB, and a row of them thrashes the image cache). [full]
+/// decodes as-is, for backdrops cropped to fill a wide box.
 class Artwork extends StatelessWidget {
   const Artwork(
     this.url, {
@@ -1309,14 +1310,20 @@ class Artwork extends StatelessWidget {
           ?placeholder,
           if (url != null)
             LayoutBuilder(
-              builder: (context, box) => Image.network(
-                url,
+              builder: (context, box) => Image(
+                image: ResizeImage.resizeIfNeeded(
+                  full || !box.maxWidth.isFinite
+                      ? null
+                      : (box.maxWidth * MediaQuery.devicePixelRatioOf(context))
+                            .round(),
+                  null,
+                  switch (posterCache) {
+                    final cache? => CachedPoster(url, cache),
+                    null => NetworkImage(url),
+                  },
+                ),
                 fit: BoxFit.cover,
                 alignment: alignment,
-                cacheWidth: full || !box.maxWidth.isFinite
-                    ? null
-                    : (box.maxWidth * MediaQuery.devicePixelRatioOf(context))
-                          .round(),
                 frameBuilder: (context, child, frame, sync) => sync
                     ? child
                     : AnimatedOpacity(

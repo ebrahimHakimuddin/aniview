@@ -10,6 +10,7 @@ import 'downloads.dart';
 import 'pairing.dart';
 import 'platform.dart';
 import 'home.dart';
+import 'image_cache.dart';
 import 'settings.dart';
 import 'tracker.dart';
 import 'sources.dart';
@@ -36,6 +37,7 @@ Future<void> main() async {
     Tracker.load(),
     Downloads.instance.load(),
     loadSystemAccent(),
+    openPosterCache(),
     AndroidApp.buttonNavigation().then((v) => buttonNavigation = v),
   ]);
   if (isDesktop) await setupWindow();
