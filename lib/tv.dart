@@ -386,7 +386,7 @@ class ScrollAnchor extends StatelessWidget {
 bool Function()? onLeftEdge;
 
 /// A horizontal row on TV (cards, buttons, chips): Right from its last item stays put instead of jumping to
-/// whatever lies right of it in another row, and Left from its first item goes to [onLeftEdge].
+/// whatever lies right of it in another row, and Left pressed (not held) at its first item goes to [onLeftEdge].
 class TvRow extends StatelessWidget {
   const TvRow({super.key, required this.child});
 
@@ -416,7 +416,8 @@ class TvRow extends StatelessWidget {
                   (right ? n.rect.center.dx > x + 1 : n.rect.center.dx < x - 1),
             );
             if (more) return KeyEventResult.ignored;
-            if (!right) onLeftEdge?.call();
+            // Only a fresh press: a held Left outruns the cards still being built to its left.
+            if (!right && event is KeyDownEvent) onLeftEdge?.call();
             return KeyEventResult.handled;
           },
           child: child,

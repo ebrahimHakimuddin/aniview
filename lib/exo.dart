@@ -640,7 +640,8 @@ class ExoVideo extends StatelessWidget {
                     },
                   ),
           ),
-        Positioned(
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 200),
           left: 24,
           right: 24,
           bottom: subtitleBottom,

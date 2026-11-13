@@ -126,7 +126,17 @@ void main() {
         EpisodePlan.nextUp(null, episodes, 2),
         isA<StartEpisode>().having((s) => s.first, 'first', isFalse),
       );
-      expect(EpisodePlan.nextUp(null, episodes, 3), isNull); // all watched
+      expect(
+        EpisodePlan.nextUp(null, episodes, 3), // all watched
+        isA<StartEpisode>()
+            .having((s) => s.episode.number, 'episode', 1)
+            .having((s) => s.rewatch, 'rewatch', isTrue),
+      );
+      expect(
+        EpisodePlan.nextUp(null, episodes, 2),
+        isA<StartEpisode>().having((s) => s.rewatch, 'rewatch', isFalse),
+      );
+      expect(EpisodePlan.nextUp(null, const [], 0), isNull); // none
       expect(EpisodePlan.nextUp(null, null, 0), isNull); // still loading
     },
   );

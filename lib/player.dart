@@ -670,6 +670,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ? PlaybackSession.embeddedSubtitle(
               player.state.subtitles,
               Settings.subtitleLanguage,
+              dub: session.dubbed,
             )
           : null;
       if (own != null) return await _setSubtitle(own, own.name);
@@ -1021,17 +1022,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _ => Icons.forward_rounded,
   };
 
-  /// The video, rebuilt only when the picture fit changes: the rest of the screen refreshes every second.
+  /// The video, rebuilt only when the picture fit or the subtitles' height changes: the rest of the screen
+  /// refreshes every second.
   Widget? _video;
   BoxFit? _videoFit;
+  double? _videoSubtitleBottom;
 
   Widget get _videoView {
-    if (_video == null || _videoFit != fit) {
+    final setting = Settings.subtitleAppearance.bottom;
+    // Over the controls while they show: roughly their bottom bar's height (TV, desktop, phone).
+    final bottom = controls && !locked
+        ? setting.clamp(
+            isTv ? 190.0 : (isDesktop ? _deskBarHeight : 120.0),
+            double.infinity,
+          )
+        : setting;
+    if (_video == null || _videoFit != fit || _videoSubtitleBottom != bottom) {
       _videoFit = fit;
+      _videoSubtitleBottom = bottom;
       _video = ExoVideo(
         player,
         fit: fit,
-        subtitleBottom: Settings.subtitleAppearance.bottom,
+        subtitleBottom: bottom,
         subtitleStyle: Settings.subtitleAppearance.style(
           scale: isDesktop
               ? (MediaQuery.sizeOf(context).height / 720).clamp(.8, 2.2)

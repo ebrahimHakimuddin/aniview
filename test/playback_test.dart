@@ -396,4 +396,67 @@ void main() {
       );
     });
   });
+
+  test('a subtitle label marks captions for a dub only as a whole word', () {
+    for (final label in [
+      'English CC',
+      'English (SDH)',
+      'English Dubtitles',
+      'English - Closed Captions',
+      'english [cc]',
+    ]) {
+      expect(PlaybackSession.isDubtitle(label), isTrue, reason: label);
+    }
+    for (final label in ['English', 'Accent', 'English (Forced)']) {
+      expect(PlaybackSession.isDubtitle(label), isFalse, reason: label);
+    }
+  });
+
+  test('a dub starts with its captions in the language, else the usual pick; '
+      'Off turns them off; a sub ignores the setting', () {
+    PlaybackSession session({bool dub = true, String site = 'Anikoto'}) =>
+        PlaybackSession(
+          [Episode(1, ref: '1')],
+          0,
+          dub: dub,
+          site: site,
+        );
+    const withCc = VideoStream(
+      'HD',
+      'u',
+      {},
+      subtitles: [
+        Subtitle('English', 'e'),
+        Subtitle('English CC', 'cc'),
+        Subtitle('Spanish SDH', 's'),
+      ],
+    );
+    const plain = VideoStream(
+      'HD',
+      'u',
+      {},
+      subtitles: [Subtitle('Spanish', 's'), Subtitle('English', 'e')],
+    );
+    expect(session().subtitleFor(withCc).track?.label, 'English CC');
+    expect(session().subtitleFor(plain).track?.label, 'English');
+    expect(session(dub: false).subtitleFor(withCc).track?.label, 'English');
+    expect(
+      session(site: 'Jellyfin').subtitleFor(withCc).track?.label,
+      'English',
+    );
+
+    const cc = SubtitleTrack('5', title: 'English CC', language: 'eng');
+    const full = SubtitleTrack('4', title: 'Full Subtitles', language: 'eng');
+    expect(
+      PlaybackSession.embeddedSubtitle([full, cc], 'English', dub: true),
+      cc,
+    );
+    expect(PlaybackSession.embeddedSubtitle([full, cc], 'English'), full);
+
+    Settings.dubSubtitles = 'off';
+    expect(session().subtitleFor(withCc).off, isTrue);
+    expect(session().subtitleFor(plain).off, isTrue);
+    expect(session(dub: false).subtitleFor(withCc).off, isFalse);
+    expect(session(dub: false).subtitleFor(withCc).track?.label, 'English');
+  });
 }

@@ -305,7 +305,7 @@ class EpisodePlan {
   }
 
   /// What a show's main button does: go back to the saved spot when there is one, else play the next
-  /// unwatched episode of [episodes] (null while they load); null when there's nothing left to play.
+  /// unwatched episode of [episodes] (null while they load), else rewatch the first; null when there are none.
   static NextUp? nextUp(
     WatchRecord? record,
     List<Episode>? episodes,
@@ -315,7 +315,13 @@ class EpisodePlan {
     if (record != null) return ResumeSaved(record);
     if (episodes == null) return null;
     final next = EpisodePlan(episodes, progress: progress, skip: skip).upNext;
-    return next == null ? null : StartEpisode(next, first: progress == 0);
+    if (next != null) return StartEpisode(next, first: progress == 0);
+    if (episodes.isEmpty) return null;
+    return StartEpisode(
+      episodes.reduce((a, b) => b.number < a.number ? b : a),
+      first: false,
+      rewatch: true,
+    );
   }
 }
 
@@ -329,9 +335,11 @@ final class ResumeSaved extends NextUp {
   bool get midway => Settings.resume && record.position > Duration.zero;
 }
 
-/// Play [episode], the first unwatched one; [first] when nothing's been watched yet.
+/// Play [episode], the first unwatched one; [first] when nothing's been watched yet, [rewatch] when everything
+/// has (it's then the first episode).
 final class StartEpisode extends NextUp {
-  StartEpisode(this.episode, {required this.first});
+  StartEpisode(this.episode, {required this.first, this.rewatch = false});
   final Episode episode;
   final bool first;
+  final bool rewatch;
 }

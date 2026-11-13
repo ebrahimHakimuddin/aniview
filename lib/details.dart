@@ -826,16 +826,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
               _reloadRecord();
             },
           ),
-          StartEpisode(:final episode, :final first) => PlayAction(
-            autofocus: isTv,
-            title:
-                '${first ? 'Play' : 'Continue'} Episode ${epNumber(episode.number)}',
-            subtitle: source is Jellyfin
-                ? source!.name
-                : '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
-            onPressed: () =>
-                _playEpisode(_showEpisodes(list!, source), episode),
-          ),
+          StartEpisode(:final episode, :final first, :final rewatch) =>
+            PlayAction(
+              autofocus: isTv,
+              title:
+                  '${rewatch ? 'Rewatch' : (first ? 'Play' : 'Continue')} Episode ${epNumber(episode.number)}',
+              subtitle: source is Jellyfin
+                  ? source!.name
+                  : '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
+              onPressed: () =>
+                  _playEpisode(_showEpisodes(list!, source), episode),
+            ),
           // Holds the button's place while things load.
           null =>
             snap.connectionState == ConnectionState.done ||
@@ -982,7 +983,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _orderButton(bool newestFirst) => TextButton.icon(
     onPressed: () => setState(() {
       Settings.newestFirst = newestFirstPicked = !newestFirst;
-      page = null;
+      page = 0; // the start of the new order, not the page holding up next
     }),
     icon: const Icon(Icons.swap_vert_rounded, size: 18),
     label: Text(newestFirst ? 'Newest first' : 'Oldest first'),
@@ -1656,7 +1657,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   child: _EpisodeRow(
                     key: ValueKey((plan.page, newestFirst, dub)),
                     count: shown.length,
-                    start: plan.upNext == null
+                    // Once the order is switched by hand, the row starts at its first episode.
+                    start: plan.upNext == null || newestFirstPicked != null
                         ? 0
                         : shown.indexOf(plan.upNext!),
                     itemBuilder: tile,

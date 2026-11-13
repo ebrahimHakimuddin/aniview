@@ -1594,18 +1594,9 @@ class PosterCard extends StatelessWidget {
             Artwork(show.cover, color: show.color),
             if (score != null && selected == null)
               Positioned(top: 8, right: 8, child: Pill.score(score)),
-            // A row's episode/status label stays over the art; titles sit below.
-            if (isTv && subtitle != null)
-              Positioned(
-                left: 8,
-                top: 8,
-                right: 8,
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: Pill(subtitle!),
-                ),
-              ),
-            if (airing != null || (!isTv && line != null))
+            // TV: a row's label sits under the title (below), so it never covers the art or the score.
+            if ((airing != null && !(isTv && subtitle != null)) ||
+                (!isTv && line != null))
               Positioned(
                 left: 8,
                 right: 8,
@@ -1614,7 +1605,7 @@ class PosterCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (airing != null)
+                    if (airing != null && !(isTv && subtitle != null))
                       Pill(airing, icon: Icons.schedule_rounded),
                     if (airing != null && !isTv && line != null)
                       const SizedBox(height: 4),
@@ -1659,6 +1650,13 @@ class PosterCard extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: text.bodyMedium?.copyWith(height: 1.25),
         ),
+        if (isTv && subtitle != null)
+          Text(
+            subtitle!,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
       ],
     );
   }
@@ -1737,7 +1735,8 @@ class MediaRow extends StatelessWidget {
                 : TextButton(onPressed: onSeeAll, child: const Text('See all')),
           ),
           SizedBox(
-            height: height,
+            // TV: room for the label line under each title.
+            height: height + (isTv && subtitles != null ? 20 : 0),
             child: TvRow(
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
