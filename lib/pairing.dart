@@ -23,7 +23,8 @@ import 'ui.dart';
 /// The phone finds the TV with a UDP broadcast (or the address typed from the TV screen), then the two run an
 /// ECDH key exchange over HTTP. Both show a 6-digit code derived from the shared secret; the user checks they
 /// match, which rules out another device on the network sitting in the middle. Only then does the phone send
-/// its AniList token, encrypted with AES-GCM under the shared key.
+/// its AniList token, encrypted with AES-GCM under the shared key, and the TV takes it once Pair is pressed
+/// there, so no other device on the network can pair on its own.
 const _discoveryPort = 47811;
 const _hello = 'aniview-pair';
 
@@ -111,7 +112,15 @@ class TvLink {
   /// The code to compare with the phone's, once one has started pairing.
   static final code = ValueNotifier<String?>(null);
 
+  /// Whether Pair was pressed on the TV for the code showing.
+  static final confirmed = ValueNotifier<bool>(false);
+
+  /// How long `/remote` waits for Pair to be pressed before turning the phone away.
+  @visibleForTesting
+  static Duration confirmWait = const Duration(minutes: 1);
+
   static ({String code, Uint8List key})? _agreed;
+  static Completer<bool>? _answer; // Pair or Cancel for [_agreed]
   static Completer<Map>? _paired; // while a pairing screen is open
   static final _lastPress = <String, int>{};
 
@@ -161,9 +170,52 @@ class TvLink {
   }
 
   static void stopPairing() {
-    _agreed = null;
+    _forgetAgreement();
     _paired = null;
+  }
+
+  /// Starts a key agreement with a phone, replacing any earlier one and its confirmation; returns this TV's
+  /// public key.
+  static Uint8List offer(Uint8List phonePublic) {
+    final keys = PairKeys();
+    final agreed = keys.agree(phonePublic);
+    _forgetAgreement();
+    _agreed = agreed;
+    _answer = Completer();
+    code.value = agreed.code;
+    return keys.publicKey;
+  }
+
+  /// Pair ([yes]) or Cancel for the code showing. Cancel drops it, so the phone has to start again.
+  static void confirm(bool yes) {
+    if (_agreed == null) return;
+    if (!yes) {
+      _forgetAgreement();
+      return;
+    }
+    confirmed.value = true;
+    if (!(_answer?.isCompleted ?? true)) _answer!.complete(true);
+  }
+
+  static void _forgetAgreement() {
+    if (!(_answer?.isCompleted ?? true)) _answer!.complete(false);
+    _answer = null;
+    _agreed = null;
+    confirmed.value = false;
     code.value = null;
+  }
+
+  /// Waits for Pair or Cancel on the TV for [agreed]; false when cancelled, replaced or not answered in time.
+  static Future<bool> _confirmed(({String code, Uint8List key}) agreed) async {
+    final answer = _answer;
+    if (answer == null) return false;
+    final yes = await answer.future.timeout(
+      confirmWait,
+      onTimeout: () => false,
+    );
+    if (yes && identical(_agreed, agreed) && _paired != null) return true;
+    if (identical(_agreed, agreed)) _forgetAgreement();
+    return false;
   }
 
   static Future<void> _handle(HttpRequest request) async {
@@ -174,15 +226,18 @@ class TvLink {
       switch (request.uri.path) {
         case '/pair'
             when _paired != null: // a new attempt replaces any earlier one
-          final keys = PairKeys();
-          final agreed = _agreed = keys.agree(base64.decode(body['pub']));
-          code.value = agreed.code;
-          response.write(jsonEncode({'pub': base64.encode(keys.publicKey)}));
+          final pub = offer(base64.decode(body['pub']));
+          response.write(jsonEncode({'pub': base64.encode(pub)}));
         case '/remote' when _paired != null && agreed != null:
           // Opening it proves the phone holds the key the codes vouched for.
           final sent = jsonDecode(
             unseal(agreed.key, base64.decode(body['data'])),
           ) as Map;
+          // Someone at the TV has to say the codes match. Other requests go on meanwhile.
+          if (!await _confirmed(agreed)) {
+            response.statusCode = HttpStatus.forbidden;
+            break;
+          }
           Settings.remoteKeys = [
             ...Settings.remoteKeys,
             base64.encode(agreed.key),
@@ -448,29 +503,25 @@ class _TvPairScreenState extends State<TvPairScreen> {
   }
 }
 
-/// The pairing code once a phone has started, and the address to type when it can't find the TV.
+/// The pairing code once a phone has started, with Pair and Cancel, and the address to type when it can't
+/// find the TV.
 class _PairingCode extends StatelessWidget {
   const _PairingCode();
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: TvLink.code,
-    builder: (context, code, _) => Column(
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([TvLink.code, TvLink.confirmed]),
+    builder: (context, _) => Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (code != null) ...[
-          const Text('Check that your phone shows'),
-          const SizedBox(height: 8),
-          Text(
-            code,
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 6,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-        ] else
+        if (TvLink.code.value case final code?)
+          // Keyed by the code, so a new attempt from a phone asks again with Cancel focused.
+          _ConfirmPairing(
+            key: ValueKey(code),
+            code: code,
+            confirmed: TvLink.confirmed.value,
+          )
+        else
           const CircularProgressIndicator(),
         const SizedBox(height: 24),
         if (TvLink.address case final address?)
@@ -480,6 +531,80 @@ class _PairingCode extends StatelessWidget {
           ),
       ],
     ),
+  );
+}
+
+/// Asks whether the phone shows [code]; Cancel has focus, so a stray OK press doesn't pair a stranger.
+class _ConfirmPairing extends StatefulWidget {
+  const _ConfirmPairing({
+    super.key,
+    required this.code,
+    required this.confirmed,
+  });
+
+  final String code;
+  final bool confirmed;
+
+  @override
+  State<_ConfirmPairing> createState() => _ConfirmPairingState();
+}
+
+class _ConfirmPairingState extends State<_ConfirmPairing> {
+  final cancel = FocusNode(debugLabel: 'cancel pairing');
+
+  @override
+  void initState() {
+    super.initState();
+    // Taken even from a button that had focus before the phone started.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) cancel.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    cancel.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        widget.confirmed
+            ? 'Finishing on your phone'
+            : 'Does your phone show this code?',
+      ),
+      const SizedBox(height: 8),
+      Text(
+        widget.code,
+        style: TextStyle(
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 6,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ),
+      if (!widget.confirmed) ...[
+        const SizedBox(height: 16),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              focusNode: cancel,
+              onPressed: () => TvLink.confirm(false),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 12),
+            FilledButton(
+              onPressed: () => TvLink.confirm(true),
+              child: const Text('Pair'),
+            ),
+          ],
+        ),
+      ],
+    ],
   );
 }
 
@@ -589,6 +714,9 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
   final client = http.Client(); // pairing requests
   String? tv; // the paired TV's id being controlled
   bool scanning = false, pairing = false;
+
+  /// Whether the TV is asking its viewer to confirm this phone.
+  bool confirming = false;
   String? manualAddressError;
 
   /// What the TV said it's playing, from its last answer; null when nothing is.
@@ -664,16 +792,28 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
         confirm: !Tracker.signedIn ? 'Yes, pair' : 'Yes, pair and sign in',
       );
       if (agreed == null) return;
-      final res = await client
-          .post(
-            Uri.parse('$base/remote'),
-            body: jsonEncode({
-              'data': base64.encode(
-                seal(agreed.key, jsonEncode(Tracker.shareable)),
-              ),
-            }),
-          )
-          .timeout(const Duration(seconds: 8));
+      if (mounted) setState(() => confirming = true);
+      final http.Response res;
+      try {
+        // The TV holds this until Pair or Cancel is pressed on it, for up to a minute.
+        res = await client
+            .post(
+              Uri.parse('$base/remote'),
+              body: jsonEncode({
+                'data': base64.encode(
+                  seal(agreed.key, jsonEncode(Tracker.shareable)),
+                ),
+              }),
+            )
+            .timeout(const Duration(seconds: 75));
+      } on TimeoutException {
+        throw Exception("Not paired: the TV didn't answer in time");
+      }
+      if (res.statusCode == HttpStatus.forbidden) {
+        throw Exception(
+          'Not paired: it was cancelled on the TV, or not confirmed in time',
+        );
+      }
       if (res.statusCode != 200) throw HttpException('${res.statusCode}');
       final id = (jsonDecode(res.body) as Map)['id'] as String;
       Settings.tvRemotes = {
@@ -696,7 +836,12 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
         showError(context, e);
       }
     } finally {
-      if (mounted) setState(() => pairing = false);
+      if (mounted) {
+        setState(() {
+          pairing = false;
+          confirming = false;
+        });
+      }
     }
   }
 
@@ -792,6 +937,12 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
         style: TextStyle(color: scheme.onSurfaceVariant, height: 1.5),
       ),
       const SizedBox(height: 16),
+      if (confirming)
+        const ListTile(
+          leading: Icon(Icons.tv_rounded),
+          title: Text('Confirm on your TV'),
+          subtitle: Text('Choose Pair on the TV to finish'),
+        ),
       for (final tv in found.values)
         ListTile(
           leading: const Icon(Icons.tv_rounded),

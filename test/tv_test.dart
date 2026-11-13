@@ -1,8 +1,11 @@
+import 'package:aniview/pairing.dart';
+import 'package:aniview/settings.dart';
 import 'package:aniview/tv.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('OK taps on release and long-presses when held', (tester) async {
@@ -182,4 +185,74 @@ void main() {
       expect(edges, 1);
     },
   );
+
+  testWidgets('the TV asks before pairing a phone, with Cancel focused', (
+    tester,
+  ) async {
+    isTv = true;
+    addTearDown(() => isTv = false);
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    // The spinner never settles, so frames are pumped for a while instead.
+    Future<void> settle() async {
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => TvInput(child: child!),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              autofocus: true,
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TvPairScreen()),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await settle();
+    expect(find.text('Does your phone show this code?'), findsNothing);
+
+    // A phone starts pairing.
+    TvLink.offer(PairKeys().publicKey);
+    await settle();
+    expect(find.text('Does your phone show this code?'), findsOneWidget);
+    expect(find.text(TvLink.code.value!), findsOneWidget);
+    expect(
+      Focus.of(tester.element(find.text('Cancel'))).hasPrimaryFocus,
+      isTrue,
+    );
+
+    // OK on Cancel drops the code.
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await settle();
+    expect(TvLink.code.value, isNull);
+    expect(TvLink.confirmed.value, isFalse);
+    expect(find.text('Does your phone show this code?'), findsNothing);
+
+    // Another try, confirmed with Pair.
+    TvLink.offer(PairKeys().publicKey);
+    await settle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await settle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await settle();
+    expect(TvLink.confirmed.value, isTrue);
+    expect(find.text('Finishing on your phone'), findsOneWidget);
+    expect(find.text('Pair'), findsNothing);
+
+    // Leaving the screen stops pairing.
+    Navigator.pop(tester.element(find.byType(TvPairScreen)));
+    await settle();
+    expect(TvLink.code.value, isNull);
+    expect(TvLink.confirmed.value, isFalse);
+  });
 }
