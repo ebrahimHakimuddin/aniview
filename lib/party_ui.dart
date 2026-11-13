@@ -12,8 +12,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'pairing.dart' show TvRemote;
 import 'party.dart';
+import 'party_chat.dart';
 import 'party_player.dart';
+import 'party_qr.dart';
 import 'party_transport.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -117,6 +120,7 @@ class PartyLink {
       id: line.peerId,
       clock: partyClock,
     );
+    PartyChatLog.of(session); // the scrollback starts with the room
     return _links[session] = PartyLink._(room, session, line.usable);
   }
 
@@ -291,7 +295,12 @@ class _PartyPanelState extends State<PartyPanel> {
   bool _copied = false;
   Timer? _copiedTimer;
 
+  /// "Bring the TV in": sending, and what came of it.
+  bool _bringing = false;
+  String? _tvNote;
+
   PartySession get session => widget.link.session;
+  PartyChatLog get chat => PartyChatLog.of(session);
 
   @override
   void initState() {
@@ -327,6 +336,26 @@ class _PartyPanelState extends State<PartyPanel> {
     });
   }
 
+  /// Has the paired TV open the join dialog with this room's code.
+  Future<void> _bringTv() async {
+    setState(() {
+      _bringing = true;
+      _tvNote = null;
+    });
+    String note;
+    try {
+      await TvRemote.joinParty(widget.link.room);
+      note = 'Sent. Press Join on ${TvRemote.name ?? 'the TV'}';
+    } catch (e) {
+      note = friendlyError(e);
+    }
+    if (!mounted) return;
+    setState(() {
+      _bringing = false;
+      _tvNote = note;
+    });
+  }
+
   Future<void> _leave() async {
     if (session.isHost && !await confirmEndParty(context)) return;
     widget.onLeave?.call();
@@ -339,9 +368,9 @@ class _PartyPanelState extends State<PartyPanel> {
     final text = Theme.of(context).textTheme;
     final mismatch = session.durationMismatch;
     final people = [
-      (name: session.name, host: session.isHost, you: true),
+      (id: session.id, name: session.name, host: session.isHost, you: true),
       for (final p in session.peers.values)
-        (name: p.name, host: p.host, you: false),
+        (id: p.id, name: p.name, host: p.host, you: false),
     ];
     return SafeArea(
       top: false,
@@ -360,25 +389,71 @@ class _PartyPanelState extends State<PartyPanel> {
               style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
-            Center(
-              child: SelectableText(
-                widget.link.room.display,
-                key: const ValueKey('party code'),
-                style: text.displaySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 2,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+            Row(
+              children: [
+                // Big enough on TV for a phone's camera across the room.
+                PartyQr(
+                  widget.link.room.link,
+                  key: const ValueKey('party qr'),
+                  size: isTv ? 200 : 136,
+                  label: 'QR code of the party link',
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: FilledButton.tonalIcon(
-                autofocus: isTv,
-                onPressed: _copy,
-                icon: Icon(_copied ? Icons.check_rounded : Icons.copy_rounded),
-                label: Text(_copied ? 'Copied' : 'Copy invite'),
-              ),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SelectableText(
+                        widget.link.room.display,
+                        key: const ValueKey('party code'),
+                        textAlign: TextAlign.center,
+                        style: text.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 2,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Or scan it with a phone\'s camera',
+                        textAlign: TextAlign.center,
+                        style: text.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonalIcon(
+                        autofocus: isTv,
+                        onPressed: _copy,
+                        icon: Icon(
+                          _copied ? Icons.check_rounded : Icons.copy_rounded,
+                        ),
+                        label: Text(_copied ? 'Copied' : 'Copy invite'),
+                      ),
+                      // A phone paired with a TV can have the TV join too.
+                      if (!isTv && TvRemote.name != null) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _bringing ? null : _bringTv,
+                          icon: const Icon(Icons.tv_rounded),
+                          label: const Text('Bring the TV in'),
+                        ),
+                        if (_tvNote case final note?)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              note,
+                              textAlign: TextAlign.center,
+                              style: text.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Center(child: PartyStatus(widget.link.usable)),
@@ -399,22 +474,41 @@ class _PartyPanelState extends State<PartyPanel> {
               style: text.titleSmall?.copyWith(color: scheme.primary),
             ),
             for (final p in people)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                // Read out on TV as focus moves down the panel.
-                focusColor: scheme.onSurface.withValues(alpha: .08),
-                onTap: isTv ? () {} : null,
-                leading: Icon(
-                  p.host ? Icons.star_rounded : Icons.person_outline_rounded,
-                  color: p.host ? scheme.primary : scheme.onSurfaceVariant,
-                ),
-                title: Text(
-                  [
-                    if (p.name.isNotEmpty) p.name else 'Someone',
-                    if (p.you) '(you)',
-                  ].join(' '),
-                ),
-                subtitle: p.host ? const Text('Host') : null,
+              Builder(
+                builder: (context) {
+                  final muted = !p.you && chat.isMuted(p.id);
+                  final name = p.name.isNotEmpty ? p.name : 'Someone';
+                  final notes = [if (p.host) 'Host', if (muted) 'Muted here'];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    // Read out on TV as focus moves down the panel.
+                    focusColor: scheme.onSurface.withValues(alpha: .08),
+                    onTap: isTv ? () {} : null,
+                    leading: Icon(
+                      p.host
+                          ? Icons.star_rounded
+                          : Icons.person_outline_rounded,
+                      color: p.host ? scheme.primary : scheme.onSurfaceVariant,
+                    ),
+                    title: Text([name, if (p.you) '(you)'].join(' ')),
+                    subtitle: notes.isEmpty ? null : Text(notes.join(' · ')),
+                    // Hides their lines and reactions on this device only.
+                    trailing: p.you
+                        ? null
+                        : IconButton(
+                            tooltip: muted
+                                ? 'Show $name\'s messages'
+                                : 'Mute $name\'s messages',
+                            icon: Icon(
+                              muted
+                                  ? Icons.comments_disabled_outlined
+                                  : Icons.chat_bubble_outline_rounded,
+                            ),
+                            onPressed: () =>
+                                setState(() => chat.mute(p.id, !muted)),
+                          ),
+                  );
+                },
               ),
             if (session.isHost)
               SwitchListTile(
@@ -465,6 +559,15 @@ class _PartyPanelState extends State<PartyPanel> {
                 ],
               ),
             ],
+            const SizedBox(height: 16),
+            Text(
+              'Chat',
+              style: text.titleSmall?.copyWith(color: scheme.primary),
+            ),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: isTv ? 160 : 200),
+              child: PartyChatScrollback(log: chat, shrinkWrap: true),
+            ),
             const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerRight,
