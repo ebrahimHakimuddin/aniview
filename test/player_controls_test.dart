@@ -344,4 +344,41 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('subtitles rise over the controls while they show', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'resume': false});
+    await Settings.load();
+    final previous = configureQuality;
+    configureQuality = (_, _) async => const [];
+    addTearDown(() => configureQuality = previous);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: PlayerScreen(
+          media: {
+            'id': 7007009,
+            'title': {'romaji': 'Fixture'},
+          },
+          source: SourceFixture(),
+          episodes: [Episode(1, ref: '1')],
+          index: 0,
+          dub: false,
+          backend: Backend(),
+        ),
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    double bottom() =>
+        tester.widget<ExoVideo>(find.byType(ExoVideo)).subtitleBottom;
+    final setting = Settings.subtitleAppearance.bottom;
+    expect(bottom(), greaterThan(setting)); // controls up
+    await tester.pump(const Duration(seconds: 4)); // they hide while playing
+    expect(bottom(), setting);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
