@@ -20,8 +20,10 @@
 /// - `ping {t0}` / `pong {to, t0, t1}`: clock offset estimation.
 /// - `chat {text}`, `react {emoji}`, `bye {}`.
 ///
-/// Anything malformed, oversized, unknown, duplicated, from a 9th peer or over 5 messages a second is dropped
-/// silently; a guest over the rate is dropped from the room. When the host leaves, the room ends.
+/// Anything malformed, oversized, unknown, duplicated or from a 9th peer is dropped silently, as is what a peer
+/// sends beyond 40 messages in 5 s (peers keep themselves to 5 a second; the slack is for a relay delivering a
+/// stalled connection's messages at once). Every peer says something at least every 10 s: a guest silent for 90 s
+/// loses its place, and a host silent for 2 minutes, or leaving, ends the room.
 library;
 
 import 'dart:async';
@@ -89,6 +91,9 @@ class PartyPeer {
 
   final _seen = <int>{};
   final _recent = <int>[];
+
+  /// When we last heard from them, on our clock.
+  int _heard = 0;
 }
 
 /// A chat line or reaction, ours included.
@@ -151,13 +156,13 @@ class PartySession {
   final Duration? _tickEvery;
 
   final peers = <String, PartyPeer>{};
-  final _banned = <String>{};
   final _chat = StreamController<PartyChat>.broadcast();
   final _changes = StreamController<void>.broadcast();
   StreamSubscription<String>? _sub;
   Timer? _timer;
   int _n = 0;
   final _sentAt = <int>[];
+  int _lastSent = 0;
 
   /// Chat lines and reactions as they arrive.
   Stream<PartyChat> get chat => _chat.stream;
@@ -201,6 +206,10 @@ class PartySession {
       ? 0
       : _samples.reduce((a, b) => b.rtt < a.rtt ? b : a).offset;
 
+  /// Whether a guest hasn't heard from the host for 15 s: it plays on, and the room ends at 2 minutes.
+  bool get hostSilent => _hostSilent;
+  bool _hostSilent = false;
+
   /// Seconds the host's cut is longer than ours, or null when they're within 2 s (the same cut) or unknown.
   double? get durationMismatch => _mismatch;
   double? _mismatch;
@@ -218,13 +227,7 @@ class PartySession {
 
   void start() {
     _sub = transport.incoming.listen(_receive);
-    _send({
-      't': 'hello',
-      'name': name,
-      'dur': controls.duration.inMilliseconds,
-      'host': isHost,
-      're': false,
-    });
+    _hello(reply: false);
     if (_tickEvery case final every?) {
       _timer = Timer.periodic(every, (_) => tick());
     }
@@ -277,6 +280,8 @@ class PartySession {
   /// clock offset and steers its player towards the host.
   void tick() {
     if (_ended) return;
+    _expire();
+    if (_ended) return;
     if (isHost) {
       _hostTick();
     } else {
@@ -284,6 +289,35 @@ class PartySession {
       _correct();
     }
   }
+
+  /// Forgets guests gone quiet, ends the room when the host has, and says something if we've been quiet ourselves.
+  void _expire() {
+    final now = _clock();
+    final before = peers.length;
+    peers.removeWhere((id, p) => id != _hostId && now - p._heard >= 90000);
+    if (peers.length != before) _changed();
+    if (peers[_hostId] case final host?) {
+      final quiet = now - host._heard;
+      if (quiet >= 120000) {
+        _end();
+        transport.close().ignore();
+        return;
+      }
+      if ((quiet >= 15000) != _hostSilent) {
+        _hostSilent = !_hostSilent;
+        _changed();
+      }
+    }
+    if (now - _lastSent >= 10000) _hello(reply: true);
+  }
+
+  bool _hello({required bool reply}) => _send({
+    't': 'hello',
+    'name': name,
+    'dur': controls.duration.inMilliseconds,
+    'host': isHost,
+    're': reply,
+  });
 
   // ───────────────────────────── host ─────────────────────────────
 
@@ -479,24 +513,19 @@ class PartySession {
     }
     if (m case {'from': final String from, 'n': final int n}
         when from.isNotEmpty && from.length <= 32) {
-      if (from == id || _banned.contains(from)) return;
+      if (from == id) return;
       final act = _parse(m as Map);
       if (act == null) return;
       final peer = peers[from] ?? (m['t'] == 'bye' ? null : _admit(from));
       if (peer == null || !peer._seen.add(n)) return;
       if (peer._seen.length > 256) peer._seen.remove(peer._seen.first);
       final now = _clock();
+      peer._heard = now;
+      // Counted on arrival, so a relay's burst after a stall mustn't cost an honest peer more than the excess.
       peer._recent
-        ..removeWhere((t) => now - t >= 1000)
+        ..removeWhere((t) => now - t >= 5000)
         ..add(now);
-      if (peer._recent.length > 5) {
-        if (from != _hostId) {
-          _banned.add(from);
-          peers.remove(from);
-          _changed();
-        }
-        return;
-      }
+      if (peer._recent.length > 40) return;
       act(peer);
     }
   }
@@ -592,13 +621,7 @@ class PartySession {
     }
     _changed();
     if (re) return;
-    _send({
-      't': 'hello',
-      'name': name,
-      'dur': controls.duration.inMilliseconds,
-      'host': isHost,
-      're': true,
-    });
+    _hello(reply: true);
     if (isHost) {
       _owed = true; // late join: the newcomer needs the state now
       _hostTick();
@@ -621,6 +644,7 @@ class PartySession {
     _sentAt.removeWhere((t) => now - t >= 1000);
     if (_ended || _sentAt.length >= 5) return false;
     _sentAt.add(now);
+    _lastSent = now;
     transport.send(jsonEncode({...body, 'from': id, 'n': _n++})).ignore();
     return true;
   }
