@@ -10,6 +10,7 @@ import 'package:aniview/settings.dart';
 import 'package:aniview/sources.dart';
 import 'package:aniview/tv.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -107,6 +108,9 @@ const profiles = <Profile>[
   (name: 'desktop', width: 1200, tv: false, desk: true),
 ];
 
+/// How many times the screen asked for the sites since [setUpScreen].
+var siteLoads = 0;
+
 Future<void> setUpScreen(WidgetTester tester, Profile p, double height) async {
   isTv = p.tv;
   isDesktop = p.desk;
@@ -115,7 +119,11 @@ Future<void> setUpScreen(WidgetTester tester, Profile p, double height) async {
     isDesktop = false;
   });
   // Nothing reaches the network: no sites to list, no account to show.
-  Sites.load = () async => [];
+  siteLoads = 0;
+  Sites.load = () async {
+    siteLoads++;
+    return [];
+  };
   Sites.reload();
   addTearDown(() {
     Sites.load = topSources;
@@ -144,52 +152,203 @@ Future<void> setUpScreen(WidgetTester tester, Profile p, double height) async {
   await tester.pump(const Duration(seconds: 1));
 }
 
+/// Groups of one row show that row on the top list rather than a page of their own (phone and TV).
+const rowGroups = {'Devices', 'Notifications'};
+
+/// The groups shown here, in order: the ones with a row on this device.
+List<String> shownGroups() => [
+  for (final MapEntry(:key, :value) in expectedRows().entries)
+    if (value.isNotEmpty) key,
+];
+
+/// Which of [rows] are on screen under [scope] (everything when null), each expected at most once.
+List<String> rowsIn(List<String> rows, [Finder? scope]) => [
+  for (final r in rows)
+    if ((scope == null
+            ? find.text(r)
+            : find.descendant(of: scope, matching: find.text(r)))
+        .evaluate()
+        .isNotEmpty)
+      r,
+];
+
+/// A frame to start whatever was just set going (a page opening or closing), then time for it to finish.
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+}
+
 void main() {
   for (final p in profiles) {
     testWidgets('${p.name}: lays out at its usual size', (tester) async {
       await setUpScreen(tester, p, p.desk ? 800 : (p.tv ? 540 : 915));
       expect(tester.takeException(), isNull);
-      await tester.fling(
-        find.byType(Scrollable).last,
-        const Offset(0, -3000),
-        3000,
-      );
-      await tester.pump(const Duration(seconds: 1));
-      expect(tester.takeException(), isNull);
+      Future<void> scrollToEnd() async {
+        await tester.fling(
+          find.byType(Scrollable).last,
+          const Offset(0, -3000),
+          3000,
+        );
+        await settle(tester);
+        expect(tester.takeException(), isNull);
+      }
+
+      await scrollToEnd();
+      // Every group's own page too.
+      for (final group in shownGroups()) {
+        if (p.desk) {
+          await tester.tap(find.widgetWithText(ListTile, group).first);
+          await settle(tester);
+          await scrollToEnd();
+        } else if (!rowGroups.contains(group)) {
+          final tile = find.widgetWithText(ListTile, group);
+          final list = find.byType(Scrollable).last;
+          tester.state<ScrollableState>(list).position.jumpTo(0);
+          await tester.pump();
+          await tester.scrollUntilVisible(tile, 200, scrollable: list);
+          await settle(tester);
+          await tester.tap(tile);
+          await settle(tester);
+          await scrollToEnd();
+          await tester.pageBack();
+          await settle(tester);
+        }
+      }
     });
 
-    testWidgets('${p.name}: shows every row once', (tester) async {
+    testWidgets('${p.name}: shows every row once, in its group', (
+      tester,
+    ) async {
       await setUpScreen(tester, p, 12000);
-      final rows = expectedRows().values.expand((r) => r).toList();
+      final expected = expectedRows();
+      final all = expected.values.expand((r) => r).toList();
+      final seen = <String>[];
       if (p.desk) {
         // One group at a time: the sidebar picks which.
         final sidebar = find.descendant(
           of: find.byType(ListView).first,
           matching: find.byType(ListTile),
         );
-        final seen = <String>[];
-        for (var i = 0; i < tester.widgetList(sidebar).length; i++) {
+        final titles = [
+          for (final tile in tester.widgetList<ListTile>(sidebar))
+            (tile.title! as Text).data!,
+        ];
+        expect(titles, shownGroups());
+        for (final (i, group) in titles.indexed) {
           await tester.tap(sidebar.at(i));
-          await tester.pump(const Duration(seconds: 1));
-          seen.addAll(
-            rows.where(
-              (r) => find
-                  .descendant(
-                    of: find.byType(ListView).last,
-                    matching: find.text(r),
-                  )
-                  .evaluate()
-                  .isNotEmpty,
-            ),
-          );
+          await settle(tester);
+          final pane = find.byType(ListView).last;
+          final here = rowsIn(all, pane);
+          expect(here, expected[group], reason: group);
+          for (final r in here) {
+            expect(
+              find.descendant(of: pane, matching: find.text(r)),
+              findsOneWidget,
+              reason: r,
+            );
+          }
+          seen.addAll(here);
         }
-        expect(seen..sort(), rows..sort());
       } else {
-        for (final r in rows) {
-          expect(find.text(r), findsOneWidget, reason: r);
+        // The top list: a tile per group, or the row itself for a group of one.
+        final tiles = [
+          for (final g in shownGroups())
+            if (!rowGroups.contains(g)) g,
+        ];
+        for (final g in shownGroups()) {
+          expect(find.text(g), findsNWidgets(rowGroups.contains(g) ? 0 : 1));
+        }
+        expect(find.text('Video enhancement'), findsNothing);
+        expect(find.text('Watch party'), findsNothing);
+        final top = rowsIn(all);
+        expect(top, [for (final g in rowGroups) ...expected[g]!]);
+        seen.addAll(top);
+        for (final group in tiles) {
+          await tester.tap(find.widgetWithText(ListTile, group));
+          await settle(tester);
+          // The page is titled after its group and holds just that group's rows.
+          expect(
+            find.descendant(
+              of: find.byType(AppBar),
+              matching: find.text(group),
+            ),
+            findsOneWidget,
+          );
+          final here = rowsIn(all);
+          expect(here, expected[group], reason: group);
+          for (final r in here) {
+            expect(find.text(r), findsOneWidget, reason: r);
+          }
+          seen.addAll(here);
+          await tester.pageBack();
+          await settle(tester);
+          expect(find.text(group), findsOneWidget);
         }
       }
+      expect(seen..sort(), all..sort());
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('phone: a switch on a group page repaints there', (tester) async {
+    await setUpScreen(tester, profiles.first, 12000);
+    await tester.tap(find.widgetWithText(ListTile, 'Home & search'));
+    await settle(tester);
+    final before = Settings.hideNsfw;
+    await tester.tap(find.text('Hide NSFW shows'));
+    await tester.pump();
+    expect(Settings.hideNsfw, !before);
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.widgetWithText(SwitchListTile, 'Hide NSFW shows'),
+          )
+          .value,
+      !before,
+    );
+  });
+
+  testWidgets('tv: the remote opens a group and Back returns to its tile', (
+    tester,
+  ) async {
+    await setUpScreen(tester, profiles[1], 540);
+    bool focused(String text) =>
+        Focus.of(tester.element(find.text(text))).hasPrimaryFocus;
+
+    expect(focused('Accounts'), isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await settle(tester);
+    expect(focused('Appearance'), isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await settle(tester);
+    expect(find.text('Follow system light and dark'), findsOneWidget);
+    expect(focused('Theme'), isTrue);
+
+    await tester.binding.handlePopRoute();
+    await settle(tester);
+    expect(find.text('Theme'), findsNothing);
+    expect(focused('Appearance'), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('builds a group\'s rows only once it is on screen', (
+    tester,
+  ) async {
+    await setUpScreen(tester, profiles.first, 2000);
+    expect(siteLoads, 0); // the top list doesn't build Sources
+    await tester.tap(find.widgetWithText(ListTile, 'Sources & extensions'));
+    await settle(tester);
+    expect(siteLoads, 1);
+  });
+
+  testWidgets('desktop: builds only the group picked in the sidebar', (
+    tester,
+  ) async {
+    await setUpScreen(tester, profiles.last, 800);
+    expect(siteLoads, 0);
+    await tester.tap(find.widgetWithText(ListTile, 'Sources & extensions'));
+    await settle(tester);
+    expect(siteLoads, 1);
+  });
 }
