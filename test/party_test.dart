@@ -363,17 +363,64 @@ void main() {
       expect(h.calls, ['play']);
       h.calls.clear();
 
-      // More than 5 in a second drops the peer for good.
-      for (var n = 0; n < 7; n++) {
+      // A burst a relay held back gets through; a flood loses only what's over 40 in 5 s, and the peer stays.
+      for (var n = 0; n < 45; n++) {
         inbox.inject(msg({'t': 'ctl', 'op': 'play', 'from': 'flood', 'n': n}));
       }
-      expect(h.calls, hasLength(5));
-      expect(host.peers.containsKey('flood'), isFalse);
+      expect(h.calls, hasLength(40));
+      expect(host.peers.containsKey('flood'), isTrue);
       rig.now += 5000;
       inbox.inject(msg({'t': 'ctl', 'op': 'pause', 'from': 'flood', 'n': 50}));
-      expect(h.calls, isNot(contains('pause')));
+      expect(h.calls, contains('pause'));
     },
   );
+
+  test('a guest gone quiet for 90 s gives its place up', () {
+    final (rig, host, guest) = synced();
+    final gone = rig.join();
+    rig.advance(250);
+    expect(host.peers.containsKey(gone.id), isTrue);
+    // It vanishes without a bye.
+    rig.players.remove(gone);
+    rig.transports[gone]!.close();
+    for (var i = 0; i < 95; i++) {
+      rig.advance(1000);
+    }
+    expect(host.peers.containsKey(gone.id), isFalse);
+    expect(guest.peers.containsKey(gone.id), isFalse);
+    expect(host.peers.containsKey(guest.id), isTrue);
+    expect(guest.ended, isFalse);
+  });
+
+  test('a silent host is flagged at 15 s and ends the room at 2 minutes', () {
+    final (rig, host, guest) = synced();
+    // The host vanishes without a bye.
+    rig.players.remove(host);
+    rig.transports[host]!.close();
+    for (var i = 0; i < 16; i++) {
+      rig.advance(1000);
+    }
+    expect(guest.hostSilent, isTrue);
+    expect(guest.ended, isFalse);
+    expect(rig.players[guest]!.playing, isTrue);
+    for (var i = 0; i < 106; i++) {
+      rig.advance(1000);
+    }
+    expect(guest.ended, isTrue);
+  });
+
+  test('a host with nothing open still keeps the room alive', () {
+    final rig = Rig();
+    final host = rig.join(host: true);
+    final guest = rig.join();
+    rig.hub.settle();
+    for (var i = 0; i < 200; i++) {
+      rig.advance(1000);
+    }
+    expect(guest.ended, isFalse);
+    expect(guest.hostSilent, isFalse);
+    expect(host.peers.containsKey(guest.id), isTrue);
+  });
 
   test('clock offset keeps the lowest round trip of the samples', () {
     final rig = Rig();
