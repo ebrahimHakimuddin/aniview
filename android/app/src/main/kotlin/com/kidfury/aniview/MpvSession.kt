@@ -38,15 +38,22 @@ class MpvSession(private val activity: Activity, messenger: BinaryMessenger) {
                 resumeOnGain = false
                 pause()
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (playing) {
-                resumeOnGain = true
-                pause()
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // Asked for again on the next play, which a call still holding the audio refuses.
+                focused = false
+                if (playing) {
+                    resumeOnGain = true
+                    pause()
+                }
             }
             // Android lowers the sound itself for a notification.
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> Unit
-            AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) {
-                resumeOnGain = false
-                channel.invokeMethod("play", null)
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                focused = true
+                if (resumeOnGain) {
+                    resumeOnGain = false
+                    channel.invokeMethod("play", null)
+                }
             }
         }
     }
@@ -128,15 +135,14 @@ class MpvSession(private val activity: Activity, messenger: BinaryMessenger) {
     private fun end() {
         playing = false
         resumeOnGain = false
-        if (focused) {
-            if (focusRequest != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audio.abandonAudioFocusRequest(focusRequest)
-            } else {
-                @Suppress("DEPRECATION")
-                audio.abandonAudioFocus(onFocus)
-            }
-            focused = false
+        // Even after a transient loss left [focused] false: still on the focus stack, a later GAIN would land here.
+        if (focusRequest != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audio.abandonAudioFocusRequest(focusRequest)
+        } else {
+            @Suppress("DEPRECATION")
+            audio.abandonAudioFocus(onFocus)
         }
+        focused = false
         if (noisyRegistered) {
             activity.unregisterReceiver(noisy)
             noisyRegistered = false
