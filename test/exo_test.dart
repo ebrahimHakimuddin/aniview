@@ -142,4 +142,14 @@ void main() {
       ]);
     });
   });
+
+  test('the shared mpv stays with the newest player', () {
+    final a = Object(), b = Object();
+    MpvOwner.claim(a);
+    MpvOwner.claim(b);
+    // a's route closing after b opened leaves b's video, channel and audio focus alone.
+    expect(MpvOwner.release(a), isFalse);
+    expect(MpvOwner.release(b), isTrue);
+    expect(MpvOwner.release(b), isFalse);
+  });
 }
