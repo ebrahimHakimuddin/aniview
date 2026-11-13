@@ -85,8 +85,11 @@ class MAL {
         )
         .timeout(patience);
     if (res.statusCode != 200) {
-      // A refresh token MAL no longer honours means signing in again.
-      if (form['grant_type'] == 'refresh_token') await logout();
+      // A refresh token MAL no longer honours means signing in again; any other failure may pass.
+      if (form['grant_type'] == 'refresh_token' &&
+          (res.statusCode == 400 || res.statusCode == 401)) {
+        await logout();
+      }
       throw Exception('MyAnimeList: sign-in failed (HTTP ${res.statusCode})');
     }
     final json = jsonDecode(res.body);
@@ -126,13 +129,21 @@ class MAL {
     }
   }
 
-  /// The access token, renewed first when it has under a day left (they last a month).
+  /// The access token, renewed first when it has under a day left (they last a month). A renewal that fails while
+  /// the token still works is tried again next time.
   static Future<String> _bearer() async {
     if (_access == null) throw Exception('Not signed in to MyAnimeList');
     if (_refresh != null &&
         (_expires?.isBefore(DateTime.now().add(const Duration(days: 1))) ??
             false)) {
-      await _grant({'grant_type': 'refresh_token', 'refresh_token': _refresh!});
+      try {
+        await _grant({
+          'grant_type': 'refresh_token',
+          'refresh_token': _refresh!,
+        });
+      } catch (_) {
+        if (_access == null || !_expires!.isAfter(DateTime.now())) rethrow;
+      }
     }
     return _access!;
   }
