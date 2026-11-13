@@ -435,73 +435,31 @@ extension _DeskDetails on _DetailsScreenState {
             ),
           const SizedBox(height: 24),
         ],
-        FutureBuilder(
-          future: relations,
-          builder: (context, snap) {
-            final found = snap.data ?? const <(String, Map)>[];
-            if (found.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                heading('Related'),
-                for (final (type, related) in found)
-                  Hover(
-                    pressScale: .98,
-                    onTap: () => openDetails(context, related),
-                    builder: (context, hovered) => Container(
-                      margin: const EdgeInsets.only(bottom: 6),
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: hovered
-                            ? scheme.onSurface.withValues(alpha: .06)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(
-                          nested(6, radiusMedium),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(radiusMedium),
-                            child: SizedBox(
-                              width: 40,
-                              height: 60,
-                              child: Artwork(
-                                Show(related).cover,
-                                color: Show(related).color,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  titleOf(related),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: text.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  type == 'PREQUEL' ? 'Prequel' : 'Sequel',
-                                  style: text.bodySmall?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+        if (Settings.groupSeasons)
+          DeskSeasonGroup(
+            media,
+            key: ValueKey(media['id']),
+            heading: heading('Seasons & related entries'),
+          )
+        else
+          FutureBuilder(
+            future: relations,
+            builder: (context, snap) {
+              final found = snap.data ?? const <(String, Map)>[];
+              if (found.isEmpty) return const SizedBox.shrink();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  heading('Related'),
+                  for (final (type, related) in found)
+                    DeskRelatedTile(
+                      related,
+                      type == 'PREQUEL' ? 'Prequel' : 'Sequel',
                     ),
-                  ),
-              ],
-            );
-          },
-        ),
+                ],
+              );
+            },
+          ),
       ],
     );
   }

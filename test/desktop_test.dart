@@ -352,4 +352,68 @@ void main() {
     expect((menu.dx - at.dx).abs(), lessThan(40));
     expect((menu.dy - at.dy).abs(), lessThan(40));
   });
+
+  for (final grouped in [true, false]) {
+    testWidgets(
+      'the desktop details page shows ${grouped ? 'its seasons' : 'related shows'} '
+      'with Group related seasons ${grouped ? 'on' : 'off'}',
+      (tester) async {
+        isDesktop = true;
+        addTearDown(() => isDesktop = false);
+        Tracker.primary = _Sequel();
+        tester.view.physicalSize = const Size(1600, 1400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        SharedPreferences.setMockInitialValues({'group_seasons': grouped});
+        await Settings.load();
+        Sites.load = () async => [];
+        Sites.reload();
+        addTearDown(() {
+          Sites.load = topSources;
+          Sites.reload();
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildTheme(),
+            home: DetailsScreen(const {
+              'id': 1,
+              'title': {'userPreferred': 'First season'},
+              'seasonYear': 2020,
+            }),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Second season'), findsOneWidget);
+        expect(
+          find.text('Seasons & related entries'),
+          grouped ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('Current entry'),
+          grouped ? findsOneWidget : findsNothing,
+        );
+        expect(find.text('Related'), grouped ? findsNothing : findsOneWidget);
+        expect(find.text('Sequel'), grouped ? findsNothing : findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+}
+
+/// A show with one sequel, and nothing else.
+class _Sequel extends _Empty {
+  @override
+  Future<List<(String, Map)>> relations(Map media) async => media['id'] == 1
+      ? const [
+          (
+            'SEQUEL',
+            {
+              'id': 2,
+              'title': {'userPreferred': 'Second season'},
+              'format': 'TV',
+              'seasonYear': 2021,
+            },
+          ),
+        ]
+      : const [];
 }
