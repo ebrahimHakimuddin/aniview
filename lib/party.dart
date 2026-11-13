@@ -89,7 +89,9 @@ class PartyPeer {
   Duration duration = Duration.zero;
   bool host = false;
 
+  /// Counters heard within 256 of the highest, [_top]; anything older is dropped as a possible replay.
   final _seen = <int>{};
+  int _top = 0;
   final _recent = <int>[];
 
   /// When we last heard from them, on our clock.
@@ -545,8 +547,13 @@ class PartySession {
       final act = _parse(m as Map);
       if (act == null) return;
       final peer = peers[from] ?? (m['t'] == 'bye' ? null : _admit(from));
-      if (peer == null || !peer._seen.add(n)) return;
-      if (peer._seen.length > 256) peer._seen.remove(peer._seen.first);
+      // The relays' clock slack is 15 minutes, longer than any cache of what's been heard: a counter below the
+      // window can't be told from a replay.
+      if (peer == null || n <= peer._top - 256 || !peer._seen.add(n)) return;
+      if (n > peer._top) {
+        peer._top = n;
+        peer._seen.removeWhere((s) => s <= n - 256);
+      }
       final now = _clock();
       peer._heard = now;
       // Counted on arrival, so a relay's burst after a stall mustn't cost an honest peer more than the excess.
