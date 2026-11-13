@@ -35,12 +35,12 @@ class _SeasonGroupSectionState extends State<SeasonGroupSection> {
             items,
             subtitles: [
               for (final media in items)
-                media['id'] == widget.media['id']
-                    ? 'Current entry'
-                    : [
-                        media['format']?.toString().replaceAll('_', ' '),
-                        media['seasonYear']?.toString(),
-                      ].whereType<String>().join(' · '),
+                [
+                  media['id'] == widget.media['id']
+                      ? 'Current entry'
+                      : media['format']?.toString().replaceAll('_', ' '),
+                  media['seasonYear']?.toString(),
+                ].whereType<String>().join(' · '),
             ],
           ),
           if (group.loading)
