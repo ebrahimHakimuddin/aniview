@@ -255,4 +255,46 @@ void main() {
     expect(TvLink.code.value, isNull);
     expect(TvLink.confirmed.value, isFalse);
   });
+
+  testWidgets('a held Left at a row\'s first item does not go to onLeftEdge', (
+    tester,
+  ) async {
+    isTv = true;
+    addTearDown(() => isTv = false);
+    var edges = 0;
+    onLeftEdge = () {
+      edges++;
+      return true;
+    };
+    addTearDown(() => onLeftEdge = null);
+    final card = FocusNode(debugLabel: 'card');
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => TvInput(child: child!),
+        home: Scaffold(
+          body: TvRow(
+            child: Row(
+              children: [
+                TextButton(
+                  autofocus: true,
+                  focusNode: card,
+                  onPressed: () {},
+                  child: const Text('card'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(edges, 1); // the press, not the repeats
+    expect(card.hasPrimaryFocus, isTrue);
+  });
 }

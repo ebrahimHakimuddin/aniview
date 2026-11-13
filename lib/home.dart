@@ -598,7 +598,10 @@ class _HomeScreenState extends State<HomeScreen>
       return KeyEventResult.ignored;
     }
     final primary = FocusManager.instance.primaryFocus;
-    if (primary != null && !primary.focusInDirection(TraversalDirection.left)) {
+    // A held Left never opens the drawer: it outruns the cards still being built to its left.
+    if (primary != null &&
+        !primary.focusInDirection(TraversalDirection.left) &&
+        event is KeyDownEvent) {
       _openDrawer();
     }
     return KeyEventResult.handled;
