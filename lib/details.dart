@@ -1657,7 +1657,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   child: _EpisodeRow(
                     key: ValueKey((plan.page, newestFirst, dub)),
                     count: shown.length,
-                    start: plan.upNext == null
+                    // Once the order is switched by hand, the row starts at its first episode.
+                    start: plan.upNext == null || newestFirstPicked != null
                         ? 0
                         : shown.indexOf(plan.upNext!),
                     itemBuilder: tile,
