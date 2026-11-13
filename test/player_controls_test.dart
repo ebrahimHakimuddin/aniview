@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:aniview/exo.dart';
 import 'package:aniview/history.dart';
@@ -14,11 +15,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class Backend extends PlayerBackend {
   late void Function(Map) emit;
+  final opened = <String>[];
   @override
   Future<void> start(void Function(Map) on) async => emit = on;
   @override
   Future<void> call(String method, Map<String, Object?> args) async {
     if (method == 'open') {
+      opened.add(args['url']! as String);
       emit({
         'position': 0,
         'buffer': 0,
@@ -69,6 +72,18 @@ class FallbackSource extends SourceFixture {
     if (dub) return [];
     return super.streams(media, episode, dub: dub);
   }
+}
+
+/// Servers in order; an HLS one on dead.test fails its quality pre-fetch.
+class ServersSource extends SourceFixture {
+  ServersSource(this.servers);
+  final List<VideoStream> servers;
+  @override
+  Future<List<VideoStream>> streams(
+    Map media,
+    Episode episode, {
+    required bool dub,
+  }) async => servers;
 }
 
 void main() {
@@ -223,4 +238,68 @@ void main() {
       });
     }
   }
+
+  group('a server failing before it loads', () {
+    setUp(() {
+      final previous = configureQuality;
+      configureQuality = (url, _) async => url.contains('dead.test')
+          ? throw const HttpException('HTTP 404')
+          : const [];
+      addTearDown(() => configureQuality = previous);
+    });
+
+    Future<void> open(
+      WidgetTester tester,
+      List<VideoStream> servers,
+      Backend backend,
+    ) async {
+      SharedPreferences.setMockInitialValues({'resume': false});
+      await Settings.load();
+      expect(usesMediaKit, isTrue); // tests run on desktop: the pre-fetch path
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildTheme(),
+          home: PlayerScreen(
+            media: {
+              'id': 7007007,
+              'title': {'romaji': 'Fixture'},
+            },
+            source: ServersSource(servers),
+            episodes: [Episode(1, ref: '1')],
+            index: 0,
+            dub: false,
+            backend: backend,
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    testWidgets('falls back to the next server', (tester) async {
+      final backend = Backend();
+      await open(tester, [
+        VideoStream('Dead', 'https://dead.test/video.mp4', {}),
+        VideoStream('Live', 'https://live.test/video.mp4', {}),
+      ], backend);
+      expect(find.text('Dead failed · trying Live'), findsOneWidget);
+      expect(backend.opened, ['https://live.test/video.mp4']);
+      expect(find.text("Couldn't play this episode"), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 5));
+    });
+
+    testWidgets('shows the error when no server is left', (tester) async {
+      final backend = Backend();
+      await open(tester, [
+        VideoStream('Dead', 'https://dead.test/video.mp4', {}),
+      ], backend);
+      expect(backend.opened, isEmpty);
+      expect(find.text("Couldn't play this episode"), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 5));
+    });
+  });
 }
