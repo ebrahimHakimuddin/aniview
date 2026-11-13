@@ -34,6 +34,12 @@ part 'desktop/player_view.dart';
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
 /// intro/outro markers on the seek bar. Downloaded episodes always play from disk.
+/// Caps the relay's quality for a stream and returns the heights it has: a request for its master playlist, so it
+/// fails for a dead server. Replaced in tests.
+@visibleForTesting
+Future<List<int>> Function(String url, int maxHeight) configureQuality =
+    HlsProxy.configureQuality;
+
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
     super.key,
@@ -251,16 +257,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // A stream that never loads would otherwise spin on "Loading video…" forever.
       player.stream.error.listen((e) {
         if (!mounted || !session.stalled(player.state.duration)) return;
-        // Aggregated sources often list dead servers; move on before giving up.
-        if (session.fallback() case final next?) {
-          _hint(
-            '${current!.label} failed · trying ${next.label}',
-            icon: Icons.dns_rounded,
-          );
-          _play(next, at: _startAt);
-        } else {
-          setState(() => error = Exception(e));
-        }
+        _serverFailed(Exception(e));
       }),
       player.stream.completed.listen((done) {
         if (done && session.advancesOnFinish) {
@@ -599,58 +596,78 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// The server playing failed before it got going. Aggregated sources often list dead servers, so move on to the
+  /// next one before giving up with [e].
+  void _serverFailed(Object e) {
+    if (session.fallback() case final next?) {
+      _hint(
+        '${current!.label} failed · trying ${next.label}',
+        icon: Icons.dns_rounded,
+      );
+      _play(next, at: _startAt);
+    } else {
+      setState(() => error = e);
+    }
+  }
+
+  /// Never completes with an error: a server that fails before it loads falls back through [_serverFailed]
+  /// (media_kit only), anything else shows the error. A call overtaken by a newer one drops its error.
   Future<void> _play(VideoStream stream, {Duration? at}) async {
     final generation = ++_playGeneration;
     _startAt = at;
+    bool stale() =>
+        !mounted || generation != _playGeneration || current != stream;
     setState(() => session.playing(stream));
-    final address = await StreamAddress.instance.forPlayer(stream);
-    if (!mounted || generation != _playGeneration || current != stream) return;
-    if (usesMediaKit) {
-      final heights = await HlsProxy.configureQuality(
-        address.url,
-        quality == 0 ? Settings.streamQuality : quality,
-      );
-      if (!mounted || generation != _playGeneration || current != stream) {
-        return;
-      }
-      if (quality != 0 && !heights.contains(quality)) {
-        quality = 0;
-        await HlsProxy.configureQuality(address.url, Settings.streamQuality);
-        if (!mounted || generation != _playGeneration || current != stream) {
-          return;
+    var loaded = false;
+    try {
+      final address = await StreamAddress.instance.forPlayer(stream);
+      if (stale()) return;
+      if (usesMediaKit) {
+        final heights = await configureQuality(
+          address.url,
+          quality == 0 ? Settings.streamQuality : quality,
+        );
+        if (stale()) return;
+        if (quality != 0 && !heights.contains(quality)) {
+          quality = 0;
+          await configureQuality(address.url, Settings.streamQuality);
+          if (stale()) return;
         }
+        setState(() => _desktopHeights = heights);
       }
-      setState(() => _desktopHeights = heights);
+      final pick = session.subtitleFor(stream);
+      final shown = await player.load(
+        address.url,
+        headers: address.headers,
+        hls: address.hls,
+        start: at,
+        subtitles: address.subtitles,
+        audios: address.audios,
+        subtitlesOff: pick.off,
+        subtitleFile: pick.track?.label,
+        audio: audio, // the one picked before, when this stream has one named alike
+        rate: rate,
+      );
+      loaded = true;
+      if (shown == null || stale()) return;
+      // No subtitle file: the stream's own tracks, picked by the subtitle language rather than whatever the file marks.
+      final own = shown == 'Auto'
+          ? PlaybackSession.embeddedSubtitle(
+              player.state.subtitles,
+              Settings.subtitleLanguage,
+            )
+          : null;
+      if (own != null) return await _setSubtitle(own, own.name);
+      setState(() => subtitle = shown);
+    } catch (e) {
+      if (stale()) return;
+      // A Cloudflare check is the site's, not a dead server: the error view offers to verify it.
+      if (loaded || !usesMediaKit || e is CloudflareChallenge) {
+        setState(() => error = e);
+      } else {
+        _serverFailed(e);
+      }
     }
-    final pick = session.subtitleFor(stream);
-    final shown = await player.load(
-      address.url,
-      headers: address.headers,
-      hls: address.hls,
-      start: at,
-      subtitles: address.subtitles,
-      audios: address.audios,
-      subtitlesOff: pick.off,
-      subtitleFile: pick.track?.label,
-      audio:
-          audio, // the one picked before, when this stream has one named alike
-      rate: rate,
-    );
-    if (shown == null ||
-        !mounted ||
-        generation != _playGeneration ||
-        current != stream) {
-      return;
-    }
-    // No subtitle file: the stream's own tracks, picked by the subtitle language rather than whatever the file marks.
-    final own = shown == 'Auto'
-        ? PlaybackSession.embeddedSubtitle(
-            player.state.subtitles,
-            Settings.subtitleLanguage,
-          )
-        : null;
-    if (own != null) return _setSubtitle(own, own.name);
-    setState(() => subtitle = shown);
   }
 
   /// Hands [stream] to another video app and records where it stopped like our own player would. Returns that
