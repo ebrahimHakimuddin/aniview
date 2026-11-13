@@ -70,15 +70,6 @@ String? relayProblem(String url, List<String> relays) {
   return null;
 }
 
-/// The longest name a party shows.
-const partyNameLength = 24;
-
-/// [name] trimmed to [partyNameLength] characters.
-String clampPartyName(String name) {
-  final clean = name.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim();
-  return clean.characters.take(partyNameLength).toString();
-}
-
 /// The name to join as: the one set in Settings, else the signed-in AniList or MyAnimeList name; empty without
 /// either.
 Future<String> partyNickname() async {

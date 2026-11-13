@@ -30,6 +30,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/widgets.dart' show StringCharacters;
+
 /// One episode of one show: what a room is about. Two keys are the same episode when their episode numbers match
 /// and either their AniList or MyAnimeList ids do.
 class PartyEpisode {
@@ -103,6 +105,15 @@ class PartyChat {
   const PartyChat(this.peer, this.name, this.text, {this.reaction = false});
   final String peer, name, text;
   final bool reaction;
+}
+
+/// The longest name a party shows.
+const partyNameLength = 24;
+
+/// [name] trimmed to [partyNameLength] characters.
+String clampPartyName(String name) {
+  final clean = name.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim();
+  return clean.characters.take(partyNameLength).toString();
 }
 
 const partyRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
@@ -574,7 +585,7 @@ class PartySession {
   /// What a valid message does, or null for anything malformed or unknown.
   void Function(PartyPeer)? _parse(Map m) => switch (m) {
     {'t': 'hello', 'name': final String name, 'dur': final int dur}
-        when name.length <= 40 && dur >= 0 =>
+        when clampPartyName(name) == name && dur >= 0 =>
       (p) => _onHello(p, name, dur, m['host'] == true, m['re'] == true),
     {
       't': 'state',
