@@ -494,7 +494,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ('appearance', 'Appearance', Icons.palette_outlined, _appearance),
     ('home', 'Home & search', Icons.home_outlined, _homeAndSearch),
     ('playback', 'Playback', Icons.play_circle_outline_rounded, _playback),
-    ('video', 'Video enhancement', Icons.auto_awesome_outlined, null),
+    (
+      'video',
+      'Video enhancement',
+      Icons.auto_awesome_outlined,
+      usesMediaKit ? _video : null,
+    ),
     ('subtitles', 'Subtitles', Icons.subtitles_outlined, _subtitles),
     ('sources', 'Sources & extensions', Icons.extension_outlined, _sources),
     (
@@ -521,6 +526,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Groups of a single row, which sits on the top list rather than a page of its own.
   static const _rowGroups = {'devices', 'notifications'};
+
+  /// Only where the player is mpv, which runs the shaders: not Android's Media3.
+  List<Widget> _video() => [
+    _Choice(
+      title: 'Anime upscaling (Anime4K)',
+      value: Settings.upscale.label,
+      subtitle: 'Sharpens anime shown larger than its source; uses more GPU',
+      onTap: () => _choose(
+        'Anime upscaling (Anime4K)',
+        {for (final t in Upscale.values) t: t.label},
+        Settings.upscale,
+        (v) => Settings.upscale = v,
+      ),
+    ),
+  ];
 
   List<Widget> _accounts() => [
     for (final p in [Tracker.anilist, Tracker.mal])

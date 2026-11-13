@@ -62,6 +62,12 @@ abstract class PlayerBackend {
 
   /// The media_kit picture's controller; null where the backend exposes a texture directly.
   VideoController? get video => null;
+
+  /// Whether it takes the `shaders` command (mpv's GLSL shaders, see [ExoPlayer.setShaders]). Media3 doesn't.
+  bool get supportsShaders => false;
+
+  /// The player's own [name]d property as text (mpv's `frame-drop-count`, …); null where there's none.
+  Future<String?> property(String name) async => null;
 }
 
 /// Android: the player lives in ExoPlayers.kt and draws into a texture, announced as a `texture` event.
@@ -158,6 +164,35 @@ class MediaKitTrackLoader {
   }
 }
 
+/// Puts mpv's GLSL shaders in place through [command] (mpv's own commands) and sizes the picture through [setSize].
+class MediaKitShaders {
+  MediaKitShaders({required this.command, required this.setSize});
+
+  final Future<void> Function(List<String>) command;
+
+  /// The picture's output size; both null for the video's own.
+  final Future<void> Function({int? width, int? height}) setSize;
+
+  /// Runs the shader files at [paths] (absolute), in order, drawing into [target]; none (and the video's own size)
+  /// when [paths] is empty.
+  ///
+  /// One `append` per file rather than one joined `set`: the list's separator is ':' or ';' depending on the OS.
+  /// media_kit draws at the video's own resolution, where Anime4K's upscalers skip themselves, so the picture is
+  /// sized to [target] while they run. Unsetting the size first makes the new size take even when media_kit put the
+  /// video's own back for a new file without telling its controller.
+  Future<void> apply(List<String> paths, {Size? target}) async {
+    await command(const ['change-list', 'glsl-shaders', 'clr', '']);
+    await setSize();
+    if (paths.isEmpty) return;
+    if (target != null && !target.isEmpty) {
+      await setSize(width: target.width.round(), height: target.height.round());
+    }
+    for (final path in paths) {
+      await command(['change-list', 'glsl-shaders', 'append', path]);
+    }
+  }
+}
+
 /// media_kit on iOS and desktop, answering the same commands and events as Media3.
 /// iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture renderer.
 class _MediaKitBackend extends PlayerBackend {
@@ -168,6 +203,20 @@ class _MediaKitBackend extends PlayerBackend {
 
   final mk.Player _mpv = _sharedMpv ??= mk.Player();
   final _tracks = MediaKitTrackLoader();
+  late final _shaders = MediaKitShaders(
+    command: (args) => (_mpv.platform as mk.NativePlayer).command(args),
+    setSize: ({width, height}) async =>
+        video?.setSize(width: width, height: height),
+  );
+
+  @override
+  bool get supportsShaders => true;
+
+  @override
+  Future<String?> property(String name) async {
+    final value = await (_mpv.platform as mk.NativePlayer).getProperty(name);
+    return value.isEmpty ? null : value;
+  }
 
   /// A download carries its subtitles twice: styled files beside it, and plain copies inside (mov_text) for other
   /// apps. Only the files are listed.
@@ -279,6 +328,14 @@ class _MediaKitBackend extends PlayerBackend {
           'auto' => mk.AudioTrack.auto(),
           final id => mpv.state.tracks.audio.firstWhere((t) => t.id == id),
         });
+      case 'shaders':
+        await _shaders.apply(
+          (args['paths']! as List).cast<String>(),
+          target: switch ((args['width'], args['height'])) {
+            (final num w, final num h) => Size(w.toDouble(), h.toDouble()),
+            _ => null,
+          },
+        );
       // 'quality': mpv takes the stream's own pick, there's no cap to set yet.
     }
   }
@@ -294,6 +351,8 @@ class _MediaKitBackend extends PlayerBackend {
     }
     await _mpv.stop();
     await _mpv.setVolume(100);
+    // The mpv lives on for the next video: it starts with no shaders, at its own size.
+    await _shaders.apply(const []);
   }
 }
 
@@ -528,6 +587,26 @@ class ExoPlayer {
 
   Future<void> setAudioTrack(SubtitleTrack track) =>
       _call('audio', {'track': track.id});
+
+  /// Whether [setShaders] does anything here: mpv (iOS and desktop) runs shaders, Media3 doesn't.
+  bool get supportsShaders => _backend.supportsShaders;
+
+  /// Runs the GLSL shader files at [paths] (absolute, in order) over the picture, drawn at [target] (physical
+  /// pixels) rather than the video's own size; none when [paths] is empty. Nothing where [supportsShaders] is false.
+  Future<void> setShaders(List<String> paths, {Size? target}) async {
+    if (!supportsShaders) return;
+    await _call('shaders', {
+      'paths': paths,
+      'width': target?.width.round(),
+      'height': target?.height.round(),
+    });
+  }
+
+  /// The backend's own [name]d property (mpv's `frame-drop-count`, …), or null.
+  Future<String?> property(String name) async {
+    await _ready;
+    return _disposed ? null : _backend.property(name);
+  }
 
   /// The player's own volume, 0–1 (Android moves the phone's media volume instead).
   Future<void> setVolume(double level) async {

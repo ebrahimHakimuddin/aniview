@@ -9,6 +9,7 @@ import 'package:aniview/platform.dart';
 import 'package:aniview/settings.dart';
 import 'package:aniview/sources.dart';
 import 'package:aniview/tv.dart';
+import 'package:aniview/upscale.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
@@ -56,6 +57,7 @@ Map<String, List<String>> expectedRows() {
       'Default speed',
       'Default picture',
     ],
+    'Video enhancement': [if (usesMediaKit) 'Anime upscaling (Anime4K)'],
     'Subtitles': [
       'This is your subtitle preview',
       'Language',
@@ -258,7 +260,11 @@ void main() {
         for (final g in shownGroups()) {
           expect(find.text(g), findsNWidgets(rowGroups.contains(g) ? 0 : 1));
         }
-        expect(find.text('Video enhancement'), findsNothing);
+        // mpv runs the shaders; Android's Media3 can't, so the group is gone there.
+        expect(
+          find.text('Video enhancement'),
+          usesMediaKit ? findsOneWidget : findsNothing,
+        );
         expect(find.text('Watch party'), findsNothing);
         final top = rowsIn(all);
         expect(top, [for (final g in rowGroups) ...expected[g]!]);
@@ -306,6 +312,24 @@ void main() {
           .value,
       !before,
     );
+  });
+
+  testWidgets('phone: picks an upscaling tier on its own page', (tester) async {
+    expect(
+      usesMediaKit,
+      isTrue,
+    ); // tests run on a desktop OS: mpv's group shows
+    await setUpScreen(tester, profiles.first, 2000);
+    await tester.tap(find.widgetWithText(ListTile, 'Video enhancement'));
+    await settle(tester);
+    expect(Settings.upscale, Upscale.off);
+    expect(find.textContaining('Off · Sharpens anime'), findsOneWidget);
+    await tester.tap(find.text('Anime upscaling (Anime4K)'));
+    await settle(tester);
+    await tester.tap(find.text('Quality').last);
+    await settle(tester);
+    expect(Settings.upscale, Upscale.quality);
+    expect(find.textContaining('Quality · Sharpens anime'), findsOneWidget);
   });
 
   testWidgets('tv: the remote opens a group and Back returns to its tile', (
