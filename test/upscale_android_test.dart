@@ -15,13 +15,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Android's two players as fakes: Media3 ([VideoBackend.exoPlayer], no shaders) or mpv, which with [fails] can't
-/// open the video (an error and no duration, as mpv reports it) and then falls back to [next].
+/// open the video (an error and no duration, as mpv reports it) and then falls back to [next]. With [startFails] it
+/// can't even start (libmpv failing to load), and then can't be disposed either.
 class _Backend extends PlayerBackend {
-  _Backend(this.kind, {this.fails = false, this.next});
+  _Backend(this.kind, {this.fails = false, this.startFails = false, this.next});
 
   @override
   final VideoBackend kind;
-  final bool fails;
+  final bool fails, startFails;
   final _Backend? next;
   late void Function(Map) emit;
   final calls = <String>[];
@@ -37,6 +38,7 @@ class _Backend extends PlayerBackend {
 
   @override
   Future<void> start(void Function(Map) on) async {
+    if (startFails) throw StateError('libmpv failed to load');
     started = true;
     emit = on;
   }
@@ -63,7 +65,10 @@ class _Backend extends PlayerBackend {
   Future<void> setVolume(double level) async {}
 
   @override
-  Future<void> dispose() async => disposed = true;
+  Future<void> dispose() async {
+    disposed = true;
+    if (startFails) throw StateError('never started');
+  }
 }
 
 class _Source extends Source {
@@ -224,6 +229,25 @@ void main() {
       await close(tester);
     },
   );
+
+  testWidgets('mpv that can\'t start plays on Media3, and says so', (
+    tester,
+  ) async {
+    final media3 = _Backend(VideoBackend.exoPlayer);
+    final mpv = _Backend(VideoBackend.mediaKit, startFails: true, next: media3);
+    await open(tester, backend: mpv, saved: Upscale.quality);
+    expect(
+      find.text("Upscaling isn't available for this video"),
+      findsOneWidget,
+    );
+    expect(mpv.disposed, isTrue);
+    expect(media3.started, isTrue);
+    expect(media3.opened.single['url'], 'https://live.test/video.mp4');
+    expect(media3.calls, isNot(contains('shaders')));
+    expect(find.textContaining('failed'), findsNothing);
+    await close(tester);
+    expect(media3.disposed, isTrue);
+  });
 
   testWidgets('with upscaling off, Android plays through Media3 as before', (
     tester,

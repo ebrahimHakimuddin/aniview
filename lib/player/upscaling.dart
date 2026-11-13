@@ -92,22 +92,28 @@ extension _Upscaling on _PlayerScreenState {
         );
 
   /// The player failed before the video loaded. In an Android upscaling session, where mpv may be what can't open
-  /// it, the same episode reopens where it was asked to start, on Media3 for the rest of this player, and says so.
-  /// False where there's nothing to fall back to: the server failed.
+  /// it, the same episode reopens where it was asked to start, on Media3 for the rest of this player (see
+  /// [_movedOffMpv]). False where there's nothing to fall back to: the server failed.
   bool _upscalingFellBack() {
     final stream = current;
     if (stream == null || !player.canFallBack) return false;
     final at = _startAt;
+    () async {
+      if (!await player.fallBack() || !mounted || current != stream) return;
+      await _play(stream, at: at);
+    }();
+    return true;
+  }
+
+  /// The player moved off mpv, because it couldn't start or couldn't open the video: no upscaling from here, and
+  /// the person is told.
+  void _movedOffMpv() {
+    if (!mounted || _onMpv) return;
     _upscaler?.dispose();
     _upscaler = null;
     _hint(
       "Upscaling isn't available for this video",
       icon: Icons.auto_awesome_outlined,
     );
-    () async {
-      if (!await player.fallBack() || !mounted || current != stream) return;
-      await _play(stream, at: at);
-    }();
-    return true;
   }
 }

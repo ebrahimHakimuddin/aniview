@@ -333,7 +333,8 @@ class _MediaKitBackend extends PlayerBackend {
     ];
   }
 
-  late List<StreamSubscription> _events;
+  /// Empty until [start] gets that far: a backend that failed to start is still disposed.
+  var _events = <StreamSubscription>[];
 
   void _size(mk.Player mpv, void Function(Map event) on) {
     if (mpv.state.width case final w? when w > 0) {
@@ -547,7 +548,7 @@ class ExoPlayer {
     : _backend = backend ?? PlayerBackend.forSession() {
     _fallback = _backend.fallback;
     playingOn = ValueNotifier(_backend.kind);
-    _ready = _start(_backend);
+    _ready = _first();
   }
 
   PlayerBackend _backend;
@@ -570,27 +571,54 @@ class ExoPlayer {
     if (identical(backend, _backend) && !_disposed) _on(e);
   });
 
-  /// Moves onto the backend this one falls back to (Media3, when an Android upscaling session's mpv can't open the
-  /// video) for the rest of the player's life; the old one is disposed, and nothing plays until the next [open].
-  /// False when there's none to go to.
-  Future<bool> fallBack() async {
-    final make = _fallback;
-    if (make == null || _disposed) return false;
+  /// Starts the backend; one that can't start (mpv's libraries failing to load, say) moves onto its fallback where
+  /// there is one, as [fallBack] does.
+  Future<void> _first() async {
+    try {
+      await _start(_backend);
+    } catch (_) {
+      if (_fallback == null) rethrow;
+      final old = _swap();
+      await _release(old);
+      await _start(_backend);
+    }
+  }
+
+  /// Makes the fallback the player's backend, returning the one it replaces.
+  PlayerBackend _swap() {
+    final old = _backend;
+    _backend = _fallback!();
     _fallback = null;
-    _loads++; // a load still settling on the old backend stops
-    final old = _backend, settled = _ready;
-    final next = _backend = make();
     texture.value = null;
     state
       ..size = null
       ..heights = const []
       ..playing = false;
-    playingOn.value = next.kind;
+    playingOn.value = _backend.kind;
+    return old;
+  }
+
+  /// Disposes [backend], which may not have started, as far as it gets.
+  static Future<void> _release(PlayerBackend backend) async {
+    try {
+      await backend.dispose();
+    } catch (e) {
+      debugPrint('player: disposing the old backend failed: $e');
+    }
+  }
+
+  /// Moves onto the backend this one falls back to (Media3, when an Android upscaling session's mpv can't open the
+  /// video) for the rest of the player's life; the old one is disposed, and nothing plays until the next [open].
+  /// False when there's none to go to.
+  Future<bool> fallBack() async {
+    if (_fallback == null || _disposed) return false;
+    _loads++; // a load still settling on the old backend stops
+    final settled = _ready, old = _swap(), next = _backend;
     _ready = () async {
       try {
         await settled;
       } catch (_) {}
-      await old.dispose();
+      await _release(old);
       await _start(next);
     }();
     await _ready;
