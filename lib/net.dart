@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -8,6 +9,10 @@ import 'package:http2/http2.dart' hide Settings;
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+
+/// How long a request waits for an answer, and for the next part of a body that has stopped arriving. A large
+/// download that keeps arriving takes as long as it needs. Shortened in tests.
+Duration patience = const Duration(seconds: 30);
 
 /// A site wants its Cloudflare check passed by hand (the verification page can).
 class CloudflareChallenge implements Exception {
@@ -40,13 +45,27 @@ class HttpNet implements Net {
     final uri = Uri.parse(url);
     final all = {'User-Agent': userAgent, ...?headers};
     if (!_h2Hosts.contains(uri.host)) {
-      final res = await httpClient.get(uri, headers: all);
-      if (res.statusCode == 200) return res;
+      final res = await _send(uri, all);
+      if (res.statusCode == 200) {
+        return http.Response.bytes(
+          await _body(res.stream, uri),
+          200,
+          headers: res.headers,
+          request: res.request,
+        );
+      }
+      await res.stream.drain<void>();
       if (res.statusCode != 403) {
         throw HttpException('HTTP ${res.statusCode}', uri: uri);
       }
     }
-    final (status, response, body) = await h2Get(uri, all);
+    final (int, Map<String, String>, Uint8List) h2;
+    try {
+      h2 = await h2Get(uri, all);
+    } on TimeoutException {
+      throw HttpException('Timed out', uri: uri);
+    }
+    final (status, response, body) = h2;
     if (status != 200) throw HttpException('HTTP $status', uri: uri);
     _h2Hosts.add(uri.host);
     return http.Response.bytes(
@@ -81,7 +100,7 @@ Future<String> postJson(
         },
         body: jsonEncode(body),
       )
-      .timeout(const Duration(seconds: 30));
+      .timeout(patience);
   if (response.statusCode != 200) {
     throw HttpException('HTTP ${response.statusCode}', uri: uri);
   }
@@ -99,11 +118,8 @@ Future<Stream<List<int>>> streamBytes(
 }) async {
   final uri = Uri.parse(url);
   if (!_h2Hosts.contains(uri.host)) {
-    final res = await httpClient.send(
-      http.Request('GET', uri)
-        ..headers.addAll({'User-Agent': userAgent, ...?headers}),
-    );
-    if (res.statusCode == 200) return res.stream;
+    final res = await _send(uri, {'User-Agent': userAgent, ...?headers});
+    if (res.statusCode == 200) return _unquiet(res.stream, uri);
     await res.stream.drain<void>();
     if (res.statusCode != 403) {
       throw HttpException('HTTP ${res.statusCode}', uri: uri);
@@ -117,10 +133,53 @@ Future<Stream<List<int>>> streamBytes(
 Future<http.StreamedResponse> openGet(
   String url, {
   Map<String, String>? headers,
-}) => httpClient.send(
-  http.Request('GET', Uri.parse(url))
-    ..headers.addAll({'User-Agent': userAgent, ...?headers}),
+}) async {
+  final uri = Uri.parse(url);
+  final res = await _send(uri, {'User-Agent': userAgent, ...?headers});
+  return http.StreamedResponse(
+    _unquiet(res.stream, uri),
+    res.statusCode,
+    contentLength: res.contentLength,
+    request: res.request,
+    headers: res.headers,
+    isRedirect: res.isRedirect,
+    persistentConnection: res.persistentConnection,
+    reasonPhrase: res.reasonPhrase,
+  );
+}
+
+/// A GET answered within [patience], or an [HttpException].
+Future<http.StreamedResponse> _send(Uri uri, Map<String, String> headers) =>
+    httpClient
+        .send(http.Request('GET', uri)..headers.addAll(headers))
+        .timeout(
+          patience,
+          onTimeout: () => throw HttpException('Timed out', uri: uri),
+        );
+
+/// [body] as it arrives, failing with an [HttpException] once it goes quiet for [patience].
+Stream<List<int>> _unquiet(Stream<List<int>> body, Uri uri) => body.timeout(
+  patience,
+  onTimeout: (sink) => sink
+    ..addError(HttpException('Timed out', uri: uri))
+    ..close(),
 );
+
+/// All of [body], or an [HttpException] once it goes quiet for [patience].
+// Not through [_unquiet]: under a widget test's clock a Stream.timeout only ends once the test does.
+Future<Uint8List> _body(Stream<List<int>> body, Uri uri) async {
+  final bytes = BytesBuilder(copy: false);
+  final parts = StreamIterator(body);
+  try {
+    while (await parts.moveNext().timeout(patience)) {
+      bytes.add(parts.current);
+    }
+  } on TimeoutException {
+    parts.cancel().ignore();
+    throw HttpException('Timed out', uri: uri);
+  }
+  return bytes.takeBytes();
+}
 
 Future<Uint8List> fetchBytes(String url, {Map<String, String>? headers}) =>
     const HttpNet().bytes(url, headers: headers);
@@ -159,9 +218,7 @@ Future<(int, Map<String, String>, Uint8List)> h2Get(
     ], endStream: true);
     final response = <String, String>{};
     final body = BytesBuilder(copy: false);
-    await for (final message in stream.incomingMessages.timeout(
-      const Duration(seconds: 30),
-    )) {
+    await for (final message in stream.incomingMessages.timeout(patience)) {
       switch (message) {
         case HeadersStreamMessage(:final headers):
           for (final h in headers) {

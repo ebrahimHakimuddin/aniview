@@ -45,14 +45,16 @@ class Jellyfin extends Source {
   }
 
   static Future<dynamic> _post(String url, [Object? body]) async {
-    final res = await http.post(
-      Uri.parse(url),
-      headers: {
-        'Authorization': _authorization(),
-        'Content-Type': 'application/json',
-      },
-      body: body == null ? null : jsonEncode(body),
-    );
+    final res = await http
+        .post(
+          Uri.parse(url),
+          headers: {
+            'Authorization': _authorization(),
+            'Content-Type': 'application/json',
+          },
+          body: body == null ? null : jsonEncode(body),
+        )
+        .timeout(patience);
     if (res.statusCode == 401) throw Exception('Wrong username or password');
     if (res.statusCode != 200) {
       throw Exception('The server answered HTTP ${res.statusCode}');
@@ -91,7 +93,9 @@ class Jellyfin extends Source {
     required bool Function() cancelled,
   }) async {
     final server = _server(address);
-    final enabled = await http.get(Uri.parse('$server/QuickConnect/Enabled'));
+    final enabled = await http
+        .get(Uri.parse('$server/QuickConnect/Enabled'))
+        .timeout(patience);
     if (enabled.body != 'true') {
       throw Exception('Quick Connect is turned off on this server');
     }
@@ -101,10 +105,13 @@ class Jellyfin extends Source {
     while (!cancelled()) {
       await Future<void>.delayed(const Duration(seconds: 2));
       final state = jsonDecode(
-        (await http.get(
-          Uri.parse('$server/QuickConnect/Connect?secret=$secret'),
-          headers: {'Authorization': _authorization()},
-        )).body,
+        (await http
+                .get(
+                  Uri.parse('$server/QuickConnect/Connect?secret=$secret'),
+                  headers: {'Authorization': _authorization()},
+                )
+                .timeout(patience))
+            .body,
       );
       if (state['Authenticated'] == true && !cancelled()) {
         _save(
@@ -354,15 +361,17 @@ class Jellyfin extends Source {
   /// Tells the server how far episode [item] has been watched, so its own apps resume there and mark it played.
   Future<void> report(String item, Duration position, Duration duration) async {
     final played = WatchHistory.finished(position, duration);
-    final res = await http.post(
-      Uri.parse('$base/UserItems/$item/UserData?userId=$user'),
-      headers: {..._headers, 'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'Played': played,
-        // Ticks are 100 ns.
-        'PlaybackPositionTicks': played ? 0 : position.inMicroseconds * 10,
-      }),
-    );
+    final res = await http
+        .post(
+          Uri.parse('$base/UserItems/$item/UserData?userId=$user'),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'Played': played,
+            // Ticks are 100 ns.
+            'PlaybackPositionTicks': played ? 0 : position.inMicroseconds * 10,
+          }),
+        )
+        .timeout(patience);
     if (res.statusCode != 200) {
       throw HttpException('HTTP ${res.statusCode}', uri: res.request?.url);
     }

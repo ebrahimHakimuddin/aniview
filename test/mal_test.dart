@@ -160,6 +160,79 @@ void main() {
       expect(stats['stats'], isNull);
     });
 
+    group('renewing', () {
+      Future<void> expiringIn(Duration left) async {
+        SharedPreferences.setMockInitialValues({
+          'mal_access': 'a',
+          'mal_refresh': 'r',
+          'mal_expires': DateTime.now().add(left).toIso8601String(),
+        });
+        await MAL.load();
+      }
+
+      // The token endpoint answers [renewal]; the API answers stats to the bearer it was sent.
+      MockClient renewalAnswering(int renewal, List<String> bearers) =>
+          MockClient((req) async {
+            if (req.url.host == 'myanimelist.net') {
+              return http.Response('{}', renewal);
+            }
+            bearers.add(req.headers['Authorization']!);
+            return http.Response(
+              jsonEncode({
+                'anime_statistics': {'num_items': 1},
+              }),
+              200,
+            );
+          });
+
+      test(
+        'a renewal that fails for now keeps the unexpired token in use',
+        () async {
+          await expiringIn(const Duration(hours: 2));
+          final bearers = <String>[];
+          final stats = await http.runWithClient(
+            MAL.stats,
+            () => renewalAnswering(503, bearers),
+          );
+          expect(stats, isNotNull);
+          expect(bearers, ['Bearer a']);
+          expect(MAL.signedIn, isTrue);
+          final prefs = await SharedPreferences.getInstance();
+          expect(prefs.getString('mal_refresh'), 'r');
+        },
+      );
+
+      for (final status in [400, 401]) {
+        test('a refused refresh token ($status) signs out', () async {
+          await expiringIn(const Duration(hours: 2));
+          final bearers = <String>[];
+          await expectLater(
+            http.runWithClient(
+              MAL.stats,
+              () => renewalAnswering(status, bearers),
+            ),
+            throwsException,
+          );
+          expect(bearers, isEmpty);
+          expect(MAL.signedIn, isFalse);
+        });
+      }
+
+      test(
+        'a failed renewal of an expired token fails, still signed in',
+        () async {
+          await expiringIn(const Duration(hours: -1));
+          final bearers = <String>[];
+          await expectLater(
+            http.runWithClient(MAL.stats, () => renewalAnswering(503, bearers)),
+            throwsException,
+          );
+          expect(bearers, isEmpty);
+          expect(MAL.signedIn, isTrue);
+        },
+      );
+    });
+
     test('a paired TV gets the access, never the refresh token', () async {
       final shared = MAL.shareable!;
       expect(shared.keys, unorderedEquals(['access', 'expires']));

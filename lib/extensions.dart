@@ -135,9 +135,9 @@ class Extensions {
   /// Downloads [extension] and hands it to Android, which only loads it if it's signed with its repo's key. The site
   /// list picks up the change.
   static Future<void> install(ExtensionInfo extension) async {
-    final res = await http.get(
-      Uri.parse('${extension.repo.base}/apk/${extension.apk}'),
-    );
+    final res = await http
+        .get(Uri.parse('${extension.repo.base}/apk/${extension.apk}'))
+        .timeout(patience * 10); // several MB, all of it
     if (res.statusCode != 200) {
       throw HttpException('HTTP ${res.statusCode}');
     }

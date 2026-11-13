@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'desktop/sign_in.dart';
+import 'net.dart' show patience;
 import 'pairing.dart';
 import 'platform.dart';
 import 'settings.dart' show Settings, TitleLanguage;
@@ -221,15 +222,17 @@ class AniList {
     Map<String, dynamic> variables = const {},
   ]) async {
     if (transport != null) return transport!(query, variables);
-    final res = await http.post(
-      Uri.parse('https://graphql.anilist.co'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({'query': query, 'variables': variables}),
-    );
+    final res = await http
+        .post(
+          Uri.parse('https://graphql.anilist.co'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            if (token != null) 'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'query': query, 'variables': variables}),
+        )
+        .timeout(patience);
     if (res.statusCode == 429) {
       final wait = int.tryParse(res.headers['retry-after'] ?? '') ?? 60;
       throw Exception(
