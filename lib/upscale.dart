@@ -25,6 +25,14 @@ enum Upscale {
       values.firstWhere((t) => t.name == name, orElse: () => off);
 }
 
+/// The tiers offered: Android TV boxes have too little GPU for [Upscale.quality], so a TV gets off and fast.
+List<Upscale> upscaleTiers({required bool tv}) =>
+    tv ? const [Upscale.off, Upscale.fast] : Upscale.values;
+
+/// The tier a [saved] one runs at where only [upscaleTiers] are offered: quality saved elsewhere runs fast on a TV.
+Upscale offeredTier(Upscale saved, {required bool tv}) =>
+    upscaleTiers(tv: tv).contains(saved) ? saved : Upscale.fast;
+
 /// Where the shaders are bundled.
 const shaderAssets = 'assets/shaders';
 
