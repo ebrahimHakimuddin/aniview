@@ -1,6 +1,6 @@
 name: Announce release
 
-# Posts a published release to Discord. The secret DISCORD_WEBHOOK_URL is the channel's webhook (see plans/001).
+# Posts a published release to Discord. The secret DISCORD_WEBHOOK_URL is the channel's webhook.
 on:
   release:
     # `released` fires when a release is published (not for drafts or pre-releases).
