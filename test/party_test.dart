@@ -375,11 +375,21 @@ void main() {
         msg({'t': 'react', 'emoji': '🍕', 'from': 'x', 'n': 0}),
         msg({'t': 'ctl', 'op': 'play', 'from': 'x', 'n': 0, 'pad': 'a' * 2100}),
         msg({'t': 'hello', 'name': 'x', 'dur': -1, 'from': 'x', 'n': 0}),
+        // Names the sender would have cleaned: too long, control characters, untrimmed.
+        msg({'t': 'hello', 'name': 'x' * 25, 'dur': 0, 'from': 'x', 'n': 0}),
+        msg({'t': 'hello', 'name': 'a\nb', 'dur': 0, 'from': 'x', 'n': 0}),
+        msg({'t': 'hello', 'name': ' x', 'dur': 0, 'from': 'x', 'n': 0}),
       ]) {
         inbox.inject(bad);
       }
       expect(h.calls, isEmpty);
       expect(host.peers, isEmpty);
+
+      // The longest a sender sends gets through.
+      inbox.inject(
+        msg({'t': 'hello', 'name': 'x' * 24, 'dur': 0, 'from': 'y', 'n': 0}),
+      );
+      expect(host.peers['y']?.name, 'x' * 24);
 
       // A duplicate counter is dropped.
       inbox.inject(msg({'t': 'ctl', 'op': 'play', 'from': 'dup', 'n': 1}));
