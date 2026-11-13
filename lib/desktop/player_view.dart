@@ -90,6 +90,7 @@ extension _DeskPlayer on _PlayerScreenState {
                     if (_canSwitchServer) _serverMenu(),
                     if (_qualities.isNotEmpty) _qualityMenu(),
                     _speedMenu(),
+                    if (_upscaler != null) _upscaleMenu(),
                     _fitButton(),
                     if (supportsExternalPlayer)
                       IconButton(

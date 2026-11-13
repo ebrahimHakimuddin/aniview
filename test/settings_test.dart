@@ -1,5 +1,6 @@
 import 'package:aniview/anilist.dart' show titleOf, titlesOf;
 import 'package:aniview/settings.dart';
+import 'package:aniview/upscale.dart';
 
 import 'dart:ui' show Brightness, Rect;
 
@@ -34,6 +35,7 @@ void main() {
         'video_fit': 'cover',
         'subtitle_language': 'Spanish',
         'dub_subtitles': 'off',
+        'upscale': 'quality',
         'subtitle_appearance': '{"color":4294967040,"bold":true}',
         'subtitle_size': 28.0, // the size from before appearance was one value
         'search_shortcut': ['k', 'alt'],
@@ -93,6 +95,7 @@ void main() {
       expect(Settings.videoFit, BoxFit.cover);
       expect(Settings.subtitleLanguage, 'Spanish');
       expect(Settings.dubSubtitles, 'off');
+      expect(Settings.upscale, Upscale.quality);
       final look = Settings.subtitleAppearance;
       expect((look.size, look.color, look.bold), (28.0, 0xffffff00, true));
       expect(Settings.searchShortcut, ['k', 'alt']);
@@ -135,6 +138,19 @@ void main() {
       expect(Settings.episodeTipSeen, isTrue);
     },
   );
+
+  test('upscaling starts off and keeps the tier picked', () async {
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    expect(Settings.upscale, Upscale.off);
+    Settings.upscale = Upscale.fast;
+    expect(Settings.upscale, Upscale.fast);
+    await Settings.load(); // read back from the saved prefs
+    expect(Settings.upscale, Upscale.fast);
+    SharedPreferences.setMockInitialValues({'upscale': 'ultra'});
+    await Settings.load();
+    expect(Settings.upscale, Upscale.off); // an unknown tier reads as off
+  });
 
   test('a saved subtitle size of its own wins over the legacy one', () async {
     SharedPreferences.setMockInitialValues({

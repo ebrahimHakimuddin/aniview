@@ -34,6 +34,7 @@ import 'tracker.dart';
 import 'tv.dart';
 import 'ui.dart';
 import 'platform.dart';
+import 'upscale.dart';
 
 part 'settings/update.dart';
 part 'settings/screen.dart';
@@ -333,6 +334,10 @@ class Settings {
   static String get dubSubtitles =>
       _prefs.getString('dub_subtitles') ?? 'dubtitles';
   static set dubSubtitles(String v) => _prefs.setString('dub_subtitles', v);
+
+  /// Anime4K upscaling in the player, on the platforms that play through mpv (see [usesMediaKit]); off by default.
+  static Upscale get upscale => Upscale.parse(_prefs.getString('upscale'));
+  static set upscale(Upscale v) => _prefs.setString('upscale', v.name);
 
   static SubtitleAppearance get subtitleAppearance {
     try {

@@ -28,8 +28,11 @@ import 'ui.dart';
 import 'desktop.dart' show setPlayerTitle;
 import 'platform.dart';
 import 'playback.dart';
+import 'upscale.dart';
+import 'upscaler.dart';
 
 part 'desktop/player_view.dart';
+part 'player/upscaling.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -80,6 +83,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Filler episodes, which "next" passes over when Settings say to skip them.
   Set<num> _filler = const {};
+
+  /// Anime4K upscaling, where mpv plays (see player/upscaling.dart).
+  Upscaler? _upscaler;
 
   PlaybackSession _newSession(int index) => PlaybackSession(
     _episodes,
@@ -517,6 +523,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hintTimer?.cancel();
     _timelineTimer?.cancel();
     _seekHover.dispose();
+    _upscaler?.dispose();
     player.dispose();
     if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
@@ -715,6 +722,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       return null;
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _layoutUpscaler(); // the window resized or went fullscreen
   }
 
   bool get _hasAudios => player.state.audios.length > 1;
@@ -2038,6 +2051,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ?_serverButton(),
               ?_qualityButton(),
               _speedButton(),
+              ?_upscaleButton(),
               _fitButton(),
             ],
           ),

@@ -16,6 +16,7 @@ import 'tracker.dart';
 import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
+import 'upscale.dart';
 import 'welcome.dart';
 
 Future<void> main() async {
@@ -28,6 +29,8 @@ Future<void> main() async {
   if (videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit) {
     MediaKit.ensureInitialized(libmpv: Platform.isLinux ? 'libmpv.so.2' : null);
   }
+  // Anime4K's licence on the licences page; its shaders are bundled on every platform.
+  registerShaderLicense();
   // Build the top sites on app load; screens await it later.
   Sites.all().ignore();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
