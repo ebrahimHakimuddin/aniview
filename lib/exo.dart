@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'party.dart' show PartyOp;
 import 'platform.dart';
 
 /// A subtitle or audio track the stream or a file beside it brings; [id] picks it in [ExoPlayer.setSubtitleTrack]
@@ -46,7 +47,18 @@ class ExoPlayerState {
 
   /// The picture's size once known.
   Size? size;
+
+  /// The speed last set (by [ExoPlayer.setRate] or [ExoPlayer.applyRate]).
+  double rate = 1;
 }
+
+/// Asked before the person's own play, pause, seek or speed change takes effect; false stops it (see
+/// [ExoPlayer.intent]).
+typedef PlayerIntent = bool Function(
+  PartyOp op, {
+  Duration? position,
+  double? rate,
+});
 
 /// Where [ExoPlayer]'s commands go and its events come from: Media3 ExoPlayer on the Android side (see
 /// ExoPlayers.kt) over a channel, media_kit's native iOS/desktop libraries, or a fake in tests. Commands are the
@@ -460,7 +472,7 @@ class ExoPlayer {
     // Some streams ignore the start position; land there anyway.
     if (resume != null &&
         state.position < resume - const Duration(seconds: 3)) {
-      await seek(resume);
+      await applySeek(resume);
     }
     final String shown;
     if (subtitlesOff) {
@@ -477,7 +489,7 @@ class ExoPlayer {
         case final track?) {
       await setAudioTrack(track);
     }
-    await setRate(rate);
+    await applyRate(rate);
     return overtaken() ? null : shown;
   }
 
@@ -506,16 +518,41 @@ class ExoPlayer {
     return _call('stop');
   }
 
-  Future<void> play() => _call('play');
-  Future<void> pause() => _call('pause');
+  /// Asked before [play], [pause], [seek] and [setRate] act, which do nothing when it says no: a watch party's
+  /// say over the person's presses. The `apply*` methods never ask it, so what the party itself does can't come
+  /// back as a press.
+  PlayerIntent? intent;
+
+  Future<void> play() async {
+    if (intent?.call(PartyOp.play) ?? true) await applyPlay();
+  }
+
+  Future<void> pause() async {
+    if (intent?.call(PartyOp.pause) ?? true) await applyPause();
+  }
+
   Future<void> playOrPause() => state.playing ? pause() : play();
 
-  Future<void> seek(Duration to) {
+  Future<void> seek(Duration to) async {
+    if (intent?.call(PartyOp.seek, position: to) ?? true) await applySeek(to);
+  }
+
+  Future<void> setRate(double rate) async {
+    if (intent?.call(PartyOp.rate, rate: rate) ?? true) await applyRate(rate);
+  }
+
+  Future<void> applyPlay() => _call('play');
+  Future<void> applyPause() => _call('pause');
+
+  Future<void> applySeek(Duration to) {
     state.position = to;
     return _call('seek', {'ms': to.inMilliseconds});
   }
 
-  Future<void> setRate(double rate) => _call('rate', {'rate': rate});
+  Future<void> applyRate(double rate) {
+    state.rate = rate;
+    return _call('rate', {'rate': rate});
+  }
 
   /// Caps the picture at [height] lines (0: no cap); [exact] keeps it there on a slow connection.
   Future<void> setQuality(int height, {bool exact = false}) =>

@@ -17,6 +17,8 @@ import 'hls_proxy.dart';
 import 'filler.dart';
 import 'jellyfin.dart';
 import 'metadata.dart';
+import 'party.dart';
+import 'party_player.dart';
 import 'settings.dart';
 import 'site_listing.dart';
 import 'sources.dart';
@@ -50,9 +52,14 @@ class PlayerScreen extends StatefulWidget {
     required this.dub,
     this.sourceName,
     this.backend,
+    this.party,
   });
 
   final PlayerBackend? backend;
+
+  /// A watch party to play in step with, not yet started; its controls must be a [PartyPlayer] (see there). The
+  /// player starts it, and leaves it when it closes.
+  final PartySession? party;
   final Map media;
   final Source?
   source; // null when playing downloads while the site is unreachable
@@ -71,6 +78,13 @@ class PlayerScreen extends StatefulWidget {
 class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
   late final player = ExoPlayer(widget.backend);
+
+  /// The watch party's hold on the player, null outside one.
+  late final _party = widget.party?.controls as PartyPlayer?;
+  bool get _inParty => _party?.active ?? false;
+
+  /// A guest follows the host's episode and the host's skips.
+  bool get _guest => _inParty && !_party!.isHost;
   final _scaffold = GlobalKey<ScaffoldState>();
   // The site playing: the one the page chose, until "Try another site" moves it.
   late Source? _source = widget.source;
@@ -208,8 +222,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final _lifecycle = AppLifecycleListener(
     onHide: () {
       _saveHistory();
-      // iOS may suspend the app immediately. Keep playback foreground-only and resume explicitly.
-      if (Platform.isIOS) player.pause().ignore();
+      // iOS may suspend the app immediately. Keep playback foreground-only and resume explicitly. Not a press, so a
+      // watch party isn't asked (nor paused).
+      if (Platform.isIOS) player.applyPause().ignore();
     },
   );
 
@@ -275,13 +290,77 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }),
       player.stream.completed.listen((done) {
-        if (done && session.advancesOnFinish) {
+        if (done && session.advancesOnFinish && !_guest) {
           _load(session.nextIndex);
         }
       }),
     ];
+    _joinParty();
     _load(index);
     _scheduleHide();
+  }
+
+  void _joinParty() {
+    final party = widget.party;
+    if (party == null) return;
+    _party!.attach(
+      party,
+      player,
+      episode: _partyEpisode,
+      open: _openPartyEpisode,
+      refused: () {
+        _refusals++;
+        _hint(
+          'Only the host can control playback',
+          icon: Icons.lock_outline_rounded,
+        );
+      },
+      rate: rate,
+      roomRateChanged: (r) {
+        if (mounted) setState(() => rate = r);
+      },
+      ended: _refresh,
+    );
+  }
+
+  /// Presses the party refused (a guest's, under host-only control).
+  int _refusals = 0;
+
+  /// Runs [press], a play, pause, seek or speed change of the person's; null when the party refused it, so the
+  /// press's own hint doesn't cover the refusal.
+  Future<void>? _press(Future<void> Function() press) {
+    final before = _refusals;
+    final done = press();
+    return _refusals == before ? done : null;
+  }
+
+  /// Episode [number] of this show as a party names it; null for a show with neither id.
+  PartyEpisode? _partyKey(num number) {
+    int? id(Object? v) => v is int && v > 0 ? v : null;
+    final anilist = id(Show(widget.media).anilistId),
+        mal = id(widget.media['idMal']);
+    if (anilist == null && mal == null) return null;
+    return PartyEpisode(anilist: anilist, mal: mal, number: number);
+  }
+
+  /// What's open, as a party names it; null while nothing is.
+  PartyEpisode? _partyEpisode() =>
+      current == null ? null : _partyKey(episode.number);
+
+  /// The host moved to [target]: open it at [at] when it's an episode of this show.
+  void _openPartyEpisode(PartyEpisode target, Duration at) {
+    if (!mounted || _partyKey(target.number)?.sameAs(target) != true) {
+      return; // another show
+    }
+    final i = _episodes.indexWhere((e) => e.number == target.number);
+    if (i < 0) {
+      _hint(
+        'Episode ${epNumber(target.number)} isn\'t on $_sourceName',
+        icon: Icons.error_outline,
+      );
+      return;
+    }
+    _load(i, at: at, follow: true);
   }
 
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
@@ -378,8 +457,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           0,
           _speeds.length - 1,
         )];
+    if (_press(() => player.setRate(next)) == null) return;
     setState(() => rate = next);
-    player.setRate(next);
     _hint('$next×', icon: Icons.speed_rounded);
   }
 
@@ -517,6 +596,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hintTimer?.cancel();
     _timelineTimer?.cancel();
     _seekHover.dispose();
+    _party?.detach();
+    widget.party?.leave().ignore();
     player.dispose();
     if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
@@ -535,7 +616,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _load(int i, {Duration? at}) async {
+  /// [follow]: the party's host moved there; a guest's own move to another episode is refused.
+  Future<void> _load(int i, {Duration? at, bool follow = false}) async {
+    if (_guest && !follow && i != index) {
+      return _hint(
+        'The host picks the episode',
+        icon: Icons.lock_outline_rounded,
+      );
+    }
     _saveHistory(); // where the outgoing episode stopped, before index moves on
     setState(() {
       session.start(i);
@@ -633,6 +721,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     bool stale() =>
         !mounted || generation != _playGeneration || current != stream;
     setState(() => session.playing(stream));
+    _party?.tick(); // the episode is open: a host tells the room
     var loaded = false;
     try {
       final address = await StreamAddress.instance.forPlayer(stream);
@@ -801,7 +890,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (track != null) await _setSubtitle(track, selectedSubtitle);
           }
           if (!wasPlaying && mounted && generation == _playGeneration) {
-            await player.pause();
+            await player.applyPause(); // as it was, not a press
           }
         } catch (e) {
           if (mounted && generation == _playGeneration) {
@@ -822,8 +911,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   _Choice<double> get _speedChoice =>
       _Choice('Speed', {for (final r in _speeds) r: '$r×'}, rate, (r) async {
         if (!mounted) return;
+        final asked = _press(() => player.setRate(r));
+        if (asked == null) return;
         setState(() => rate = r);
-        await player.setRate(r);
+        await asked;
       });
 
   /// [choice] as a sheet (a panel on TV).
@@ -846,7 +937,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onPosition(Duration position) {
     session.progressed(position);
     _checkWatched(position, player.state.duration);
-    if (session.autoSkip(position) case final skip?) {
+    // Off for a guest, whose host's skip arrives as a seek; the host's goes out to the room like a press.
+    if ((_guest ? null : session.autoSkip(position)) case final skip?) {
       player.seek(skip.end);
       _hint('Skipped ${_skipName(skip.type)}');
     }
@@ -976,7 +1068,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.state.duration,
       seconds,
     );
-    player.seek(to);
+    if (_press(() => player.seek(to)) == null) return;
     if (!controls) _showTimeline();
     _hint(
       total > 0 ? '+${total}s' : '${total}s',
@@ -1097,7 +1189,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         error == null && (current == null || player.state.buffering);
     // A mouse clicks, wheels and hovers instead (see [_pointer]).
     final swipes = !isDesktop && !locked && Settings.swipeGestures;
-    final hold = locked || isDesktop ? 'off' : Settings.holdGesture;
+    final hold = locked || isDesktop
+        ? 'off'
+        : _inParty && Settings.holdGesture != 'pause'
+        ? 'off' // 2× would pull everyone along, or a guest out of step
+        : Settings.holdGesture;
     final upNext = _upNext(position);
 
     // On TV, Back first hides the controls, like Netflix.
@@ -1108,7 +1204,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) return setState(() => controls = false);
         _saveHistory();
-        player.pause();
+        player.applyPause(); // leaving isn't a press: a guest's doesn't pause the room
         // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
         restoreOrientation();
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -1191,7 +1287,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         HapticFeedback.mediumImpact();
                         if (hold == 'pause') {
                           heldPlaying = player.state.playing;
-                          player.pause();
+                          if (_press(player.pause) == null) {
+                            heldPlaying = false;
+                            return;
+                          }
                           _hint(
                             'Paused · release to play',
                             icon: Icons.pause_rounded,
@@ -1521,6 +1620,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onDialog(bool open) {
+    if (_inParty) return; // a menu mustn't pause the whole room
     if (open) {
       _openedPlaying = player.state.playing;
       if (_openedPlaying) player.pause();
