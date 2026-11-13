@@ -174,6 +174,7 @@ void main() {
     );
     expect(stream.isHls, isFalse);
   });
+  deleteFreesSpaceTests();
 }
 
 void desktopFolderTests() {
@@ -279,5 +280,151 @@ void sameTitleTests() {
       isTrue,
     );
     expect([for (final d in Downloads.instance.items) d.media['id']], [2]);
+  });
+}
+
+/// An index whose next [failures] writes fail, as on a full disk.
+class _FlakyStore extends DownloadStore {
+  _FlakyStore(super.root, this.failures);
+  int failures;
+
+  @override
+  Future<void> write(String json) async {
+    if (failures > 0) {
+      failures--;
+      throw const FileSystemException('No space left on device');
+    }
+    await super.write(json);
+  }
+}
+
+void deleteFreesSpaceTests() {
+  /// A library of two finished episodes of different shows, on disk and loaded.
+  Future<Directory> library() async {
+    final parent = Directory.systemTemp.createTempSync('aniview_full_disk');
+    addTearDown(() => parent.deleteSync(recursive: true));
+    final root = Directory('${parent.path}/AniView')..createSync();
+    final episodes = [
+      _episode(1, 1, folder: 'First/Episode 1-sub'),
+      _episode(2, 1, folder: 'Second/Episode 1-sub'),
+    ];
+    for (final d in episodes) {
+      File('${root.path}/${d.relativeFolder}/index.m3u8')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('#EXTM3U');
+    }
+    await DownloadStore(root)
+        .write(jsonEncode([for (final d in episodes) d.toJson()]));
+    SharedPreferences.setMockInitialValues({
+      'desktop_download_folder': parent.path,
+    });
+    await Settings.load();
+    await Downloads.instance.load();
+    expect(Downloads.instance.storageError, isNull);
+    return root;
+  }
+
+  List<Object?> saved(Directory root) => [
+    for (final d in readIndex(
+      File('${root.path}/index.json').readAsStringSync(),
+    ))
+      d.media['id'],
+  ];
+
+  test('a delete whose index write fails once retries it', () async {
+    final root = await library();
+    Downloads.instance.store = _FlakyStore(root, 1);
+
+    await Downloads.instance.remove(Downloads.instance.items.first);
+
+    expect(Downloads.instance.storageError, isNull);
+    expect(Directory('${root.path}/First/Episode 1-sub').existsSync(), isFalse);
+    expect(saved(root), [2]);
+  });
+
+  test('a delete still frees space when the index cannot be written', () async {
+    final root = await library();
+    final store = _FlakyStore(root, 2);
+    Downloads.instance.store = store;
+
+    await Downloads.instance.remove(Downloads.instance.items.first);
+
+    expect(Downloads.instance.storageError, isNotNull);
+    expect(Directory('${root.path}/First/Episode 1-sub').existsSync(), isFalse);
+    expect(saved(root), [1, 2]);
+
+    // Other changes wait for storage, but deleting more is still allowed, and clears the error once a write works.
+    expect(
+      () => Downloads.instance.retry(Downloads.instance.items.single),
+      throwsStateError,
+    );
+    await Downloads.instance.remove(Downloads.instance.items.single);
+    expect(Downloads.instance.storageError, isNull);
+    expect(
+      Directory('${root.path}/Second/Episode 1-sub').existsSync(),
+      isFalse,
+    );
+    expect(saved(root), isEmpty);
+  });
+
+  test('deleting everything retries the index write once', () async {
+    final root = await library();
+    Downloads.instance.store = _FlakyStore(root, 1);
+
+    await Downloads.instance.removeAll();
+
+    expect(Downloads.instance.storageError, isNull);
+    expect(root.listSync().whereType<Directory>(), isEmpty);
+    expect(saved(root), isEmpty);
+  });
+
+  test(
+    'deleting everything frees space when the index cannot be written',
+    () async {
+      final root = await library();
+      final store = _FlakyStore(root, 2);
+      Downloads.instance.store = store;
+
+      await Downloads.instance.removeAll();
+
+      expect(Downloads.instance.storageError, isNotNull);
+      expect(root.listSync().whereType<Directory>(), isEmpty);
+      expect(saved(root), [1, 2]);
+
+      await Downloads.instance.removeAll();
+      expect(Downloads.instance.storageError, isNull);
+      expect(saved(root), isEmpty);
+    },
+  );
+
+  test(
+    'a finished download whose files are gone is not offered to play',
+    () async {
+      final root = await library();
+      Directory('${root.path}/First').deleteSync(recursive: true);
+
+      await Downloads.instance.load();
+
+      final missing = Downloads.instance.items.first;
+      expect(missing.status, DownloadStatus.failed);
+      expect(Downloads.instance.find(missing.media, 1), isNull);
+      expect(Downloads.instance.find({'id': 2}, 1), isNotNull);
+    },
+  );
+
+  test('a missing download folder still refuses deletes', () async {
+    final root = await library();
+    final parent = root.parent.path;
+    final detached = await root.parent.rename('$parent-detached');
+    // Put back for the library's own clean-up.
+    addTearDown(() => detached.renameSync(parent));
+    await Downloads.instance.load();
+    expect(Downloads.instance.storageError, isNotNull);
+
+    await expectLater(
+      Downloads.instance.remove(Downloads.instance.items.first),
+      throwsStateError,
+    );
+    await expectLater(Downloads.instance.removeAll(), throwsStateError);
   });
 }

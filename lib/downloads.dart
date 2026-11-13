@@ -331,6 +331,10 @@ class Downloads extends ChangeNotifier {
   String get folder => _root.path;
   late DownloadStore _store;
   Object? storageError;
+
+  /// [storageError] came from a failed index write (a full disk, typically), not from storage being unavailable, so
+  /// deleting downloads to free space is still allowed.
+  bool _indexWriteFailed = false;
   bool _moving = false;
   Completer<void>? _activeDone;
   bool _running = false;
@@ -367,21 +371,41 @@ class Downloads extends ChangeNotifier {
         throw FileSystemException('Reconnect the download folder', _root.path);
       }
       await _root.create(recursive: true);
-      final saved = await _store.read();
+      final saved = await _markMissing(await _store.read());
       final probe = await File(p.join(_root.path, '.write-check'))
           .open(mode: FileMode.write);
       await probe.close();
       await File(p.join(_root.path, '.write-check')).delete();
       _queue = DownloadQueue(saved);
       storageError = null;
+      _indexWriteFailed = false;
       _pump();
     } catch (e) {
       storageError = e;
+      _indexWriteFailed = false;
     }
     notifyListeners();
   }
 
   Future<void> reconnect() => load();
+
+  /// Marks a finished download whose files are gone (deleted, with the index write after it lost) as failed, so it
+  /// isn't offered for playback; retrying downloads it again. A download in a chosen Android folder isn't checked.
+  Future<List<Download>> _markMissing(List<Download> saved) async {
+    for (final d in saved) {
+      if (d.status != DownloadStatus.done || d.storageUri != null) continue;
+      if (!await File(p.join(_dir(d).path, d.video ?? 'index.m3u8')).exists()) {
+        d
+          ..status = DownloadStatus.failed
+          ..error = 'The downloaded files are missing';
+      }
+    }
+    return saved;
+  }
+
+  /// Replaces the index store, so tests can make its writes fail.
+  @visibleForTesting
+  set store(DownloadStore store) => _store = store;
 
   Future<void> recoverTo(String? parent) async {
     if (_running || _moving) throw StateError('Downloads are busy');
@@ -399,14 +423,17 @@ class Downloads extends ChangeNotifier {
     await Settings.setDesktopDownloadFolder(parent ?? '');
     _root = root;
     _store = store;
-    _queue = DownloadQueue(saved);
+    _queue = DownloadQueue(await _markMissing(saved));
     storageError = null;
+    _indexWriteFailed = false;
     notifyListeners();
     _pump();
   }
 
-  void _requireStorage() {
-    if (storageError != null || _moving) {
+  /// Throws unless downloads can be changed. [freeingSpace] (a delete) is still allowed after a failed index write.
+  void _requireStorage({bool freeingSpace = false}) {
+    if (_moving ||
+        (storageError != null && !(freeingSpace && _indexWriteFailed))) {
       throw StateError(
         'Download storage is unavailable. Reconnect it in Settings.',
       );
@@ -586,10 +613,12 @@ class Downloads extends ChangeNotifier {
     }
   }
 
+  /// Deletes [d]'s files, then writes the index without it, so a failed write (a full disk) can't leave an index
+  /// whose files are gone behind a delete that freed space.
   Future<void> remove(Download d) async {
-    _requireStorage();
+    _requireStorage(freeingSpace: true);
     final activeDone = _queue.remove(d) ? _activeDone?.future : null;
-    _notify(save: true);
+    _notify();
     await activeDone;
     await _deleteGalleryCopy(d);
     try {
@@ -602,6 +631,7 @@ class Downloads extends ChangeNotifier {
     if (!items.any((i) => i.media['id'] == d.media['id'])) {
       _seasonFile(d.media).delete().ignore();
     }
+    await _saveAfterDelete();
   }
 
   Future<void> _deleteGalleryCopy(Download d) async {
@@ -613,10 +643,10 @@ class Downloads extends ChangeNotifier {
   }
 
   Future<void> removeAll() async {
-    _requireStorage();
+    _requireStorage(freeingSpace: true);
     final removed = [...items];
     final activeDone = _queue.clear() ? _activeDone?.future : null;
-    _notify(save: true);
+    _notify();
     await activeDone;
     for (final d in removed) {
       await _deleteGalleryCopy(d);
@@ -629,6 +659,35 @@ class Downloads extends ChangeNotifier {
     for (final entity in await _root.list().toList()) {
       if (entity is Directory) await entity.delete(recursive: true);
     }
+    await _saveAfterDelete();
+  }
+
+  /// Writes the index after a delete, trying once more if the first write fails (the delete may just have freed the
+  /// space it needed). A write that works clears an earlier index-write error; one that fails twice sets it.
+  Future<void> _saveAfterDelete() async {
+    Object? error;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final json = jsonEncode([for (final d in items) d.toJson()]);
+      final write = _saving.then((_) => _store.write(json));
+      _saving = write.catchError((Object _) {});
+      try {
+        await write;
+        if (_indexWriteFailed) {
+          storageError = null;
+          _indexWriteFailed = false;
+          notifyListeners();
+          _pump();
+        }
+        return;
+      } catch (e) {
+        error = e;
+      }
+    }
+    if (storageError == null || _indexWriteFailed) {
+      storageError = error;
+      _indexWriteFailed = true;
+    }
+    notifyListeners();
   }
 
   /// System notification for the running download, throttled because Android drops rapid updates.
@@ -667,7 +726,11 @@ class Downloads extends ChangeNotifier {
       try {
         await _store.write(json);
       } catch (e) {
-        storageError = e;
+        // Storage found unavailable meanwhile stays the error shown.
+        if (storageError == null || _indexWriteFailed) {
+          storageError = e;
+          _indexWriteFailed = true;
+        }
         notifyListeners();
       }
     });
