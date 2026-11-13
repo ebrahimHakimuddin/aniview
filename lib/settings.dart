@@ -29,6 +29,8 @@ import 'jellyseerr.dart';
 import 'notifications.dart';
 import 'sources.dart';
 import 'pairing.dart';
+import 'party_transport.dart' show NostrTransport;
+import 'party_ui.dart' show partyNameLength, partyRelays, relayProblem;
 import 'states.dart';
 import 'tracker.dart';
 import 'tv.dart';
@@ -554,6 +556,16 @@ class Settings {
     'home_sections',
     [for (final (section, shown) in v) '${shown ? '' : '-'}${section.name}'],
   );
+
+  /// The name shown to the others in a watch party; empty until set, when the signed-in tracker's name stands in.
+  static String get partyName => _prefs.getString('party_name') ?? '';
+  static set partyName(String v) => _prefs.setString('party_name', v.trim());
+
+  /// The relays watch parties go through; empty for [NostrTransport.defaultRelays].
+  static List<String> get partyRelays =>
+      _prefs.getStringList('party_relays') ?? const [];
+  static set partyRelays(List<String> v) =>
+      _prefs.setStringList('party_relays', v);
 
   static bool get episodeTipSeen => _prefs.getBool('episode_tip_seen') ?? false;
   static set episodeTipSeen(bool v) => _prefs.setBool('episode_tip_seen', v);

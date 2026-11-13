@@ -208,6 +208,10 @@ class PartySession {
       ? 0
       : _samples.reduce((a, b) => b.rtt < a.rtt ? b : a).offset;
 
+  /// The episode the host's latest state is on: what a guest joining opens. Null until a guest hears the host's
+  /// state, and always for the host.
+  PartyEpisode? get hostEpisode => _host?.ep;
+
   /// Whether a guest hasn't heard from the host for 15 s: it plays on, and the room ends at 2 minutes.
   bool get hostSilent => _hostSilent;
   bool _hostSilent = false;

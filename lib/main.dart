@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'desktop.dart';
 import 'downloads.dart';
 import 'pairing.dart';
+import 'party_ui.dart' show listenForPartyLinks;
 import 'platform.dart';
 import 'home.dart';
 import 'image_cache.dart';
@@ -23,6 +24,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Start receiving iOS URL-scheme callbacks before asynchronous startup work.
   if (Platform.isIOS) AppLinks();
+  // Watch party invites (aniview://party/<code>) open the join dialog; Android, iOS and desktop.
+  listenForPartyLinks();
   // iOS and desktop bundle their own libmpv. Android keeps ExoPlayer and has no libmpv. On Linux,
   // name the soname the video plugin links: plain 'libmpv.so' can load the host's copy beside an AppImage's own, and
   // two libmpvs abort on the first video.

@@ -23,10 +23,11 @@ extension _DeskPlayer on _PlayerScreenState {
                 IconButton(
                   tooltip: 'Back  (Esc)',
                   icon: const Icon(Icons.arrow_back_rounded),
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.maybePop(context),
                 ),
                 const SizedBox(width: 8),
                 Expanded(child: _titles(tv: false)),
+                _partyButton(),
                 if (_episodes.length > 1)
                   IconButton(
                     tooltip: 'Episodes',
