@@ -142,15 +142,17 @@ class PartySession {
     this.name = '',
     int Function()? clock,
     this._tickEvery = const Duration(milliseconds: 250),
+    String? id,
   }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
-       id = _randomId();
+       id = id ?? _randomId();
 
   final PartyTransport transport;
   final PartyControls controls;
   final bool isHost;
   final String name;
 
-  /// Random per join; never tied to the install.
+  /// Random per join unless given (a transport that signs messages binds it to its key); never tied to the
+  /// install.
   final String id;
   final int Function() _clock;
   final Duration? _tickEvery;
