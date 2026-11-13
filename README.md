@@ -106,8 +106,9 @@ switches the native builds (`linux/CMakeLists.txt`, `windows/runner/CMakeLists.t
    done
    ```
 
-3. Linux, here (needs WPE WebKit 2.50+): `ANIVIEW_BETA=1 fvm flutter build linux --release …` with the same defines,
-   then `ANIVIEW_BETA=1 tool/appimage.sh`.
+3. Linux, here (needs Docker): `ANIVIEW_BETA=1 tool/appimage_container.sh …` with the same defines. It builds and
+   packs the AppImage inside Debian 13 (`tool/appimage.Dockerfile`), so the AppImage needs only glibc 2.39 and carries
+   its own libmpv and WPE WebKit instead of this machine's. Launch the result once before publishing it.
 4. Windows, macOS and iOS in CI: run the CI workflow on `main` with **beta** ticked
    (`gh workflow run ci.yml -f beta=true`), then `gh run download <run>` for the three packages.
 5. `gh release create vX.Y.Z-beta.N --prerelease` with all of them.

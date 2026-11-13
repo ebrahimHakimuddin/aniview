@@ -92,7 +92,7 @@ jobs:
       - run: flutter pub get
       - run: flutter build ${{ matrix.target }}
 
-  # Linux isn't here: flutter_inappwebview_linux needs WPE WebKit 2.50+, which Ubuntu's runners don't have, so tool/appimage.sh runs on a machine that does.
+  # Linux isn't here: Ubuntu's runners have no WPE WebKit for flutter_inappwebview_linux, so tool/appimage_container.sh builds it in a Debian container on a machine with Docker.
   # Optional certification for a later publication. Test packages can be built first.
   # Publishing still requires this job to pass for the exact release commit.
   native-release-gate:

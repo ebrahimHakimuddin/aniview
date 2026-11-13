@@ -88,6 +88,12 @@ if(TARGET flutter_inappwebview_linux_plugin AND WPE_WEBKIT_VERSION VERSION_GREAT
   target_compile_definitions(flutter_inappwebview_linux_plugin PRIVATE
     "WPE_SETTING_DISABLE_ANIMATIONS=WPE_SETTING_REDUCED_MOTION")
 endif()
+# Before WPE WebKit 2.50 a page's theme colour can't be read, which is all the plugin needs 2.50 for: say there is
+# none, so the AppImage can be built on an older system (tool/appimage.Dockerfile) and run on more of them.
+if(TARGET flutter_inappwebview_linux_plugin AND WPE_WEBKIT_VERSION VERSION_LESS 2.50)
+  target_compile_options(flutter_inappwebview_linux_plugin PRIVATE
+    -include "${CMAKE_CURRENT_SOURCE_DIR}/wpe_before_2_50.h")
+endif()
 
 
 # === Installation ===
