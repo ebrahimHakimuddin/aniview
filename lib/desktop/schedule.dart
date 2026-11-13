@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../analytics.dart';
 import '../anilist.dart';
 import '../details.dart';
 import '../home_feed.dart';
@@ -29,6 +30,12 @@ class DeskSchedule extends StatefulWidget {
 
 class _DeskScheduleState extends State<DeskSchedule> {
   bool allShows = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/schedule', title: 'Schedule');
+  }
 
   @override
   Widget build(BuildContext context) {

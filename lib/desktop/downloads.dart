@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../analytics.dart';
 import '../anilist.dart';
 import '../details.dart';
 import '../platform.dart' show AndroidApp;
@@ -24,6 +25,12 @@ class DeskDownloads extends StatefulWidget {
 
 class _DeskDownloadsState extends State<DeskDownloads> {
   String filter = 'All';
+
+  @override
+  void initState() {
+    super.initState();
+    Analytics.screen('/downloads', title: 'Downloads');
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(

@@ -8,6 +8,7 @@ import '../anilist.dart';
 import '../details.dart';
 import '../history.dart';
 import '../player.dart' show formatDuration;
+import '../season_group.dart';
 import '../sources.dart' show epNumber;
 import '../states.dart';
 import '../tracker.dart';
@@ -1186,4 +1187,139 @@ class _ScrollArrowsState extends State<ScrollArrows> {
       ),
     );
   }
+}
+
+/// A show related to the one open, as a line in a side column: its poster, its title and [note] (how it's related).
+/// Opens it.
+class DeskRelatedTile extends StatelessWidget {
+  const DeskRelatedTile(this.media, this.note, {super.key});
+
+  final Map media;
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final scheme = Theme.of(context).colorScheme;
+    return Hover(
+      pressScale: .98,
+      onTap: () => openDetails(context, media),
+      builder: (context, hovered) => Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: hovered
+              ? scheme.onSurface.withValues(alpha: .06)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(nested(6, radiusMedium)),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(radiusMedium),
+              child: SizedBox(
+                width: 40,
+                height: 60,
+                child: Artwork(Show(media).cover, color: Show(media).color),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    titleOf(media),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: text.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (note.isNotEmpty)
+                    Text(
+                      note,
+                      style: text.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The desktop's take on [SeasonGroupSection], for the details page's side column when Settings → Group related
+/// seasons is on: every season of the show in order, under [heading], with the way to load more of a long franchise.
+class DeskSeasonGroup extends StatefulWidget {
+  const DeskSeasonGroup(this.media, {super.key, required this.heading});
+
+  final Map media;
+  final Widget heading;
+
+  @override
+  State<DeskSeasonGroup> createState() => _DeskSeasonGroupState();
+}
+
+class _DeskSeasonGroupState extends State<DeskSeasonGroup> {
+  late final group = SeasonGroup(widget.media, relations: Tracker.relations)
+    ..loadMore();
+
+  @override
+  void dispose() {
+    group.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: group,
+    builder: (context, _) {
+      final items = group.items;
+      // Just this show and nothing still to find: no other seasons to list.
+      if (items.length < 2 && !group.loading && !group.hasMore) {
+        return const SizedBox.shrink();
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          widget.heading,
+          for (final media in items)
+            DeskRelatedTile(
+              media,
+              media['id'] == widget.media['id']
+                  ? 'Current entry'
+                  : [
+                      media['format']?.toString().replaceAll('_', ' '),
+                      media['seasonYear']?.toString(),
+                    ].whereType<String>().join(' · '),
+            ),
+          if (group.loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: LinearProgressIndicator(),
+            )
+          else if (group.error != null || group.hasMore)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: group.loadMore,
+                icon: Icon(
+                  group.error != null ? Icons.refresh : Icons.expand_more,
+                ),
+                label: Text(
+                  group.error != null
+                      ? 'Couldn’t load all seasons · Retry'
+                      : 'Load more seasons',
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  );
 }
