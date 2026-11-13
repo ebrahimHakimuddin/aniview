@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:aniview/pairing.dart';
 import 'package:aniview/settings.dart';
@@ -49,6 +50,7 @@ void main() {
       );
       final key = phone.agree(base64.decode(tv['pub'])).key;
       expect(TvLink.code.value, isNotNull);
+      TvLink.confirm(true); // Pair pressed on the TV
       final res = await post('/remote', {
         'data': base64.encode(seal(key, jsonEncode({'token': 'abc'}))),
       });
@@ -105,6 +107,90 @@ void main() {
       );
       expect((await send({'text': 'frieren'})).statusCode, 200);
       expect(searched, 'frieren');
+    },
+  );
+
+  test(
+    'a TV takes a new remote only once Pair is pressed there for that code',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      HttpOverrides.global = null;
+      SharedPreferences.setMockInitialValues({});
+      await Settings.load();
+      await TvLink.start();
+      addTearDown(TvLink.stopPairing);
+      final base = 'http://127.0.0.1:${TvLink.address!.split(':').last}';
+      Future<http.Response> post(String path, Map body) =>
+          http.post(Uri.parse('$base$path'), body: jsonEncode(body));
+      Future<Uint8List> start(PairKeys phone) async => phone
+          .agree(
+            base64.decode(
+              jsonDecode(
+                (await post('/pair', {
+                  'pub': base64.encode(phone.publicKey),
+                })).body,
+              )['pub'],
+            ),
+          )
+          .key;
+      Future<http.Response> remote(Uint8List key) => post('/remote', {
+        'data': base64.encode(seal(key, jsonEncode({'token': 'abc'}))),
+      });
+
+      // One remote paired the normal way, to check it keeps working.
+      var paired = TvLink.pair();
+      final first = await start(PairKeys());
+      TvLink.confirm(true);
+      expect((await remote(first)).statusCode, 200);
+      await paired;
+      expect(Settings.remoteKeys, [base64.encode(first)]);
+      var sent = DateTime.now().millisecondsSinceEpoch;
+      Future<http.Response> press() => post('/key', {
+        'id': remoteKeyId(first),
+        'data': base64.encode(
+          seal(first, jsonEncode({'q': 'state', 't': ++sent})),
+        ),
+      });
+
+      // Unconfirmed: the phone is held, nothing is stored, and paired remotes still get answers meanwhile.
+      var done = false;
+      paired = TvLink.pair()..then((_) => done = true);
+      final second = await start(PairKeys());
+      final waiting = remote(second);
+      await Future.delayed(const Duration(milliseconds: 200));
+      expect((await press()).statusCode, 200);
+      expect(Settings.remoteKeys, [base64.encode(first)]);
+      expect(done, isFalse);
+      TvLink.confirm(true);
+      expect((await waiting).statusCode, 200);
+      expect(await paired, {'token': 'abc'});
+      expect(Settings.remoteKeys, [
+        base64.encode(first),
+        base64.encode(second),
+      ]);
+
+      // Cancel turns the phone away and stores nothing.
+      done = false;
+      paired = TvLink.pair()..then((_) => done = true);
+      final cancelled = remote(await start(PairKeys()));
+      await Future.delayed(const Duration(milliseconds: 200));
+      TvLink.confirm(false);
+      expect((await cancelled).statusCode, HttpStatus.forbidden);
+      expect(TvLink.code.value, isNull);
+      expect(Settings.remoteKeys, hasLength(2));
+      expect(done, isFalse);
+
+      // A second phone starting replaces the confirmed code: its phone has to be confirmed again.
+      TvLink.confirmWait = const Duration(milliseconds: 300);
+      addTearDown(() => TvLink.confirmWait = const Duration(minutes: 1));
+      final earlier = await start(PairKeys());
+      TvLink.confirm(true);
+      final later = await start(PairKeys());
+      expect(TvLink.confirmed.value, isFalse);
+      expect((await remote(earlier)).statusCode, HttpStatus.badRequest);
+      expect((await remote(later)).statusCode, HttpStatus.forbidden);
+      expect(Settings.remoteKeys, hasLength(2));
+      expect(done, isFalse);
     },
   );
 }
