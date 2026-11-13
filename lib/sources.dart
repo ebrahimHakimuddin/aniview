@@ -515,14 +515,16 @@ class KickAssAnime extends Source {
         }
       } on CloudflareChallenge {
         rethrow;
+      } on HttpException {
+        // A server that's gone. Another can still work, and with none left a dub still falls back to sub.
       } on FormatException {
         // Older/unsupported player pages are not playable sources.
       } catch (e, stack) {
-        // Another server can still work.
+        // No connection, or a page of an unexpected shape. Another server can still work.
         failure = (e, stack);
       }
     }
-    // Nothing played because servers failed: say why rather than "no servers".
+    // Nothing played because servers couldn't be reached: say why rather than "no servers".
     if (failure case (final e, final stack)? when streams.isEmpty) {
       Error.throwWithStackTrace(e, stack);
     }

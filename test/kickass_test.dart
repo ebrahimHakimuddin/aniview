@@ -227,7 +227,7 @@ void main() {
       expect(streams.single.url, 'https://player.test/master.m3u8');
     });
 
-    test('when every server fails, the error is thrown', () async {
+    test('when no server can be reached, the error is thrown', () async {
       expect(
         source(
           [
@@ -236,7 +236,16 @@ void main() {
           ],
           {'/broken': const SocketException('reset')},
         ).streams({}, episode, dub: false),
-        throwsA(isA<HttpException>()),
+        throwsA(isA<SocketException>()),
+      );
+    });
+
+    test('servers that are all gone are an empty answer', () async {
+      expect(
+        await source([
+          {'name': 'Other', 'src': 'https://player.test/other'},
+        ], {}).streams({}, episode, dub: false),
+        isEmpty,
       );
     });
 
