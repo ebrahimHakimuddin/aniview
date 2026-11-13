@@ -30,6 +30,9 @@ class PartyPlayer implements PartyControls {
   final _subs = <StreamSubscription>[];
   Duration _lastPosition = Duration.zero;
 
+  /// A pause the room or the person asked for is on its way; any other is the platform's.
+  bool _pausing = false;
+
   /// The room's speed: the host's, set when the session applies one of [partyRates]. A guest catching up plays a
   /// little off it (×0.95 or ×1.05), which the speed shown shouldn't follow.
   double get roomRate => _roomRate;
@@ -87,7 +90,11 @@ class PartyPlayer implements PartyControls {
     _lastPosition = player.state.position;
     player.intent = _intent;
     _subs.addAll([
-      player.stream.playing.listen((_) => tick()),
+      player.stream.playing.listen((playing) {
+        if (!playing && !_pausing) _session?.onPlatformPause();
+        _pausing = false;
+        tick();
+      }),
       player.stream.buffering.listen((_) => tick()),
       player.stream.duration.listen((_) => tick()),
       player.stream.position.listen(_onPosition),
@@ -132,6 +139,7 @@ class PartyPlayer implements PartyControls {
       _refused?.call();
     } else {
       if (op == PartyOp.rate && rate != null) _setRoomRate(rate);
+      if (op == PartyOp.pause) _pausing = true;
       // The player acts once this returns; the host's state goes out after that.
       scheduleMicrotask(tick);
     }
@@ -188,7 +196,10 @@ class PartyPlayer implements PartyControls {
   void applyPlay() => _player?.applyPlay().ignore();
 
   @override
-  void applyPause() => _player?.applyPause().ignore();
+  void applyPause() {
+    _pausing = true;
+    _player?.applyPause().ignore();
+  }
 
   @override
   void applySeek(Duration to) {

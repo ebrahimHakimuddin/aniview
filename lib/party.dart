@@ -199,6 +199,10 @@ class PartySession {
   PartyEpisode? _opening;
   int _seekQuietUntil = 0, _localQuietUntil = 0;
   bool _nudging = false;
+
+  /// Paused by the platform (headphones out, a call, the app hidden) while the host played: left paused until the
+  /// person presses play.
+  bool _held = false;
   final _pings = <int>{};
   final _samples = <({int rtt, int offset})>[];
   int _lastPing = 0;
@@ -252,6 +256,14 @@ class PartySession {
   /// guest while only the host may control, or when the request can't be sent.
   bool onLocalIntent(PartyOp op, {Duration? position, double? rate}) {
     if (_ended || isHost) return true;
+    if (op == PartyOp.play && _held) {
+      _held = false;
+      // Back from a platform pause to a room still playing: catch up with it rather than ask.
+      if (_host?.moving ?? false) {
+        _newSeq = true;
+        return true;
+      }
+    }
     if (_hostOnly) return false;
     if (op == PartyOp.rate && !partyRates.contains(rate)) return false;
     final sent = _send({
@@ -263,6 +275,12 @@ class PartySession {
     // Hold corrections until the host's answer, so we don't pull the player back meanwhile.
     if (sent) _localQuietUntil = _clock() + 2000;
     return sent;
+  }
+
+  /// The player paused without a press or a party change: the platform did it. A guest stays paused (see [tick])
+  /// until the person presses play, rather than playing on over a call or out of the phone's speaker.
+  void onPlatformPause() {
+    if (!isHost && (_host?.moving ?? false)) _held = true;
   }
 
   /// Sends a chat line; false when it's empty, too long or can't be sent.
@@ -467,6 +485,10 @@ class PartySession {
       _changed();
     }
 
+    if (_held) {
+      if (!controls.playing) return;
+      _held = false;
+    }
     if (now < _localQuietUntil) return;
     if (controls.playing != s.moving) {
       s.moving ? controls.applyPlay() : controls.applyPause();

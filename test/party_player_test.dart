@@ -404,6 +404,37 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a guest the platform paused stays paused until its own play, then catches up',
+    (tester) async {
+      final room = Room(tester);
+      await room.open();
+      await room.steps(24);
+      room.guestBackend.calls.clear();
+
+      // Headphones out, a call or the app hidden: the player pauses by itself while the host plays on.
+      room.guestBackend.playing = false;
+      room.guestBackend.emit({'playing': false});
+      await room.steps(16);
+      expect(room.guestBackend.calls, isEmpty);
+      expect(room.guestBackend.playing, isFalse);
+      expect(room.hostBackend.playing, isTrue);
+
+      // The person's play rejoins the room where it is, without asking the host.
+      room.guestPlayer.play();
+      await room.steps(2);
+      expect(room.guestBackend.calls.first, 'play');
+      expect(room.guestBackend.calls.any((c) => c.startsWith('seek ')), isTrue);
+      expect(room.guestBackend.playing, isTrue);
+      expect(
+        (room.guestBackend.position - room.hostBackend.position).abs(),
+        lessThan(700),
+      );
+      expect(room.guestSent, isNot(contains('ctl')));
+      await room.close();
+    },
+  );
+
   testWidgets('without a party, play, pause and seek act as before', (
     tester,
   ) async {
