@@ -474,6 +474,7 @@ class KickAssAnime extends Source {
     );
     if (detail['language'] != language) return [];
     final streams = <VideoStream>[];
+    (Object, StackTrace)? failure;
     for (final server in detail['servers'] as List? ?? []) {
       try {
         final embed = Uri.parse(base).resolve(server['src'] as String);
@@ -512,11 +513,18 @@ class KickAssAnime extends Source {
             );
           }
         }
-      } on HttpException {
-        // Another server can still work.
+      } on CloudflareChallenge {
+        rethrow;
       } on FormatException {
         // Older/unsupported player pages are not playable sources.
+      } catch (e, stack) {
+        // Another server can still work.
+        failure = (e, stack);
       }
+    }
+    // Nothing played because servers failed: say why rather than "no servers".
+    if (failure case (final e, final stack)? when streams.isEmpty) {
+      Error.throwWithStackTrace(e, stack);
     }
     return streams;
   }

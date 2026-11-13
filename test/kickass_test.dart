@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:aniview/sources.dart';
 import 'package:aniview/hls_proxy.dart';
+import 'package:aniview/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -172,4 +174,104 @@ void main() {
       );
     },
   );
+
+  group('a failing server', () {
+    final episode = Episode(
+      1,
+      ref: {
+        'show': 'show',
+        'episode': 'ep-1-ja1',
+        'language': 'ja-JP',
+        'number': 1,
+      },
+    );
+    KickAssAnime source(List<Map> servers, Map<String, Object> embeds) =>
+        KickAssAnime(
+          'KAA',
+          'https://kaa.test',
+          net: _ThrowingNet(
+            FakeNet({
+              '/episode/ep-1-ja1': jsonEncode({
+                'language': 'ja-JP',
+                'servers': servers,
+              }),
+              '/watch': '<astro-island props="$props">',
+            }),
+            embeds,
+          ),
+        );
+    const broken = {'name': 'Broken', 'src': 'https://player.test/broken'};
+    const working = {
+      'name': 'VidStreaming',
+      'src': 'https://player.test/watch',
+    };
+
+    for (final error in <Object>[
+      const SocketException('reset'),
+      http.ClientException('closed'),
+    ]) {
+      test('${error.runtimeType} is skipped for the next server', () async {
+        final streams = await source(
+          [broken, working],
+          {'/broken': error},
+        ).streams({}, episode, dub: false);
+        expect(streams.single.url, 'https://player.test/master.m3u8');
+      });
+    }
+
+    test('an entry without src is skipped for the next server', () async {
+      final streams = await source([
+        {'name': 'Odd'},
+        working,
+      ], {}).streams({}, episode, dub: false);
+      expect(streams.single.url, 'https://player.test/master.m3u8');
+    });
+
+    test('when every server fails, the error is thrown', () async {
+      expect(
+        source(
+          [
+            broken,
+            {'name': 'Other', 'src': 'https://player.test/other'},
+          ],
+          {'/broken': const SocketException('reset')},
+        ).streams({}, episode, dub: false),
+        throwsA(isA<HttpException>()),
+      );
+    });
+
+    test('no servers at all is still an empty answer', () async {
+      expect(await source([], {}).streams({}, episode, dub: false), isEmpty);
+    });
+
+    test('a Cloudflare check still reaches the caller', () async {
+      expect(
+        source(
+          [broken, working],
+          {'/broken': CloudflareChallenge('https://player.test/broken')},
+        ).streams({}, episode, dub: false),
+        throwsA(isA<CloudflareChallenge>()),
+      );
+    });
+  });
+}
+
+/// [FakeNet], except a URL containing a key of [errors] throws that error.
+class _ThrowingNet implements Net {
+  _ThrowingNet(this.inner, this.errors);
+
+  final FakeNet inner;
+  final Map<String, Object> errors;
+
+  @override
+  Future<String> text(String url, {Map<String, String>? headers}) async {
+    for (final MapEntry(:key, :value) in errors.entries) {
+      if (url.contains(key)) throw value;
+    }
+    return inner.text(url, headers: headers);
+  }
+
+  @override
+  Future<Uint8List> bytes(String url, {Map<String, String>? headers}) =>
+      inner.bytes(url, headers: headers);
 }
