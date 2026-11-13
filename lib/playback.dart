@@ -193,26 +193,50 @@ class PlaybackSession {
 
   /// The subtitles to show for [stream], by the language in Settings: that language, else English, else the
   /// first. [off] when Settings turns them off; a null [track] leaves the stream's own (embedded or burned in).
+  /// On a dub: [Settings.dubSubtitles] 'off' turns them off, else captions for the dub ([isDubtitle]) in that
+  /// language come first.
   ({bool off, Subtitle? track}) subtitleFor(VideoStream stream) {
     final language = Settings.subtitleLanguage;
     if (language == 'Off') return (off: true, track: null);
+    if (dubbed && Settings.dubSubtitles == 'off') {
+      return (off: true, track: null);
+    }
     Subtitle? byLanguage(String l) =>
         stream.subtitles.where((s) => s.label.startsWith(l)).firstOrNull;
     return (
       off: false,
       track:
+          (dubbed
+              ? stream.subtitles
+                    .where(
+                      (s) =>
+                          s.label.startsWith(language) && isDubtitle(s.label),
+                    )
+                    .firstOrNull
+              : null) ??
           byLanguage(language) ??
           byLanguage('English') ??
           stream.subtitles.firstOrNull,
     );
   }
 
+  /// Whether the dub's subtitle rules apply: a dub plays, and not from Jellyfin, whose file carries every audio.
+  bool get dubbed => playingDub && site != 'Jellyfin';
+
+  /// Whether a subtitle's [label] marks closed captions for a dub: "CC", "SDH", "Dubtitle(s)", "Closed caption(s)".
+  static bool isDubtitle(String label) => RegExp(
+    r'\b(cc|sdh|dubtitles?|closed captions?)\b',
+    caseSensitive: false,
+  ).hasMatch(label);
+
   /// The stream's own subtitle track to show when it brings no subtitle files (a whole MKV, say): in [language], else
   /// English, passing over signs-and-songs and forced tracks while a full one is there. Null leaves the player's pick.
+  /// On a [dub], captions for it ([isDubtitle]) in [language] come first.
   static SubtitleTrack? embeddedSubtitle(
     List<SubtitleTrack> tracks,
-    String language,
-  ) {
+    String language, {
+    bool dub = false,
+  }) {
     if (language == 'Off') return null;
     final signs = RegExp(r'sign|song|forced', caseSensitive: false);
     bool partial(SubtitleTrack t) => signs.hasMatch(t.title ?? '');
@@ -225,7 +249,11 @@ class PlaybackSession {
     ];
     for (final code in {languageCode(language), 'eng'}) {
       final matching = real.where((t) => inLanguage(t, code));
-      if (matching.where((t) => !partial(t)).firstOrNull ?? matching.firstOrNull
+      if ((dub && code == languageCode(language)
+                  ? matching.where((t) => isDubtitle(t.title ?? '')).firstOrNull
+                  : null) ??
+              matching.where((t) => !partial(t)).firstOrNull ??
+              matching.firstOrNull
           case final track?) {
         return track;
       }

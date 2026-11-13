@@ -670,6 +670,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ? PlaybackSession.embeddedSubtitle(
               player.state.subtitles,
               Settings.subtitleLanguage,
+              dub: session.dubbed,
             )
           : null;
       if (own != null) return await _setSubtitle(own, own.name);

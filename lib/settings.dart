@@ -325,6 +325,11 @@ class Settings {
   static set subtitleLanguage(String v) =>
       _prefs.setString('subtitle_language', v);
 
+  /// What a dub starts with: 'dubtitles' (captions for the dub when the stream has them, else the usual pick) or 'off'.
+  static String get dubSubtitles =>
+      _prefs.getString('dub_subtitles') ?? 'dubtitles';
+  static set dubSubtitles(String v) => _prefs.setString('dub_subtitles', v);
+
   static SubtitleAppearance get subtitleAppearance {
     try {
       final saved = jsonDecode(_prefs.getString('subtitle_appearance') ?? '{}');
@@ -1710,6 +1715,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             {for (final l in subtitleLanguages) l: l},
             Settings.subtitleLanguage,
             (v) => Settings.subtitleLanguage = v,
+          ),
+        ),
+        _Choice(
+          title: 'Subtitles on dub',
+          value: Settings.dubSubtitles == 'off' ? 'Off' : 'Dubtitles',
+          onTap: () => _choose(
+            'Subtitles on dub',
+            {'dubtitles': 'Dubtitles', 'off': 'Off'},
+            Settings.dubSubtitles,
+            (v) => Settings.dubSubtitles = v,
           ),
         ),
         _Choice(
