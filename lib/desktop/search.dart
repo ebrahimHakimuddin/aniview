@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../analytics.dart';
 import '../anilist.dart';
 import '../desktop.dart' show openMenu;
 import '../search.dart';
@@ -36,6 +37,11 @@ class _DeskSearchState extends State<DeskSearch> {
     fetch:
         widget.fetch ??
         (query, filters, page) => Tracker.search(query, filters, page: page),
+    // Never the text itself.
+    onSearch: (query, filters) => Analytics.event('search', {
+      'has_text': query.isNotEmpty,
+      'filters': filters.count,
+    }),
   )..addListener(() => setState(() {}));
   final _scroll = ScrollController();
   late final trending = Tracker.trending();
@@ -45,6 +51,7 @@ class _DeskSearchState extends State<DeskSearch> {
   @override
   void initState() {
     super.initState();
+    Analytics.screen('/search', title: 'Search');
     widget.request.addListener(_requested);
     _scroll.addListener(() {
       if (_scroll.hasClients &&
@@ -82,8 +89,13 @@ class _DeskSearchState extends State<DeskSearch> {
     ),
   ].take(12).toList();
 
-  void _filter(SearchFilters filters) =>
-      widget.request.value = DeskSearchRequest(text, filters);
+  void _filter(SearchFilters filters) {
+    Analytics.event('search_filter', {
+      'filters': filters.count,
+      'sort': filters.sort,
+    });
+    widget.request.value = DeskSearchRequest(text, filters);
+  }
 
   @override
   Widget build(BuildContext context) =>

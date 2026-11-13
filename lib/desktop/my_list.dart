@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../analytics.dart';
 import '../anilist.dart';
 import '../details.dart';
 import '../home_feed.dart';
@@ -53,6 +54,7 @@ class _DeskMyListState extends State<DeskMyList> {
   void initState() {
     super.initState();
     picking.addListener(() => setState(() {}));
+    Analytics.screen('/list', title: 'My list');
   }
 
   @override
