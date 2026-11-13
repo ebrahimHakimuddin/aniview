@@ -459,6 +459,7 @@ class Tracker {
       await _queue(p, job);
       return false;
     }
+    await _unqueue(p, media); // an older queued save must not replace this one
     syncPending().ignore(); // answering again: send what was queued
     return true;
   }
@@ -523,7 +524,10 @@ class Tracker {
   static Future<void> removeFromList(Map media) async {
     await resolveIds(media);
     if (account case final p?) {
-      if (p.idOf(media) case final id?) await p.remove(id);
+      if (p.idOf(media) case final id?) {
+        await p.remove(id);
+        await _unqueue(p, media); // or a queued save would add it back
+      }
     }
     media['mediaListEntry'] = null;
   }
@@ -535,12 +539,23 @@ class Tracker {
     ListProvider p,
   ) => jsonDecode(prefs.getString(p.pendingKey) ?? '{}');
 
+  /// The show's key among the queued jobs.
+  static String _pendingKeyOf(Map media) =>
+      '${media['id'] ?? 'mal:${media['idMal']}'}';
+
   /// One job per show and account; a newer save replaces the show's older one.
   static Future<void> _queue(ListProvider p, Map job) async {
     final prefs = await SharedPreferences.getInstance();
-    final media = job['media'] as Map;
     final pending = _pending(prefs, p);
-    pending['${media['id'] ?? 'mal:${media['idMal']}'}'] = job;
+    pending[_pendingKeyOf(job['media'] as Map)] = job;
+    await prefs.setString(p.pendingKey, jsonEncode(pending));
+  }
+
+  /// Drops the show's queued job for [p], if it has one.
+  static Future<void> _unqueue(ListProvider p, Map media) async {
+    final prefs = await SharedPreferences.getInstance();
+    final pending = _pending(prefs, p);
+    if (pending.remove(_pendingKeyOf(media)) == null) return;
     await prefs.setString(p.pendingKey, jsonEncode(pending));
   }
 
@@ -556,7 +571,10 @@ class Tracker {
       for (final MapEntry(:key, :value) in _pending(prefs, p).entries) {
         // Signed out (or the token just expired): keep the rest for when you sign in again.
         if (!p.signedIn) break;
-        if (await _push(p, value)) sent[key] = jsonEncode(value);
+        // Replaced or dropped by a newer save since this started: that one wins.
+        final json = jsonEncode(value);
+        if (jsonEncode(_pending(prefs, p)[key]) != json) continue;
+        if (await _push(p, value)) sent[key] = json;
       }
       // Re-read: a save queued while this ran must not be overwritten.
       final pending = _pending(prefs, p)

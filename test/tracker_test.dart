@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:aniview/anilist.dart';
@@ -23,12 +24,21 @@ class _Account implements ListProvider {
   @override
   bool signedIn = true;
   final int remote;
+
+  /// While true, saves fail as if the service were down.
+  bool down = false;
+
+  /// Saves of these shows wait for their future first.
+  final holds = <int, Future<void>>{};
+
+  /// What each show's entry ends as: `status:progress`, or null once removed.
+  final entries = <int, String?>{};
   @override
   bool get usable => true;
   @override
   String get pendingKey => '${name}_pending';
   @override
-  int? idOf(Map media) => 7;
+  int? idOf(Map media) => media['id'] as int?;
   @override
   Future<void> login(BuildContext context) async {}
   @override
@@ -47,11 +57,18 @@ class _Account implements ListProvider {
     required String status,
     required int progress,
   }) async {
+    await holds[id];
+    if (down) throw Exception('down');
     log.add('$name:$progress');
+    entries[id] = '$status:$progress';
   }
 
   @override
-  Future<void> remove(int id) async => log.add('$name:remove');
+  Future<void> remove(int id) async {
+    log.add('$name:remove');
+    entries[id] = null;
+  }
+
   @override
   String get shareKey => name;
   @override
@@ -242,6 +259,75 @@ void main() {
       expect(await Tracker.useShared(sent), isTrue);
       expect((tvA.signedIn, tvB.shareable), (false, 'secret'));
       expect(await Tracker.useShared({}), isFalse);
+    });
+  });
+
+  group('a newer save replaces a queued one', () {
+    late _Account a;
+    late SharedPreferences prefs;
+    Map queued() => jsonDecode(prefs.getString('a_pending') ?? '{}');
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      prefs = await SharedPreferences.getInstance();
+      a = _Account('a', []);
+      Tracker.accounts = [a];
+    });
+    tearDown(() => Tracker.accounts = const [Tracker.anilist, Tracker.mal]);
+
+    test('progress: the account keeps the newer one', () async {
+      a.down = true;
+      expect(await Tracker.save(_show(1), 5), isFalse);
+      a.down = false;
+      expect(await Tracker.save(_show(1), 6), isTrue);
+      await Tracker.syncPending();
+      expect(a.entries[1], 'CURRENT:6');
+      expect(queued(), isEmpty);
+    });
+
+    test('status: completed is not undone by a queued watching', () async {
+      a.down = true;
+      await Tracker.save(_show(1), 5, status: 'CURRENT');
+      a.down = false;
+      await Tracker.save(_show(1), 5, status: 'COMPLETED');
+      await Tracker.syncPending();
+      expect(a.entries[1], 'COMPLETED:12');
+      expect(queued(), isEmpty);
+    });
+
+    test('another show\'s queued save still goes out', () async {
+      a.down = true;
+      await Tracker.save(_show(1), 5);
+      a.down = false;
+      await Tracker.save(_show(2), 3);
+      await Tracker.syncPending();
+      expect(a.entries, {1: 'CURRENT:5', 2: 'CURRENT:3'});
+      expect(queued(), isEmpty);
+    });
+
+    test('a retry already running skips a save replaced meanwhile', () async {
+      a.down = true;
+      await Tracker.save(_show(2), 3);
+      await Tracker.save(_show(1), 5);
+      a.down = false;
+      final release = Completer<void>();
+      a.holds[2] = release.future;
+      final retry = Tracker.syncPending(); // stuck on show 2, show 1 next
+      await Tracker.save(_show(1), 6);
+      release.complete();
+      expect(await retry, 1);
+      expect(a.entries, {1: 'CURRENT:6', 2: 'CURRENT:3'});
+      expect(queued(), isEmpty);
+    });
+
+    test('a removed show is not added back by its queued save', () async {
+      a.down = true;
+      await Tracker.save(_show(1), 5);
+      a.down = false;
+      await Tracker.removeFromList(_show(1));
+      expect(queued(), isEmpty);
+      expect(await Tracker.syncPending(), 0);
+      expect(a.entries, {1: null});
     });
   });
 
