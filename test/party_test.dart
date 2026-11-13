@@ -387,6 +387,19 @@ void main() {
       expect(h.calls, ['play']);
       h.calls.clear();
 
+      // Old counters are dropped even once the set of those heard has moved past them: replays in a busy room.
+      for (var n = 2; n < 300; n += 10) {
+        rig.now += 5000;
+        inbox.inject(msg({'t': 'ctl', 'op': 'play', 'from': 'dup', 'n': n}));
+      }
+      h.calls.clear();
+      inbox.inject(msg({'t': 'ctl', 'op': 'pause', 'from': 'dup', 'n': 1}));
+      inbox.inject(msg({'t': 'ctl', 'op': 'pause', 'from': 'dup', 'n': 30}));
+      expect(h.calls, isEmpty);
+      inbox.inject(msg({'t': 'ctl', 'op': 'pause', 'from': 'dup', 'n': 50}));
+      expect(h.calls, ['pause']);
+      h.calls.clear();
+
       // A burst a relay held back gets through; a flood loses only what's over 40 in 5 s, and the peer stays.
       for (var n = 0; n < 45; n++) {
         inbox.inject(msg({'t': 'ctl', 'op': 'play', 'from': 'flood', 'n': n}));
