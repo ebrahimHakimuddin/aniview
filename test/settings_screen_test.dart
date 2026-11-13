@@ -5,6 +5,7 @@ import 'package:aniview/anilist.dart';
 import 'package:aniview/changelog.dart';
 import 'package:aniview/downloads.dart';
 import 'package:aniview/mal.dart';
+import 'package:aniview/party_transport.dart';
 import 'package:aniview/platform.dart';
 import 'package:aniview/settings.dart';
 import 'package:aniview/sources.dart';
@@ -83,6 +84,11 @@ Map<String, List<String>> expectedRows() {
       if (Platform.isAndroid) 'Save downloads to gallery',
       'Delete all downloads',
       'Clear watch history',
+    ],
+    'Watch party': [
+      'Your name',
+      ...NostrTransport.defaultRelays,
+      'Add a relay',
     ],
     'Devices': [
       if (!Platform.isIOS) isTv ? 'Phone remote' : 'Set up AniView on a TV',
@@ -265,7 +271,6 @@ void main() {
           find.text('Video enhancement'),
           usesMediaKit ? findsOneWidget : findsNothing,
         );
-        expect(find.text('Watch party'), findsNothing);
         final top = rowsIn(all);
         expect(top, [for (final g in rowGroups) ...expected[g]!]);
         seen.addAll(top);
@@ -312,6 +317,82 @@ void main() {
           .value,
       !before,
     );
+  });
+
+  testWidgets('phone: the party name and relays are kept as edited', (
+    tester,
+  ) async {
+    await setUpScreen(tester, profiles.first, 2000);
+    await tester.tap(find.widgetWithText(ListTile, 'Watch party'));
+    await settle(tester);
+
+    // The name: empty stands in the signed-in account's.
+    expect(find.textContaining('name, when signed in'), findsOneWidget);
+    await tester.tap(find.text('Your name'));
+    await settle(tester);
+    await tester.enterText(find.byType(TextField), '  Mika  ');
+    await tester.tap(find.text('Save'));
+    await settle(tester);
+    expect(Settings.partyName, 'Mika');
+    expect(find.text('Mika'), findsOneWidget);
+
+    // A relay that isn't a wss:// address is turned away, with why; a good one is added after the defaults.
+    Future<void> add(String url) async {
+      await tester.tap(find.text('Add a relay'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextField), url);
+      await tester.tap(find.text('Add'));
+      await settle(tester);
+    }
+
+    await add('https://relay.example.com');
+    expect(find.text('Enter a relay address starting wss://'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextField),
+      NostrTransport.defaultRelays[0],
+    );
+    await tester.tap(find.text('Add'));
+    await settle(tester);
+    expect(find.text('That relay is already on the list'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await settle(tester);
+    expect(Settings.partyRelays, isEmpty);
+
+    await add('wss://relay.example.com');
+    expect(Settings.partyRelays, [
+      ...NostrTransport.defaultRelays,
+      'wss://relay.example.com',
+    ]);
+    expect(find.text('wss://relay.example.com'), findsOneWidget);
+
+    // Removing one keeps the rest; resetting goes back to the defaults.
+    await tester.tap(
+      find.byTooltip('Remove ${NostrTransport.defaultRelays[1]}'),
+    );
+    await settle(tester);
+    expect(Settings.partyRelays, hasLength(3));
+    expect(
+      Settings.partyRelays,
+      isNot(contains(NostrTransport.defaultRelays[1])),
+    );
+    await tester.tap(find.text('Reset to the default relays'));
+    await settle(tester);
+    expect(Settings.partyRelays, isEmpty);
+    expect(find.text('Reset to the default relays'), findsNothing);
+    for (final relay in NostrTransport.defaultRelays) {
+      expect(find.text(relay), findsOneWidget);
+    }
+  });
+
+  testWidgets('phone: the last relay can\'t be removed', (tester) async {
+    await setUpScreen(tester, profiles.first, 2000);
+    Settings.partyRelays = ['wss://only.example.com'];
+    await tester.tap(find.widgetWithText(ListTile, 'Watch party'));
+    await settle(tester);
+    final remove = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.remove_circle_outline_rounded),
+    );
+    expect(remove.onPressed, isNull);
   });
 
   testWidgets('phone: picks an upscaling tier on its own page', (tester) async {

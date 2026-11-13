@@ -73,6 +73,8 @@ void main() {
         'home_sections': ['-trending'],
         'episode_tip_seen': true,
         'watching_on_migrated': true,
+        'party_name': 'Mika',
+        'party_relays': ['wss://relay.example.com'],
       });
       await Settings.load();
       expect(Settings.themeSelection, ThemeSelection.violetLight);
@@ -136,8 +138,17 @@ void main() {
       expect(Settings.recentSearches, ['frieren']);
       expect(Settings.homeSections.first, (HomeSection.trending, false));
       expect(Settings.episodeTipSeen, isTrue);
+      expect(Settings.partyName, 'Mika');
+      expect(Settings.partyRelays, ['wss://relay.example.com']);
     },
   );
+
+  test('a party starts with no name and the default relays', () async {
+    SharedPreferences.setMockInitialValues({});
+    await Settings.load();
+    expect(Settings.partyName, '');
+    expect(Settings.partyRelays, isEmpty);
+  });
 
   test('upscaling starts off and keeps the tier picked', () async {
     SharedPreferences.setMockInitialValues({});

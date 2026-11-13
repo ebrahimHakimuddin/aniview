@@ -508,7 +508,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Icons.download_for_offline_outlined,
       _downloads,
     ),
-    ('party', 'Watch party', Icons.groups_outlined, null),
+    ('party', 'Watch party', Icons.groups_outlined, _party),
     (
       'devices',
       'Devices',
@@ -1058,6 +1058,134 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     ),
   ];
+
+  /// The name others see in a party, and the relays its messages go through.
+  List<Widget> _party() {
+    final relays = partyRelays();
+    return [
+      ListTile(
+        title: const Text('Your name'),
+        subtitle: Text(
+          Settings.partyName.isEmpty
+              ? 'Your ${Tracker.account?.name ?? 'account'} name, when signed in'
+              : Settings.partyName,
+        ),
+        onTap: _editPartyName,
+      ),
+      _Group('Party servers', [
+        for (final relay in relays)
+          ListTile(
+            leading: const Icon(Icons.dns_outlined),
+            title: Text(relay),
+            trailing: IconButton(
+              tooltip: 'Remove $relay',
+              icon: const Icon(Icons.remove_circle_outline_rounded),
+              // A party needs somewhere to meet.
+              onPressed: relays.length < 2
+                  ? null
+                  : () => setState(
+                      () => Settings.partyRelays = [
+                        for (final r in relays)
+                          if (r != relay) r,
+                      ],
+                    ),
+            ),
+          ),
+        ListTile(
+          leading: const Icon(Icons.add_rounded),
+          title: const Text('Add a relay'),
+          subtitle: const Text('A Nostr relay address, starting wss://'),
+          onTap: _addRelay,
+        ),
+        if (Settings.partyRelays.isNotEmpty)
+          ListTile(
+            leading: const Icon(Icons.restore_rounded),
+            title: const Text('Reset to the default relays'),
+            onTap: () => setState(() => Settings.partyRelays = const []),
+          ),
+      ]),
+    ];
+  }
+
+  Future<void> _editPartyName() async {
+    final name = TextEditingController(text: Settings.partyName);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: const Text('Your name in parties'),
+        content: TextField(
+          controller: name,
+          autofocus: true,
+          maxLength: partyNameLength,
+          decoration: const InputDecoration(
+            labelText: 'Name',
+            helperText: 'Empty uses your AniList or MyAnimeList name',
+          ),
+          onSubmitted: (_) => Navigator.pop(context, true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (saved == true && mounted) {
+      setState(() => Settings.partyName = name.text);
+    }
+  }
+
+  Future<void> _addRelay() async {
+    final address = TextEditingController(text: 'wss://');
+    final relays = partyRelays();
+    String? problem;
+    final added = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialog) {
+          void add() {
+            final url = address.text.trim();
+            problem = relayProblem(url, relays);
+            if (problem == null) return Navigator.pop(context, url);
+            setDialog(() {});
+          }
+
+          return PanelDialog(
+            title: const Text('Add a relay'),
+            content: TextField(
+              controller: address,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: InputDecoration(
+                labelText: 'Relay address',
+                hintText: 'wss://relay.example.com',
+                errorText: problem,
+              ),
+              onChanged: (_) {
+                if (problem != null) setDialog(() => problem = null);
+              },
+              onSubmitted: (_) => add(),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(onPressed: add, child: const Text('Add')),
+            ],
+          );
+        },
+      ),
+    );
+    if (added != null && mounted) {
+      setState(() => Settings.partyRelays = [...relays, added]);
+    }
+  }
 
   List<Widget> _downloads() => [
     if (Platform.isIOS)

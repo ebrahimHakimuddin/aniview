@@ -47,6 +47,17 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
             </intent-filter>
+            <!-- Watch party invites, aniview://party/<code>, open the join dialog (app_links, see party_ui.dart).
+                 Only the party host: sign-in redirects to aniview:// are caught inside the app's own web view. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="aniview" android:host="party"/>
+            </intent-filter>
+            <!-- app_links hands links to Dart; Flutter's own deep linking would push them as routes, which this app
+                 has none of. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false"/>
         </activity>
         <service
             android:name=".EpisodeJob"

@@ -19,6 +19,8 @@ import 'jellyfin.dart';
 import 'metadata.dart';
 import 'party.dart';
 import 'party_player.dart';
+import 'party_transport.dart' show PartyRoom;
+import 'party_ui.dart';
 import 'settings.dart';
 import 'site_listing.dart';
 import 'sources.dart';
@@ -35,6 +37,7 @@ import 'upscaler.dart';
 
 part 'desktop/player_view.dart';
 part 'player/upscaling.dart';
+part 'player/party.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -60,8 +63,9 @@ class PlayerScreen extends StatefulWidget {
 
   final PlayerBackend? backend;
 
-  /// A watch party to play in step with, not yet started; its controls must be a [PartyPlayer] (see there). The
-  /// player starts it, and leaves it when it closes.
+  /// A watch party to play in step with, not yet started (or started early, see [PartyPlayer.startEarly]); its
+  /// controls must be a [PartyPlayer] (see there). The player starts it, and leaves it when it closes. Without one,
+  /// "Watch together" starts a party here (see player/party.dart).
   final PartySession? party;
   final Map media;
   final Source?
@@ -82,8 +86,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
   late final player = ExoPlayer(widget.backend);
 
-  /// The watch party's hold on the player, null outside one.
-  late final _party = widget.party?.controls as PartyPlayer?;
+  /// The watch party joined or started here, and its hold on the player; null outside one.
+  late PartySession? _partySession = widget.party;
+  late PartyPlayer? _party = widget.party?.controls as PartyPlayer?;
+  StreamSubscription<void>? _partyChanges;
+  bool _partyStarting = false, _partyLeaving = false;
   bool get _inParty => _party?.active ?? false;
 
   /// A guest follows the host's episode and the host's skips.
@@ -307,8 +314,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _joinParty() {
-    final party = widget.party;
+    final party = _partySession;
     if (party == null) return;
+    _partyChanges = party.changes.listen((_) => _refresh());
     _party!.attach(
       party,
       player,
@@ -325,7 +333,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       roomRateChanged: (r) {
         if (mounted) setState(() => rate = r);
       },
-      ended: _refresh,
+      ended: _partyEnded,
     );
   }
 
@@ -603,8 +611,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timelineTimer?.cancel();
     _seekHover.dispose();
     _upscaler?.dispose();
+    _partyChanges?.cancel();
     _party?.detach();
-    widget.party?.leave().ignore();
+    _partySession?.leave().ignore();
     player.dispose();
     if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
@@ -1211,10 +1220,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     // On TV, Back first hides the controls, like Netflix.
     return PopScope(
-      canPop: !(isTv && controls && !locked),
+      // A host's way out ends the room for everyone: asked first (see player/party.dart).
+      canPop: !(isTv && controls && !locked) && !_hosting,
       // Saved on the way out, not in dispose: the page underneath reloads history as soon as this pops.
       // Paused too, or it plays on through the exit animation over whatever comes next.
       onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _hosting && !(isTv && controls && !locked)) {
+          _leaveHosting().ignore();
+          return;
+        }
         if (!didPop) return setState(() => controls = false);
         _saveHistory();
         player.applyPause(); // leaving isn't a press: a guest's doesn't pause the room
@@ -1410,6 +1424,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 ),
+              if (_inParty && (!controls || locked)) _partyIndicator(),
               IgnorePointer(
                 ignoring: !controls,
                 // Hidden controls can't hold D-pad focus.
@@ -2026,6 +2041,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 hasNext ? () => _load(session.nextIndex) : null,
               ),
               const SizedBox(width: 24),
+              if (_partyKey(episode.number) != null)
+                control(Icons.groups_outlined, _partyLabel, _watchTogether),
               if (_episodes.length > 1)
                 control(
                   Icons.video_library_outlined,
@@ -2083,10 +2100,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
               IconButton(
                 tooltip: 'Back',
                 icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.maybePop(context),
               ),
               const SizedBox(width: 4),
               Expanded(child: _titles(tv: false)),
+              _partyButton(),
               ..._menus(),
             ],
           ),

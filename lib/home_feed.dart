@@ -276,7 +276,10 @@ enum RemoteIntent {
   remotePlay('remote_play'),
 
   /// The TV launcher's Continue watching row.
-  launcher('watch_next_open');
+  launcher('watch_next_open'),
+
+  /// A watch party joined: the host's show, to play its episode as a guest.
+  party('party_join');
 
   const RemoteIntent(this.event);
   final String event;
@@ -303,4 +306,6 @@ enum RemoteIntent {
     resume: record,
     autoplay: false,
   ),
+  // The page plays the party's episode itself (see DetailsScreen.party), never where this device left off.
+  RemoteIntent.party => (popToRoot: true, resume: null, autoplay: false),
 };

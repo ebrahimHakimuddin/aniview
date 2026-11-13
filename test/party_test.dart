@@ -126,6 +126,30 @@ double driftOf(Rig rig, PartySession host, PartySession guest) =>
 String msg(Map<String, Object?> m) => jsonEncode(m);
 
 void main() {
+  test('a guest knows the host\'s episode once its state arrives', () {
+    final rig = Rig();
+    final host = rig.join(
+      host: true,
+      player: FakeControls()
+        ..episode = ep3
+        ..playing = true,
+    );
+    final guest = rig.join();
+    expect(guest.hostEpisode, isNull); // nothing heard yet
+    rig.hub.settle();
+    expect(guest.hostEpisode!.sameAs(ep3), isTrue);
+    expect(guest.hostEpisode!.number, ep3.number);
+    expect(host.hostEpisode, isNull); // the host follows nobody
+
+    // The host moves on, and the guest hears it.
+    const ep4 = PartyEpisode(anilist: 21, number: 4);
+    rig.players[host]!.episode = ep4;
+    rig.advance(
+      1500,
+    ); // past the second the joining took, at 5 messages a second
+    expect(guest.hostEpisode!.sameAs(ep4), isTrue);
+  });
+
   test('a late joiner opens the host\'s episode where the host is', () {
     final (rig, host, guest) = synced();
     final g = rig.players[guest]!;

@@ -13,7 +13,7 @@ import 'party.dart';
 /// PlayerScreen(media: …, source: …, episodes: …, index: …, dub: …, party: party);
 /// ```
 ///
-/// and leave the session unstarted: the player starts it once attached, so the host's first state finds a player
+/// and leave the session unstarted (or started with [PartyPlayer.startEarly]): the player starts it once attached, so the host's first state finds a player
 /// to open its episode in, and leaves it when it closes.
 ///
 /// Until attached it reads as an empty player and ignores what the session asks of it. While attached, the
@@ -34,6 +34,18 @@ class PartyPlayer implements PartyControls {
   /// little off it (×0.95 or ×1.05), which the speed shown shouldn't follow.
   double get roomRate => _roomRate;
   double _roomRate = 1;
+
+  /// The session this has started, early ([startEarly]) or on [attach].
+  PartySession? _started;
+
+  /// Starts [session], whose controls must be this, before a player is attached: a guest joining hears the host's
+  /// episode first, to know what to open. [attach] then doesn't start it again.
+  void startEarly(PartySession session) {
+    assert(identical(session.controls, this));
+    if (identical(_started, session)) return;
+    _started = session;
+    session.start();
+  }
 
   /// Whether a player is attached to a session still going.
   bool get active => _player != null && !(_session?.ended ?? true);
@@ -83,7 +95,10 @@ class PartyPlayer implements PartyControls {
         if (session.ended) _end();
       }),
     ]);
-    session.start();
+    if (!identical(_started, session)) {
+      _started = session;
+      session.start();
+    }
   }
 
   /// Lets go of the player: its presses act on it alone again, and the session's changes go nowhere.
