@@ -20,14 +20,19 @@ Icon=aniview
 Categories=AudioVideo;Video;
 D
 cp linux/packaging/aniview.png build/aniview.png
+# A numbered release, not "continuous": that one is rebuilt in place, so its checksum stops matching.
 tool=build/linuxdeploy-x86_64.AppImage
-[ -f "$tool" ] || curl -fsSL -o "$tool" https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-echo '8aea8da0f7f7039d2a2cecb14657d752a222a5e1d3825caeef186c82f751cdd1  build/linuxdeploy-x86_64.AppImage' | sha256sum --check
+sum='c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d'
+echo "$sum  $tool" | sha256sum --check --status 2>/dev/null ||
+  curl -fsSL -o "$tool" https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+echo "$sum  $tool" | sha256sum --check
 chmod +x "$tool"
 # The video stack talks to the GPU driver, which has to match the host's Mesa, so those libraries come from the host, not from here.
 # media_kit dlopen()s libmpv, so linuxdeploy can't see it; name it so its dependencies get bundled too.
 mpv=$(ldconfig -p | awk '/libmpv\.so\.2 .*x86-64/{print $NF}' | head -1)
 test -n "$mpv"
+# linuxdeploy's own strip is older than the libraries of a current system and stops on them; they come stripped.
+export NO_STRIP=1
 # linuxdeploy carries the patchelf used below.
 deploy="$PWD/build/linuxdeploy"
 rm -rf "$deploy" && mkdir "$deploy" && (cd "$deploy" && "../${tool#build/}" --appimage-extract >/dev/null)
