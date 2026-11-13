@@ -228,6 +228,22 @@ class MediaKitShaders {
   }
 }
 
+/// Which player has the app's one mpv: the newest to start. A route's dispose runs after its exit animation, by
+/// which time a player opened meanwhile (a party link, "Bring the TV in", remote play) may have it.
+@visibleForTesting
+abstract final class MpvOwner {
+  static Object? _current;
+
+  static void claim(Object player) => _current = player;
+
+  /// Whether [player] still had the mpv; nobody has it after.
+  static bool release(Object player) {
+    if (!identical(_current, player)) return false;
+    _current = null;
+    return true;
+  }
+}
+
 /// media_kit on iOS and desktop, and on Android for a player opened with upscaling on, answering the same commands
 /// and events as Media3. iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture
 /// renderer; Android media_kit_libs_android_video's libmpv (see [_AndroidMpv]).
@@ -282,6 +298,7 @@ class _MediaKitBackend extends PlayerBackend {
 
   @override
   Future<void> start(void Function(Map event) on) async {
+    MpvOwner.claim(this);
     final mpv = _mpv;
     final video = this.video = _sharedVideo ??= VideoController(
       mpv,
@@ -415,11 +432,15 @@ class _MediaKitBackend extends PlayerBackend {
     for (final sub in _events) {
       sub.cancel();
     }
-    await _mpv.stop();
-    await _mpv.setVolume(100);
-    // The mpv lives on for the next video: it starts with no shaders, at its own size.
-    await _shaders.apply(const []);
-    await _android?.dispose();
+    // A newer player has the mpv: its video, shaders, channel and audio focus stay as they are.
+    final owner = MpvOwner.release(this);
+    if (owner) {
+      await _mpv.stop();
+      await _mpv.setVolume(100);
+      // The mpv lives on for the next video: it starts with no shaders, at its own size.
+      await _shaders.apply(const []);
+    }
+    await _android?.dispose(owner: owner);
   }
 }
 
@@ -486,10 +507,12 @@ class _AndroidMpv {
     controller.rect.addListener(_keepSize);
   }
 
-  Future<void> dispose() async {
+  /// Lets go of the picture and the mpv's events; as [owner], the session too.
+  Future<void> dispose({required bool owner}) async {
     controller.rect.removeListener(_keepSize);
     _target = null;
     await _playing?.cancel();
+    if (!owner) return;
     _session.setMethodCallHandler(null);
     await _tell('end');
   }
