@@ -3,8 +3,8 @@
 /// A room is a 12-character code ([PartyRoom]) that friends share. From it, scrypt and labelled hashes derive an
 /// AES key and a relay tag ([PartyKeys]); relays only ever see the tag and ciphertext. Each message is a NIP-01
 /// ephemeral event (kind 21000) tagged `["d", tag]`, whose content is the message sealed with [seal], signed with
-/// a key made fresh for each join ([NostrKey]). A peer's id is the start of that key's public key, so holding the
-/// room code isn't enough to speak as someone else.
+/// a key made fresh for each join ([NostrKey]). A peer's id is the first 24 hex characters of that key's public
+/// key, so holding the room code isn't enough to speak as someone else.
 ///
 /// [NostrTransport] keeps a socket to every relay, publishes to all of them and reads from all of them,
 /// dropping duplicates. A relay only counts as usable once it has delivered an event to us: some relays accept
@@ -259,9 +259,16 @@ class NostrTransport implements PartyTransport {
   /// What we sent in the last few seconds, replayed to a relay that (re)connects.
   final _recent = <(int, String)>[];
 
-  /// The id to give [PartySession]: the first 12 hex characters of this join's public key. Messages whose
-  /// `from` isn't their signer's are dropped.
-  String get peerId => _key.pubkey.substring(0, 12);
+  /// The id to give [PartySession]: the first [peerIdLength] hex characters of this join's public key. Messages
+  /// whose `from` isn't their signer's are dropped.
+  String get peerId => _key.pubkey.substring(0, peerIdLength);
+
+  /// 96 bits: too many to search for a key whose id matches someone else's.
+  static const peerIdLength = 24;
+
+  /// How far a peer's clock may be from ours, in seconds. Phones are often seconds and sometimes minutes out,
+  /// and relays apply `since` to live events too; replays inside the window are dropped by event id.
+  static const clockSlack = 900;
 
   /// How many relays have delivered an event to us since they last connected.
   ValueListenable<int> get usable => _usable;
@@ -327,7 +334,7 @@ class NostrTransport implements PartyTransport {
               (t) =>
                   t is List && t.length >= 2 && t[0] == 'd' && t[1] == keys.tag,
             )) {
-      if ((_clock() ~/ 1000 - createdAt).abs() > 60) return;
+      if ((_clock() ~/ 1000 - createdAt).abs() > clockSlack) return;
       final known = _seen[id];
       if (known != sig &&
           (known != null ||
@@ -346,7 +353,7 @@ class NostrTransport implements PartyTransport {
       } catch (_) {
         return;
       }
-      if (_fromOf(text) != pubkey.substring(0, 12)) return;
+      if (_fromOf(text) != pubkey.substring(0, peerIdLength)) return;
       if (!_incoming.isClosed) _incoming.add(text);
     }
   }
@@ -407,7 +414,7 @@ class _Relay {
         {
           'kinds': [partyEventKind],
           '#d': [keys.tag],
-          'since': _t._clock() ~/ 1000 - 5,
+          'since': _t._clock() ~/ 1000 - NostrTransport.clockSlack,
         },
       ]),
     );

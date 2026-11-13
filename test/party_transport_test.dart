@@ -348,7 +348,7 @@ void main() {
       final r = await relay();
       final a = join([r]), b = join([r]);
       final inA = Inbox(a), inB = Inbox(b);
-      expect(a.peerId, matches(RegExp(r'^[0-9a-f]{12}$')));
+      expect(a.peerId, matches(RegExp(r'^[0-9a-f]{24}$')));
       expect(a.peerId, isNot(b.peerId));
       await connected([r], 2);
       final hello = msg(a, 'hi');
@@ -423,7 +423,7 @@ void main() {
         String own(String text) => jsonEncode({
           't': 'chat',
           'text': text,
-          'from': mallory.pubkey.substring(0, 12),
+          'from': mallory.pubkey.substring(0, 24),
           'n': n++,
         });
         final other = await PartyRoom.create().keys;
@@ -452,8 +452,8 @@ void main() {
         ];
         r.inject(retagged);
         // Two minutes old, and two minutes ahead.
-        r.inject(event(mallory, own('old'), at: nowS() - 120));
-        r.inject(event(mallory, own('early'), at: nowS() + 120));
+        r.inject(event(mallory, own('old'), at: nowS() - 1000));
+        r.inject(event(mallory, own('early'), at: nowS() + 1000));
         // Sealed with another room's key, and not base64.
         r.inject(
           event(
