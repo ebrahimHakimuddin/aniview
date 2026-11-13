@@ -58,7 +58,7 @@ Map<String, List<String>> expectedRows() {
       'Default speed',
       'Default picture',
     ],
-    'Video enhancement': [if (usesMediaKit) 'Anime upscaling (Anime4K)'],
+    'Video enhancement': ['Anime upscaling (Anime4K)'],
     'Subtitles': [
       'This is your subtitle preview',
       'Language',
@@ -266,11 +266,8 @@ void main() {
         for (final g in shownGroups()) {
           expect(find.text(g), findsNWidgets(rowGroups.contains(g) ? 0 : 1));
         }
-        // mpv runs the shaders; Android's Media3 can't, so the group is gone there.
-        expect(
-          find.text('Video enhancement'),
-          usesMediaKit ? findsOneWidget : findsNothing,
-        );
+        // Every platform: Android plays an upscaling video through mpv.
+        expect(find.text('Video enhancement'), findsOneWidget);
         final top = rowsIn(all);
         expect(top, [for (final g in rowGroups) ...expected[g]!]);
         seen.addAll(top);
@@ -396,10 +393,7 @@ void main() {
   });
 
   testWidgets('phone: picks an upscaling tier on its own page', (tester) async {
-    expect(
-      usesMediaKit,
-      isTrue,
-    ); // tests run on a desktop OS: mpv's group shows
+    expect(usesMediaKit, isTrue); // tests run on a desktop OS: mpv plays
     await setUpScreen(tester, profiles.first, 2000);
     await tester.tap(find.widgetWithText(ListTile, 'Video enhancement'));
     await settle(tester);
@@ -411,6 +405,58 @@ void main() {
     await settle(tester);
     expect(Settings.upscale, Upscale.quality);
     expect(find.textContaining('Quality · Sharpens anime'), findsOneWidget);
+  });
+
+  group('Android', () {
+    setUp(() {
+      final os = playbackOs, tv = deviceIsTv;
+      playbackOs = 'android';
+      addTearDown(() {
+        playbackOs = os;
+        deviceIsTv = tv;
+      });
+    });
+
+    Future<List<String>> tiers(WidgetTester tester) async {
+      await tester.tap(find.widgetWithText(ListTile, 'Video enhancement'));
+      await settle(tester);
+      expect(find.text('Anime upscaling (Anime4K)'), findsOneWidget);
+      expect(
+        find.textContaining('uses more battery. Applies from the next video'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Anime upscaling (Anime4K)'));
+      await settle(tester);
+      return [
+        for (final t in Upscale.values)
+          if (find.text(t.label).evaluate().isNotEmpty) t.label,
+      ];
+    }
+
+    testWidgets('a phone offers upscaling, noting the battery', (tester) async {
+      await setUpScreen(tester, profiles.first, 2000);
+      expect(await tiers(tester), ['Off', 'Fast', 'Quality']);
+      await tester.tap(find.text('Quality').last);
+      await settle(tester);
+      expect(Settings.upscale, Upscale.quality);
+    });
+
+    testWidgets('a TV box offers Off and Fast only', (tester) async {
+      deviceIsTv = true;
+      await setUpScreen(tester, profiles.first, 2000);
+      expect(await tiers(tester), ['Off', 'Fast']);
+    });
+
+    testWidgets('Quality saved elsewhere shows as Fast on a TV box', (
+      tester,
+    ) async {
+      deviceIsTv = true;
+      await setUpScreen(tester, profiles.first, 2000);
+      Settings.upscale = Upscale.quality;
+      await tester.tap(find.widgetWithText(ListTile, 'Video enhancement'));
+      await settle(tester);
+      expect(find.textContaining('Fast · Sharpens anime'), findsOneWidget);
+    });
   });
 
   testWidgets('tv: the remote opens a group and Back returns to its tile', (

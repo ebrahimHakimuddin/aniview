@@ -84,7 +84,10 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
-  late final player = ExoPlayer(widget.backend);
+  // Android: mpv instead while upscaling, for this player's life (see player/upscaling.dart).
+  late final player = ExoPlayer(
+    widget.backend ?? PlayerBackend.forSession(upscale: _upscaleOnOpen),
+  );
 
   /// The watch party joined or started here, and its hold on the player; null outside one.
   late PartySession? _partySession = widget.party;
@@ -290,7 +293,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         switch (session.onError(
           position,
           player.state.duration,
-          exoPlayer: !usesMediaKit,
+          exoPlayer: !_onMpv,
         )) {
           case ErrorAction.ignore:
             return;
@@ -299,7 +302,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _hint('Playback failed · reloading', icon: Icons.refresh_rounded);
             _play(current!, at: position);
           case ErrorAction.nextServer:
-            _serverFailed(Exception(e));
+            if (!_upscalingFellBack()) _serverFailed(Exception(e));
         }
       }),
       player.stream.completed.listen((done) {
@@ -742,7 +745,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       final address = await StreamAddress.instance.forPlayer(stream);
       if (stale()) return;
-      if (usesMediaKit) {
+      if (_onMpv) {
         final heights = await configureQuality(
           address.url,
           quality == 0 ? Settings.streamQuality : quality,
@@ -783,7 +786,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       if (stale()) return;
       // A Cloudflare check is the site's, not a dead server: the error view offers to verify it.
-      if (loaded || !usesMediaKit || e is CloudflareChallenge) {
+      if (loaded || !_onMpv || e is CloudflareChallenge) {
         setState(() => error = e);
       } else {
         _serverFailed(e);
@@ -886,7 +889,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     (q) async {
       if (!mounted || _changingQuality || q == quality) return;
       setState(() => quality = q);
-      if (usesMediaKit && current != null) {
+      if (_onMpv && current != null) {
         _changingQuality = true;
         final stream = current!;
         final generation = _playGeneration + 1;
@@ -1671,7 +1674,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool get _canSwitchServer => streams.length > 1 && streams.contains(current);
 
-  List<int> get _qualities => usesMediaKit
+  List<int> get _qualities => _onMpv
       ? _desktopHeights
       : player.state.heights.where((h) => h >= 480).toList();
 
@@ -2076,6 +2079,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   _pickQuality,
                 ),
               control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
+              if (_offersUpscaling)
+                control(
+                  Icons.auto_awesome_outlined,
+                  'Upscaling · $_upscaleLabel',
+                  () => _open(_upscaleChoice),
+                ),
               control(_fitIcon, 'Picture · ${pictureFits[fit]}', _cycleFit),
               if (supportsExternalPlayer)
                 control(

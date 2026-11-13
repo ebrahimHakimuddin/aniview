@@ -184,6 +184,66 @@ void main() {
       expect(plan.target, isNull);
     });
 
+    // Android (mobile chains). A 1080p phone in landscape: 2400×1080 physical pixels at 2.75.
+    const phone = Size(2400 / 2.75, 1080 / 2.75);
+
+    test('1080p on a 1080p phone: a light restore at the video\'s size', () {
+      for (final tier in [Upscale.fast, Upscale.quality]) {
+        final plan = upscalePlan(
+          tier,
+          source: const Size(1920, 1080),
+          box: phone,
+          devicePixelRatio: 2.75,
+          mobile: true,
+        );
+        // Already as large as the screen: no x2 upscaler, and no larger surface to draw.
+        expect(plan.chain, restoreOnly(tier, mobile: true));
+        expect(plan.chain, ['Anime4K_Restore_CNN_S.glsl']);
+        expect(plan.target, isNull);
+      }
+    });
+
+    test('720p on a 1080p phone: the short chain, drawn at the screen', () {
+      for (final tier in [Upscale.fast, Upscale.quality]) {
+        final plan = upscalePlan(
+          tier,
+          source: const Size(1280, 720),
+          box: phone,
+          devicePixelRatio: 2.75,
+          mobile: true,
+        );
+        expect(plan.chain, shaderChain(tier, sourceHeight: 720, mobile: true));
+        expect(plan.chain, hasLength(2));
+        expect(plan.target, const Size(1920, 1080));
+      }
+    });
+
+    test('720p on a 4K TV: fast, drawn at 2160p', () {
+      // Android TV at 3840×2160 (a 1920×1080 layout at 2×), where only Off and Fast are offered.
+      final plan = upscalePlan(
+        Upscale.fast,
+        source: const Size(1280, 720),
+        box: const Size(1920, 1080),
+        devicePixelRatio: 2,
+        mobile: true,
+      );
+      expect(plan.chain, [
+        'Anime4K_Clamp_Highlights.glsl',
+        'Anime4K_Upscale_CNN_x2_S.glsl',
+      ]);
+      expect(plan.target, const Size(3840, 2160));
+      // A box whose UI runs at 1080p on the same TV: still upscaled, at 1080p.
+      final hd = upscalePlan(
+        Upscale.fast,
+        source: const Size(1280, 720),
+        box: const Size(960, 540),
+        devicePixelRatio: 2,
+        mobile: true,
+      );
+      expect(hd.chain, plan.chain);
+      expect(hd.target, const Size(1920, 1080));
+    });
+
     test('off runs nothing', () {
       final plan = upscalePlan(
         Upscale.off,
@@ -384,10 +444,10 @@ void main() {
         await tester.tap(_item('Off'));
         await tester.pump(const Duration(milliseconds: 100));
         expect(backend.sent.last.paths, isEmpty);
-        expect((backend.sent.last.width, backend.sent.last.height), (
-          null,
-          null,
-        ));
+        expect(
+          (backend.sent.last.width, backend.sent.last.height),
+          (null, null),
+        );
         expect(Settings.upscale, Upscale.off);
         await close(tester);
       },

@@ -66,6 +66,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ExoPlayers(this, flutterEngine)
+        // Media3's audio focus, headphones pause and wake locks, for a video that plays through mpv to upscale.
+        MpvSession(this, flutterEngine.dartExecutor.binaryMessenger)
         Extensions(this, flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aniview/downloads")
             .setMethodCallHandler { call, result ->
