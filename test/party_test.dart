@@ -529,6 +529,17 @@ void main() {
     },
   );
 
+  test('a host that just sent its limit still says goodbye', () async {
+    final (rig, host, guest) = synced();
+    for (var i = 0; i < 6; i++) {
+      host.sendChat('line $i');
+    }
+    expect(host.sendChat('one too many'), isFalse);
+    await host.leave();
+    rig.hub.settle();
+    expect(guest.ended, isTrue);
+  });
+
   test('a room holds 8 peers', () {
     final rig = Rig();
     final host = rig.join(
