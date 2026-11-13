@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' hide Padding, State;
 
 import 'anilist.dart';
+import 'party_transport.dart' show PartyRoom;
+import 'party_ui.dart' show partyLinkArrived;
 import 'tracker.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -287,6 +289,16 @@ class TvLink {
               } else {
                 response.statusCode = HttpStatus.conflict;
               }
+            case {'party': final String code}:
+              // "Bring the TV in": the join dialog with the room's code, as a party link opens it. Only a
+              // code exactly as the phone sends it (K7QM-2XVD-9RTA), nothing around it.
+              final room = PartyRoom.parse(code);
+              if (room == null || room.display != code) {
+                throw const FormatException();
+              }
+              // Cleared first, so the same room sent again still opens it.
+              partyLinkArrived.value = null;
+              partyLinkArrived.value = room;
             case {'k': final String key}:
               if (key != 'back' && !remoteKeys.containsKey(key)) {
                 throw const FormatException();
@@ -405,6 +417,27 @@ class TvRemote {
         throw Exception('Open AniView\'s home on the TV first');
       default:
         throw Exception('The TV couldn\'t play it. Update AniView there');
+    }
+  }
+
+  /// Brings the paired TV into [room]: it opens the join dialog there with the room's code. Throws with why not.
+  static Future<void> joinParty(PartyRoom room) async {
+    final tv = _tv;
+    if (tv == null) throw Exception('No TV is paired');
+    final http.Response res;
+    try {
+      res = await post(tv, {'party': room.display});
+    } catch (_) {
+      connected.value = false;
+      throw Exception("Can't reach ${tv['name']}. Is AniView open on it?");
+    }
+    switch (res.statusCode) {
+      case HttpStatus.ok:
+        return;
+      case HttpStatus.forbidden:
+        throw Exception('The TV forgot this phone. Pair again');
+      default:
+        throw Exception('The TV couldn\'t join. Update AniView there');
     }
   }
 }

@@ -116,6 +116,7 @@ extension _PlayerParty on _PlayerScreenState {
   void _partyEnded() {
     _partyChanges?.cancel();
     _partyChanges = null;
+    _chatOpen = false;
     if (!mounted) return;
     _refresh();
     _hint(
