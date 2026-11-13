@@ -13,8 +13,8 @@
   <a href="https://www.buymeacoffee.com/kidfury"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&slug=kidfury&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="48"></a>
 </p>
 
-Flutter (Android) app for watching and tracking anime. Tracking is AniList (in-app sign-in), with
-MyAnimeList's public data as a fallback for browsing; episodes and streams come from third-party sites.
+Flutter (Android) app for watching and tracking anime. Tracking is your AniList or MyAnimeList list (in-app sign-in), and
+MyAnimeList's public data is the fallback for browsing when AniList is down; episodes and streams come from third-party sites.
 
 The iPhone target (iOS 15+) uses native media_kit playback. See [iOS build, sideloading and testing](docs/ios.md)
 for re-signable IPA builds, client-ID configuration and platform limitations. Android retains ExoPlayer.
@@ -40,7 +40,7 @@ Japanese/English audio selection, and soft subtitles. Downloads of its separate-
 AnimeStream is also included when absent from that ranking. animepahe is marked **Unstable** and listed last
 among built-in sources because its verification frequently blocks playback; it remains selectable for existing history.
 
-Any of these can be left out: without AniList's client id there's no tracking, without MyAnimeList's no fallback,
+Any of these can be left out: without AniList's client id there's no AniList sign-in, without MyAnimeList's no fallback and no MyAnimeList sign-in,
 without a Rybbit site id no analytics. Analytics defaults to `https://rybbit.clouderp.co.tz`;
 override it with `--dart-define=RYBBIT_HOST=https://…` when using another Rybbit instance.
 
@@ -116,7 +116,8 @@ switches the native builds (`linux/CMakeLists.txt`, `windows/runner/CMakeLists.t
 ## Tracking
 
 Home, search and related shows come from AniList, and from MyAnimeList's public data when AniList fails.
-Progress goes to AniList only. A save AniList can't take (down, or you're offline) is queued on-device and
+Progress goes to the account you're signed in to, AniList or MyAnimeList. A save it can't take (down, or you're offline)
+is queued on-device and
 retried when the app opens or returns to the foreground, and after the next save that goes through. Shows found through
 MyAnimeList get their AniList id from ani.zip when opened.
 

@@ -44,8 +44,9 @@ episode. It also decides who gets a site's Cloudflare check passed: the verifica
 the player), nobody in a download, which fails with the check instead. Distinct from the **Episode plan**, which arranges
 the episodes a listing returns.
 
-**Tracker** (`lib/tracker.dart`): browsing (AniList, with MyAnimeList as a read-only fallback), the AniList
-session, and **tracked progress** saves, queued on-device when AniList can't take them. Each **catalog**
+**Tracker** (`lib/tracker.dart`): browsing (AniList, with MyAnimeList's public data as the fallback), the
+signed-in account (AniList or MyAnimeList, each a `ListProvider`), and **tracked progress** saves to it, queued
+on-device when it can't take them. Each **catalog**
 (`Catalog`) answers browsing; AniList's and MyAnimeList's are its two adapters.
 
 **Search session** (`lib/search.dart`, `SearchSession`): a search as it's typed: waits for typing to pause, skips a
