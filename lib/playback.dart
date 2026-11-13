@@ -21,6 +21,10 @@ class SkipTo extends OkAction {
 
 class PlayPause extends OkAction {}
 
+/// What a player error calls for: nothing (a media_kit log line once playing), reloading the same server where
+/// it stopped, or the next server ([PlaybackSession.fallback]) since this one failed.
+enum ErrorAction { ignore, reload, nextServer }
+
 /// The player's decisions about an episode, apart from painting it: where it plays from and where it starts
 /// ([open]), which server to fall back to, which subtitles to show, when it counts as watched, when to save the
 /// spot, which skip applies, when to offer or start the next episode, and where a held left/right on a TV remote
@@ -113,6 +117,7 @@ class PlaybackSession {
     _autoSkipped.clear();
     _watched = false;
     fromDownload = false;
+    _reloadedAt = null;
   }
 
   /// Starts episode [i]: its download or else the site's servers become [streams] (the player opens the first), and
@@ -158,6 +163,33 @@ class PlaybackSession {
   /// than a hiccup once it's playing. Then the next server ([fallback]) gets a try.
   bool stalled(Duration duration) =>
       current != null && duration == Duration.zero;
+
+  /// Where [current] was reloaded after failing mid-episode, until it plays on past there.
+  Duration? _reloadedAt;
+
+  /// A player error at [position]: before load the next server gets a try ([stalled]). After load only Media3
+  /// ([exoPlayer]) means it: its player stops, so the server is reloaded there once, and fails if it errors
+  /// again before getting 10 s further. media_kit sends log lines as errors too, so those are ignored.
+  ErrorAction onError(
+    Duration position,
+    Duration duration, {
+    required bool exoPlayer,
+  }) {
+    if (current == null) return ErrorAction.ignore;
+    if (stalled(duration)) return ErrorAction.nextServer;
+    if (!exoPlayer) return ErrorAction.ignore;
+    if (_reloadedAt != null) return ErrorAction.nextServer;
+    _reloadedAt = position;
+    return ErrorAction.reload;
+  }
+
+  /// Playing on 10 s past a reload lets a later failure reload again.
+  void progressed(Duration position) {
+    if (_reloadedAt case final at?
+        when position >= at + const Duration(seconds: 10)) {
+      _reloadedAt = null;
+    }
+  }
 
   /// The subtitles to show for [stream], by the language in Settings: that language, else English, else the
   /// first. [off] when Settings turns them off; a null [track] leaves the stream's own (embedded or burned in).
@@ -229,6 +261,7 @@ class PlaybackSession {
 
   /// Plays [stream]; its own skip times apply until AniSkip's arrive.
   void playing(VideoStream stream) {
+    if (stream != current) _reloadedAt = null;
     current = stream;
     if (skips.isEmpty) skips = stream.skips;
   }

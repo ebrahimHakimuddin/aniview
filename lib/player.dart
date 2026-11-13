@@ -254,10 +254,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }),
       player.stream.buffering.listen((_) => _refresh()),
       player.stream.tracks.listen((_) => _refresh()),
-      // A stream that never loads would otherwise spin on "Loading video…" forever.
+      // A stream that never loads would otherwise spin on "Loading video…" forever, and Media3 stops on an
+      // error mid-episode, leaving the picture frozen.
       player.stream.error.listen((e) {
-        if (!mounted || !session.stalled(player.state.duration)) return;
-        _serverFailed(Exception(e));
+        if (!mounted) return;
+        final position = player.state.position;
+        switch (session.onError(
+          position,
+          player.state.duration,
+          exoPlayer: !usesMediaKit,
+        )) {
+          case ErrorAction.ignore:
+            return;
+          case ErrorAction.reload:
+            _saveHistory();
+            _hint('Playback failed · reloading', icon: Icons.refresh_rounded);
+            _play(current!, at: position);
+          case ErrorAction.nextServer:
+            _serverFailed(Exception(e));
+        }
       }),
       player.stream.completed.listen((done) {
         if (done && session.advancesOnFinish) {
@@ -828,6 +843,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPosition(Duration position) {
+    session.progressed(position);
     _checkWatched(position, player.state.duration);
     if (session.autoSkip(position) case final skip?) {
       player.seek(skip.end);

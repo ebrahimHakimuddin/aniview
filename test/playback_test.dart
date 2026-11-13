@@ -327,4 +327,73 @@ void main() {
       expect(PlaybackSession.embeddedSubtitle(tracks, 'Off'), isNull);
     },
   );
+
+  group('a player error after the video loads', () {
+    const at = Duration(minutes: 5);
+
+    test('on Media3 reloads the server once, then moves on', () {
+      final session = _session();
+      expect(session.onError(at, _length, exoPlayer: true), ErrorAction.reload);
+      session.playing(session.current!); // the reload: same server
+      session.progressed(at + _sec * 9); // not far enough
+      expect(
+        session.onError(at + _sec * 9, _length, exoPlayer: true),
+        ErrorAction.nextServer,
+      );
+      // The next server, then none left: the error view.
+      session.playing(session.fallback()!);
+      expect(session.fallback(), isNull);
+    });
+
+    test('an error while the reload loads moves to the next server', () {
+      final session = _session();
+      session.onError(at, _length, exoPlayer: true);
+      expect(
+        session.onError(at, Duration.zero, exoPlayer: true),
+        ErrorAction.nextServer,
+      );
+    });
+
+    test('playing on past the failure allows another reload', () {
+      final session = _session();
+      session.onError(at, _length, exoPlayer: true);
+      session.progressed(at + _sec * 10);
+      expect(
+        session.onError(at + _sec * 60, _length, exoPlayer: true),
+        ErrorAction.reload,
+      );
+    });
+
+    test('another server or episode starts with a reload to spare', () {
+      final session = _session();
+      session.onError(at, _length, exoPlayer: true);
+      session.playing(session.fallback()!);
+      expect(session.onError(at, _length, exoPlayer: true), ErrorAction.reload);
+      session.start(1);
+      session
+        ..streams = const [VideoStream('HD-1', 'a', {})]
+        ..playing(session.streams.first);
+      expect(session.onError(at, _length, exoPlayer: true), ErrorAction.reload);
+    });
+
+    test('on media_kit is ignored; before load it still moves servers', () {
+      final session = _session();
+      expect(
+        session.onError(at, _length, exoPlayer: false),
+        ErrorAction.ignore,
+      );
+      expect(
+        session.onError(at, _length, exoPlayer: false),
+        ErrorAction.ignore,
+      );
+      expect(
+        session.onError(Duration.zero, Duration.zero, exoPlayer: false),
+        ErrorAction.nextServer,
+      );
+      expect(
+        session.onError(Duration.zero, Duration.zero, exoPlayer: true),
+        ErrorAction.nextServer,
+      );
+    });
+  });
 }
