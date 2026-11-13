@@ -973,6 +973,8 @@ class ExoVideo extends StatelessWidget {
           fit: fit,
           controls: NoVideoControls,
           fill: Colors.black,
+          // As Media3 does there: screen off or Home leaves it playing (MpvSession.kt pauses for the audio's sake).
+          pauseUponEnteringBackgroundMode: !Platform.isAndroid,
           subtitleViewConfiguration: const SubtitleViewConfiguration(
             visible: false,
           ),
