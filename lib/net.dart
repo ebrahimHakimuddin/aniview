@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -8,6 +9,10 @@ import 'package:http2/http2.dart' hide Settings;
 
 const userAgent =
     'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+
+/// How long a request waits for an answer, and for the next part of a body that has stopped arriving. A large
+/// download that keeps arriving takes as long as it needs. Shortened in tests.
+Duration patience = const Duration(seconds: 30);
 
 /// A site wants its Cloudflare check passed by hand (the verification page can).
 class CloudflareChallenge implements Exception {
@@ -40,13 +45,20 @@ class HttpNet implements Net {
     final uri = Uri.parse(url);
     final all = {'User-Agent': userAgent, ...?headers};
     if (!_h2Hosts.contains(uri.host)) {
-      final res = await httpClient.get(uri, headers: all);
-      if (res.statusCode == 200) return res;
+      final res = await _send(uri, all);
+      if (res.statusCode == 200) return http.Response.fromStream(res);
+      await res.stream.drain<void>();
       if (res.statusCode != 403) {
         throw HttpException('HTTP ${res.statusCode}', uri: uri);
       }
     }
-    final (status, response, body) = await h2Get(uri, all);
+    final (int, Map<String, String>, Uint8List) h2;
+    try {
+      h2 = await h2Get(uri, all);
+    } on TimeoutException {
+      throw HttpException('Timed out', uri: uri);
+    }
+    final (status, response, body) = h2;
     if (status != 200) throw HttpException('HTTP $status', uri: uri);
     _h2Hosts.add(uri.host);
     return http.Response.bytes(
@@ -81,7 +93,7 @@ Future<String> postJson(
         },
         body: jsonEncode(body),
       )
-      .timeout(const Duration(seconds: 30));
+      .timeout(patience);
   if (response.statusCode != 200) {
     throw HttpException('HTTP ${response.statusCode}', uri: uri);
   }
@@ -99,10 +111,7 @@ Future<Stream<List<int>>> streamBytes(
 }) async {
   final uri = Uri.parse(url);
   if (!_h2Hosts.contains(uri.host)) {
-    final res = await httpClient.send(
-      http.Request('GET', uri)
-        ..headers.addAll({'User-Agent': userAgent, ...?headers}),
-    );
+    final res = await _send(uri, {'User-Agent': userAgent, ...?headers});
     if (res.statusCode == 200) return res.stream;
     await res.stream.drain<void>();
     if (res.statusCode != 403) {
@@ -117,10 +126,35 @@ Future<Stream<List<int>>> streamBytes(
 Future<http.StreamedResponse> openGet(
   String url, {
   Map<String, String>? headers,
-}) => httpClient.send(
-  http.Request('GET', Uri.parse(url))
-    ..headers.addAll({'User-Agent': userAgent, ...?headers}),
-);
+}) => _send(Uri.parse(url), {'User-Agent': userAgent, ...?headers});
+
+/// A GET answered within [patience], whose body fails with an [HttpException] once it goes quiet for as long.
+Future<http.StreamedResponse> _send(
+  Uri uri,
+  Map<String, String> headers,
+) async {
+  final res = await httpClient
+      .send(http.Request('GET', uri)..headers.addAll(headers))
+      .timeout(
+        patience,
+        onTimeout: () => throw HttpException('Timed out', uri: uri),
+      );
+  return http.StreamedResponse(
+    res.stream.timeout(
+      patience,
+      onTimeout: (sink) => sink
+        ..addError(HttpException('Timed out', uri: uri))
+        ..close(),
+    ),
+    res.statusCode,
+    contentLength: res.contentLength,
+    request: res.request,
+    headers: res.headers,
+    isRedirect: res.isRedirect,
+    persistentConnection: res.persistentConnection,
+    reasonPhrase: res.reasonPhrase,
+  );
+}
 
 Future<Uint8List> fetchBytes(String url, {Map<String, String>? headers}) =>
     const HttpNet().bytes(url, headers: headers);
@@ -159,9 +193,7 @@ Future<(int, Map<String, String>, Uint8List)> h2Get(
     ], endStream: true);
     final response = <String, String>{};
     final body = BytesBuilder(copy: false);
-    await for (final message in stream.incomingMessages.timeout(
-      const Duration(seconds: 30),
-    )) {
+    await for (final message in stream.incomingMessages.timeout(patience)) {
       switch (message) {
         case HeadersStreamMessage(:final headers):
           for (final h in headers) {

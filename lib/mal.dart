@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
 import 'desktop/sign_in.dart';
+import 'net.dart' show patience;
 import 'platform.dart';
 
 /// MyAnimeList's API v2: public browsing, a stand-in for AniList's when it is down, and (signed in) your list.
@@ -77,10 +78,12 @@ class MAL {
   }
 
   static Future<void> _grant(Map<String, String> form) async {
-    final res = await http.post(
-      Uri.https('myanimelist.net', '/v1/oauth2/token'),
-      body: {'client_id': clientId, ...form},
-    );
+    final res = await http
+        .post(
+          Uri.https('myanimelist.net', '/v1/oauth2/token'),
+          body: {'client_id': clientId, ...form},
+        )
+        .timeout(patience);
     if (res.statusCode != 200) {
       // A refresh token MAL no longer honours means signing in again.
       if (form['grant_type'] == 'refresh_token') await logout();
@@ -145,7 +148,10 @@ class MAL {
       Uri.https('api.myanimelist.net', '/v2/$path', query),
     )..headers['Authorization'] = 'Bearer ${await _bearer()}';
     if (form != null) request.bodyFields = form;
-    final res = await http.Response.fromStream(await request.send());
+    final res = await request
+        .send()
+        .then(http.Response.fromStream)
+        .timeout(patience);
     if (res.statusCode == 401) await logout();
     // Deleting what isn't on the list is already done.
     if (res.statusCode == 404 && method == 'DELETE') return {};
@@ -311,10 +317,12 @@ class MAL {
     String path,
     Map<String, String> query,
   ) async {
-    final res = await http.get(
-      Uri.https('api.myanimelist.net', '/v2/$path', query),
-      headers: {'X-MAL-CLIENT-ID': clientId},
-    );
+    final res = await http
+        .get(
+          Uri.https('api.myanimelist.net', '/v2/$path', query),
+          headers: {'X-MAL-CLIENT-ID': clientId},
+        )
+        .timeout(patience);
     if (res.statusCode != 200) {
       throw Exception('MyAnimeList: HTTP ${res.statusCode}');
     }

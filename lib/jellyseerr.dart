@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'anilist.dart';
 import 'metadata.dart';
+import 'net.dart' show patience;
 import 'settings.dart';
 import 'states.dart';
 import 'ui.dart';
@@ -42,11 +43,13 @@ class Jellyseerr {
   ) async {
     var server = address.trim().replaceFirst(RegExp(r'/+$'), '');
     if (!server.startsWith('http')) server = 'http://$server';
-    final res = await http.post(
-      Uri.parse('$server/api/v1/auth/jellyfin'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'username': name, 'password': password}),
-    );
+    final res = await http
+        .post(
+          Uri.parse('$server/api/v1/auth/jellyfin'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'username': name, 'password': password}),
+        )
+        .timeout(patience);
     if (res.statusCode != 200) throw Exception(_message(res));
     final cookie = RegExp(r'connect\.sid=[^;]+')
         .firstMatch(res.headers['set-cookie'] ?? '')?[0];
@@ -69,9 +72,11 @@ class Jellyseerr {
   Future<dynamic> _call(String path, [Object? body]) async {
     final uri = Uri.parse('$server/api/v1/$path');
     final headers = {'Cookie': cookie, 'Content-Type': 'application/json'};
-    final res = body == null
-        ? await http.get(uri, headers: headers)
-        : await http.post(uri, headers: headers, body: jsonEncode(body));
+    final res =
+        await (body == null
+                ? http.get(uri, headers: headers)
+                : http.post(uri, headers: headers, body: jsonEncode(body)))
+            .timeout(patience);
     if (res.statusCode == 401 || (res.statusCode == 403 && body == null)) {
       // An expired session reads as forbidden; a refused request (no permission, over quota) says why instead.
       signOut();
