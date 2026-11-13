@@ -485,6 +485,30 @@ void main() {
       },
     );
 
+    test('a signed event this room can\'t read is dropped before its signature counts', () async {
+      final r = await relay();
+      final a = join([r]);
+      final inA = Inbox(a);
+      await connected([r], 1);
+      final other = await PartyRoom.create().keys;
+      // Properly signed with the room's tag, by someone without the room's key.
+      r.inject(
+        NostrKey.random().event(
+          createdAt: nowS(),
+          kind: partyEventKind,
+          tags: [
+            ['d', keys.tag],
+          ],
+          content: base64.encode(seal(other.key, 'junk')),
+        ),
+      );
+      await until(() => r.delivered == 1);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // A checked signature would have made the relay usable; the junk never got that far.
+      expect(a.usable.value, 0);
+      expect(inA.messages, isEmpty);
+    });
+
     test('reconnects and resubscribes after the relay drops it', () async {
       final r = await relay();
       final a = join([r]), b = join([r]);

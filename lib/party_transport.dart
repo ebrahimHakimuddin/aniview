@@ -336,23 +336,26 @@ class NostrTransport implements PartyTransport {
             )) {
       if ((_clock() ~/ 1000 - createdAt).abs() > clockSlack) return;
       final known = _seen[id];
-      if (known != sig &&
-          (known != null ||
-              id != NostrKey.eventId(pubkey, createdAt, kind, tags, content) ||
-              !NostrKey.verify(pubkey, id, sig))) {
+      if (known != null) {
+        if (known == sig) relay.markUsable();
         return;
       }
-      relay.markUsable();
-      if (known != null) return;
-      _seen[id] = sig;
-      if (_seen.length > 1024) _seen.remove(_seen.keys.first);
-      if (pubkey == _key.pubkey) return;
+      // AES-GCM first: it's cheap and needs the room key, so an outsider who knows only the tag can't make every
+      // peer run the (pure Dart, ~9 ms) signature check.
       final String text;
       try {
         text = unseal(keys.key, base64.decode(content));
       } catch (_) {
         return;
       }
+      if (id != NostrKey.eventId(pubkey, createdAt, kind, tags, content) ||
+          !NostrKey.verify(pubkey, id, sig)) {
+        return;
+      }
+      relay.markUsable();
+      _seen[id] = sig;
+      if (_seen.length > 1024) _seen.remove(_seen.keys.first);
+      if (pubkey == _key.pubkey) return;
       if (_fromOf(text) != pubkey.substring(0, peerIdLength)) return;
       if (!_incoming.isClosed) _incoming.add(text);
     }
