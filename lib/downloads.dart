@@ -157,6 +157,29 @@ List<Download> readIndex(String json) => [
   for (final entry in jsonDecode(json) as List) ?_tryParse(entry),
 ];
 
+/// The folder a new download of [d] goes in: [Download.exportFolder], unless another show already in [items] uses
+/// that show folder, in which case the show's id is added (`Title [id]/Episode 3-sub`). A show whose earlier
+/// episodes already have a folder keeps using it, so its episodes never split.
+@visibleForTesting
+String newDownloadFolder(Download d, Iterable<Download> items) {
+  final episode = p.posix.basename(d.exportFolder);
+  String? showFolder(Download other) => other.storagePath?.contains('/') == true
+      ? p.posix.dirname(other.storagePath!)
+      : null;
+  for (final other in items) {
+    if (identical(other, d) || other.media['id'] != d.media['id']) continue;
+    if (showFolder(other) case final show?) return '$show/$episode';
+  }
+  final show = p.posix.dirname(d.exportFolder);
+  // Case-blind: Windows, macOS and Android's shared storage treat "Title" and "title" as one folder.
+  final taken = items.any(
+    (other) =>
+        other.media['id'] != d.media['id'] &&
+        showFolder(other)?.toLowerCase() == show.toLowerCase(),
+  );
+  return taken ? '$show [${d.media['id']}]/$episode' : d.exportFolder;
+}
+
 Download? _tryParse(Object? json) {
   try {
     return Download.fromJson(json as Map);
@@ -692,7 +715,7 @@ class Downloads extends ChangeNotifier {
           streams.where((s) => s.audios.isEmpty).firstOrNull ??
           (throw Exception('No downloadable servers for this episode'));
       if (d.storagePath == null && !await _dir(d).exists()) {
-        d.storagePath = d.exportFolder;
+        d.storagePath = newDownloadFolder(d, items);
       }
       final dir = await _dir(d).create(recursive: true);
       var length = Duration.zero; // AniSkip takes any length for a single file
