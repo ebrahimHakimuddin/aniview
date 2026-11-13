@@ -109,13 +109,19 @@ class EpisodeJob : JobService() {
                 }
             }
             if (ids.length() > 0 && from < now) {
-                val aired = anilist(
-                    "query(\$ids:[Int],\$from:Int,\$to:Int){Page(perPage:50){airingSchedules(mediaId_in:\$ids," +
-                        "airingAt_greater:\$from,airingAt_lesser:\$to,sort:TIME){episode media{id title{userPreferred}}}}}",
-                    JSONObject().put("ids", ids).put("from", from).put("to", now + 1),
-                    null,
-                ).getJSONObject("Page").getJSONArray("airingSchedules")
-                for (i in 0 until aired.length()) post(context, aired.getJSONObject(i))
+                // Pages of 50, up to 6 (300 episodes).
+                for (page in 1..6) {
+                    val result = anilist(
+                        "query(\$ids:[Int],\$from:Int,\$to:Int,\$page:Int){Page(page:\$page,perPage:50){" +
+                            "pageInfo{hasNextPage} airingSchedules(mediaId_in:\$ids,airingAt_greater:\$from," +
+                            "airingAt_lesser:\$to,sort:TIME){episode media{id title{userPreferred}}}}}",
+                        JSONObject().put("ids", ids).put("from", from).put("to", now + 1).put("page", page),
+                        null,
+                    ).getJSONObject("Page")
+                    val aired = result.getJSONArray("airingSchedules")
+                    for (i in 0 until aired.length()) post(context, aired.getJSONObject(i))
+                    if (!result.getJSONObject("pageInfo").optBoolean("hasNextPage")) break
+                }
             }
             prefs.edit().putLong("last_check", now).apply()
         }

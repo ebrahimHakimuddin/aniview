@@ -524,23 +524,30 @@ class AniList {
   }
 
   /// Episodes of the shows in [ids] from a week ago through the week ahead (from the start of today), soonest
-  /// first, as {episode, airingAt, media}: one request for both [latestAired] and the schedule.
+  /// first, as {episode, airingAt, media}: one list for both [latestAired] and the schedule. Pages of 50, one
+  /// request apiece, up to 6 (300 episodes).
   static Future<List<Map>> airingAround(Iterable<int> ids) async {
     if (ids.isEmpty) return const [];
     final now = DateTime.now();
     final today =
         DateTime(now.year, now.month, now.day).millisecondsSinceEpoch ~/ 1000;
-    final data = await query(
-      r'query($ids:[Int],$from:Int,$to:Int){Page(perPage:50){airingSchedules(mediaId_in:$ids,'
-      r'airingAt_greater:$from,airingAt_lesser:$to,sort:TIME){episode airingAt media{'
-      '$_media}}}}',
-      {
-        'ids': ids.toSet().toList(),
-        'from': now.millisecondsSinceEpoch ~/ 1000 - 7 * 24 * 3600,
-        'to': today + 7 * 24 * 3600,
-      },
-    );
-    return [...data['Page']['airingSchedules'] as List].cast<Map>();
+    final out = <Map>[];
+    for (var page = 1; page <= 6; page++) {
+      final data = (await query(
+        r'query($ids:[Int],$from:Int,$to:Int,$page:Int){Page(page:$page,perPage:50){pageInfo{hasNextPage} '
+        r'airingSchedules(mediaId_in:$ids,airingAt_greater:$from,airingAt_lesser:$to,sort:TIME){episode airingAt '
+        'media{$_media}}}}',
+        {
+          'ids': ids.toSet().toList(),
+          'from': now.millisecondsSinceEpoch ~/ 1000 - 7 * 24 * 3600,
+          'to': today + 7 * 24 * 3600,
+          'page': page,
+        },
+      ))['Page'];
+      out.addAll((data['airingSchedules'] as List).cast<Map>());
+      if (data['pageInfo']['hasNextPage'] != true) break;
+    }
+    return out;
   }
 
   /// This week's episodes (from the start of today) of the most popular shows airing now, soonest first, as
