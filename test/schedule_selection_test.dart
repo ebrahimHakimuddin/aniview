@@ -86,4 +86,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1 selected'), findsOneWidget);
   });
+
+  group('airingAround', () {
+    tearDown(() => AniList.transport = null);
+
+    test('reads every page, in order', () async {
+      final pages = <Object?>[];
+      AniList.transport = (query, variables) async {
+        pages.add(variables['page']);
+        final page = variables['page'] as int;
+        return {
+          'Page': {
+            'pageInfo': {'hasNextPage': page < 2},
+            'airingSchedules': [
+              _slot(page * 10 + 1, now),
+              _slot(page * 10 + 2, now),
+            ],
+          },
+        };
+      };
+      final slots = await AniList.airingAround([1]);
+      expect(pages, [1, 2]);
+      expect([for (final s in slots) s['media']['id']], [11, 12, 21, 22]);
+    });
+
+    test('stops at 6 pages', () async {
+      var requests = 0;
+      AniList.transport = (query, variables) async {
+        requests++;
+        return {
+          'Page': {
+            'pageInfo': {'hasNextPage': true},
+            'airingSchedules': [_slot(requests, now)],
+          },
+        };
+      };
+      expect(await AniList.airingAround([1]), hasLength(6));
+      expect(requests, 6);
+    });
+  });
 }

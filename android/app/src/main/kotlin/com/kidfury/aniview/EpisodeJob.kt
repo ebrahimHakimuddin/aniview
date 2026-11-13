@@ -104,18 +104,27 @@ class EpisodeJob : JobService() {
                         val entries = lists.getJSONObject(i).getJSONArray("entries")
                         for (j in 0 until entries.length()) ids.put(entries.getJSONObject(j).getInt("mediaId"))
                     }
-                } catch (_: Exception) {
+                } catch (e: HttpException) {
                     // signed out on the web (expired token): still check the recently watched shows
+                    if (e.code !in listOf(400, 401, 403)) return
+                } catch (_: Exception) {
+                    return // offline: last_check stays put and the next run covers this window
                 }
             }
             if (ids.length() > 0 && from < now) {
-                val aired = anilist(
-                    "query(\$ids:[Int],\$from:Int,\$to:Int){Page(perPage:50){airingSchedules(mediaId_in:\$ids," +
-                        "airingAt_greater:\$from,airingAt_lesser:\$to,sort:TIME){episode media{id title{userPreferred}}}}}",
-                    JSONObject().put("ids", ids).put("from", from).put("to", now + 1),
-                    null,
-                ).getJSONObject("Page").getJSONArray("airingSchedules")
-                for (i in 0 until aired.length()) post(context, aired.getJSONObject(i))
+                // Pages of 50, up to 6 (300 episodes).
+                for (page in 1..6) {
+                    val result = anilist(
+                        "query(\$ids:[Int],\$from:Int,\$to:Int,\$page:Int){Page(page:\$page,perPage:50){" +
+                            "pageInfo{hasNextPage} airingSchedules(mediaId_in:\$ids,airingAt_greater:\$from," +
+                            "airingAt_lesser:\$to,sort:TIME){episode media{id title{userPreferred}}}}}",
+                        JSONObject().put("ids", ids).put("from", from).put("to", now + 1).put("page", page),
+                        null,
+                    ).getJSONObject("Page")
+                    val aired = result.getJSONArray("airingSchedules")
+                    for (i in 0 until aired.length()) post(context, aired.getJSONObject(i))
+                    if (!result.getJSONObject("pageInfo").optBoolean("hasNextPage")) break
+                }
             }
             prefs.edit().putLong("last_check", now).apply()
         }
@@ -133,12 +142,15 @@ class EpisodeJob : JobService() {
                 connection.outputStream.use {
                     it.write(JSONObject().put("query", query).put("variables", variables).toString().toByteArray())
                 }
-                if (connection.responseCode != 200) throw Exception("AniList: HTTP ${connection.responseCode}")
+                if (connection.responseCode != 200) throw HttpException(connection.responseCode)
                 return JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getJSONObject("data")
             } finally {
                 connection.disconnect()
             }
         }
+
+        /** A non-200 answer from AniList, with its status [code]. */
+        private class HttpException(val code: Int) : Exception("AniList: HTTP $code")
 
         private fun post(context: Context, airing: JSONObject) {
             if (Build.VERSION.SDK_INT >= 33 &&
