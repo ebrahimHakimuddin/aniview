@@ -87,6 +87,27 @@ Audit was a direct sweep at standard depth: security surfaces (tokens, on-device
 tracker/history persistence, and the new uncommitted features. Not read in depth: `lib/player.dart` internals, `lib/downloads.dart`,
 `lib/social.dart`, `ExoPlayers.kt`, `EpisodeJob.kt`, `DownloadService.kt`, dependency versions (no `pub outdated` run).
 
+## Audit · 2026-11-13 (against `5ceb40e`)
+
+Each plan runs in its own worktree on branch `advisor/<plan>`; the reviewer checks the diff, re-runs analyze and tests,
+and maintains this table. The maintainer merges. All six branches merged together onto `5ceb40e` without conflicts:
+analyze clean, 381 tests passing.
+
+| Plan | Title | Priority | Effort | Depends on | Status |
+|------|-------|----------|--------|------------|--------|
+| 005  | Stop a queued progress save from overwriting a newer one | P0 | S | — | DONE, reviewed (`advisor/005-superseded-queued-saves` `dfd15b3`; awaiting merge) |
+| 006  | Bound every network wait; keep the MyAnimeList session when renewal fails temporarily | P0 | S–M | — | DONE, reviewed (`advisor/006-bound-network-waits` `242da04`; executor died mid-run, finished by the reviewer; awaiting merge) |
+| 007  | Try the next server when one fails before the player loads (iOS, desktop) | P1 | S–M | — | DONE, reviewed (`advisor/007-fallback-before-load` `f0baf73`; tests rewritten by the reviewer; awaiting merge) |
+| 008  | Read every airing slot for Schedule and episode notifications | P1 | S | — (same file as 006, different function) | DONE, reviewed (`advisor/008-read-all-airing-slots` `2f7beac`; Kotlin compiled, not run on a device; awaiting merge) |
+| 009  | Give two shows with the same title separate download folders | P1 | S | — | DONE, reviewed (`advisor/009-download-folder-per-show` `a74df5b`; awaiting merge) |
+| 010  | KickAssAnime: one failing server must not fail the episode | P2 | S | — | DONE, reviewed (`advisor/010-kickassanime-isolate-servers` 14c4098, includes a reviewer follow-up commit; awaiting merge) |
+
+Vetted in the same audit and not planned yet: player errors after load on Android (needs a device), index write
+versus file deletion order in `Downloads.remove` (needs a decision for a full disk), TV pairing without confirmation
+on the TV (needs a UX decision), show titles in analytics page views, desktop "Group related seasons" and analytics,
+MyAnimeList described as read-only in `README.md`/`CONTEXT.md`, no disk cache for posters, `.fvmrc` floating while CI
+pins Flutter 3.47.3.
+
 ## Platform parity audit · 2026-10-27
 
 See [the platform parity report](platform-parity-audit-2026-10-27.md) for the
