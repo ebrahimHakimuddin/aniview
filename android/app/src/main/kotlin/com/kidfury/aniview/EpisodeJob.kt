@@ -104,8 +104,11 @@ class EpisodeJob : JobService() {
                         val entries = lists.getJSONObject(i).getJSONArray("entries")
                         for (j in 0 until entries.length()) ids.put(entries.getJSONObject(j).getInt("mediaId"))
                     }
-                } catch (_: Exception) {
+                } catch (e: HttpException) {
                     // signed out on the web (expired token): still check the recently watched shows
+                    if (e.code !in listOf(400, 401, 403)) return
+                } catch (_: Exception) {
+                    return // offline: last_check stays put and the next run covers this window
                 }
             }
             if (ids.length() > 0 && from < now) {
@@ -139,12 +142,15 @@ class EpisodeJob : JobService() {
                 connection.outputStream.use {
                     it.write(JSONObject().put("query", query).put("variables", variables).toString().toByteArray())
                 }
-                if (connection.responseCode != 200) throw Exception("AniList: HTTP ${connection.responseCode}")
+                if (connection.responseCode != 200) throw HttpException(connection.responseCode)
                 return JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getJSONObject("data")
             } finally {
                 connection.disconnect()
             }
         }
+
+        /** A non-200 answer from AniList, with its status [code]. */
+        private class HttpException(val code: Int) : Exception("AniList: HTTP $code")
 
         private fun post(context: Context, airing: JSONObject) {
             if (Build.VERSION.SDK_INT >= 33 &&
