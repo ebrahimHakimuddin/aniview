@@ -826,16 +826,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
               _reloadRecord();
             },
           ),
-          StartEpisode(:final episode, :final first) => PlayAction(
-            autofocus: isTv,
-            title:
-                '${first ? 'Play' : 'Continue'} Episode ${epNumber(episode.number)}',
-            subtitle: source is Jellyfin
-                ? source!.name
-                : '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
-            onPressed: () =>
-                _playEpisode(_showEpisodes(list!, source), episode),
-          ),
+          StartEpisode(:final episode, :final first, :final rewatch) =>
+            PlayAction(
+              autofocus: isTv,
+              title:
+                  '${rewatch ? 'Rewatch' : (first ? 'Play' : 'Continue')} Episode ${epNumber(episode.number)}',
+              subtitle: source is Jellyfin
+                  ? source!.name
+                  : '${source!.name} · ${dub ? 'Dub' : 'Sub'}',
+              onPressed: () =>
+                  _playEpisode(_showEpisodes(list!, source), episode),
+            ),
           // Holds the button's place while things load.
           null =>
             snap.connectionState == ConnectionState.done ||
