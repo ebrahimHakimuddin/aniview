@@ -46,7 +46,14 @@ class HttpNet implements Net {
     final all = {'User-Agent': userAgent, ...?headers};
     if (!_h2Hosts.contains(uri.host)) {
       final res = await _send(uri, all);
-      if (res.statusCode == 200) return http.Response.fromStream(res);
+      if (res.statusCode == 200) {
+        return http.Response.bytes(
+          await _body(res.stream, uri),
+          200,
+          headers: res.headers,
+          request: res.request,
+        );
+      }
       await res.stream.drain<void>();
       if (res.statusCode != 403) {
         throw HttpException('HTTP ${res.statusCode}', uri: uri);
@@ -112,7 +119,7 @@ Future<Stream<List<int>>> streamBytes(
   final uri = Uri.parse(url);
   if (!_h2Hosts.contains(uri.host)) {
     final res = await _send(uri, {'User-Agent': userAgent, ...?headers});
-    if (res.statusCode == 200) return res.stream;
+    if (res.statusCode == 200) return _unquiet(res.stream, uri);
     await res.stream.drain<void>();
     if (res.statusCode != 403) {
       throw HttpException('HTTP ${res.statusCode}', uri: uri);
@@ -126,26 +133,11 @@ Future<Stream<List<int>>> streamBytes(
 Future<http.StreamedResponse> openGet(
   String url, {
   Map<String, String>? headers,
-}) => _send(Uri.parse(url), {'User-Agent': userAgent, ...?headers});
-
-/// A GET answered within [patience], whose body fails with an [HttpException] once it goes quiet for as long.
-Future<http.StreamedResponse> _send(
-  Uri uri,
-  Map<String, String> headers,
-) async {
-  final res = await httpClient
-      .send(http.Request('GET', uri)..headers.addAll(headers))
-      .timeout(
-        patience,
-        onTimeout: () => throw HttpException('Timed out', uri: uri),
-      );
+}) async {
+  final uri = Uri.parse(url);
+  final res = await _send(uri, {'User-Agent': userAgent, ...?headers});
   return http.StreamedResponse(
-    res.stream.timeout(
-      patience,
-      onTimeout: (sink) => sink
-        ..addError(HttpException('Timed out', uri: uri))
-        ..close(),
-    ),
+    _unquiet(res.stream, uri),
     res.statusCode,
     contentLength: res.contentLength,
     request: res.request,
@@ -154,6 +146,39 @@ Future<http.StreamedResponse> _send(
     persistentConnection: res.persistentConnection,
     reasonPhrase: res.reasonPhrase,
   );
+}
+
+/// A GET answered within [patience], or an [HttpException].
+Future<http.StreamedResponse> _send(Uri uri, Map<String, String> headers) =>
+    httpClient
+        .send(http.Request('GET', uri)..headers.addAll(headers))
+        .timeout(
+          patience,
+          onTimeout: () => throw HttpException('Timed out', uri: uri),
+        );
+
+/// [body] as it arrives, failing with an [HttpException] once it goes quiet for [patience].
+Stream<List<int>> _unquiet(Stream<List<int>> body, Uri uri) => body.timeout(
+  patience,
+  onTimeout: (sink) => sink
+    ..addError(HttpException('Timed out', uri: uri))
+    ..close(),
+);
+
+/// All of [body], or an [HttpException] once it goes quiet for [patience].
+// Not through [_unquiet]: under a widget test's clock a Stream.timeout only ends once the test does.
+Future<Uint8List> _body(Stream<List<int>> body, Uri uri) async {
+  final bytes = BytesBuilder(copy: false);
+  final parts = StreamIterator(body);
+  try {
+    while (await parts.moveNext().timeout(patience)) {
+      bytes.add(parts.current);
+    }
+  } on TimeoutException {
+    parts.cancel().ignore();
+    throw HttpException('Timed out', uri: uri);
+  }
+  return bytes.takeBytes();
 }
 
 Future<Uint8List> fetchBytes(String url, {Map<String, String>? headers}) =>

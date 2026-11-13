@@ -137,7 +137,7 @@ class Extensions {
   static Future<void> install(ExtensionInfo extension) async {
     final res = await http
         .get(Uri.parse('${extension.repo.base}/apk/${extension.apk}'))
-        .timeout(patience);
+        .timeout(patience * 10); // several MB, all of it
     if (res.statusCode != 200) {
       throw HttpException('HTTP ${res.statusCode}');
     }
