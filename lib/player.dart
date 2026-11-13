@@ -18,6 +18,7 @@ import 'filler.dart';
 import 'jellyfin.dart';
 import 'metadata.dart';
 import 'party.dart';
+import 'party_chat.dart';
 import 'party_player.dart';
 import 'party_transport.dart' show PartyRoom;
 import 'party_ui.dart';
@@ -38,6 +39,7 @@ import 'upscaler.dart';
 part 'desktop/player_view.dart';
 part 'player/upscaling.dart';
 part 'player/party.dart';
+part 'player/chat.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -94,6 +96,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late PartyPlayer? _party = widget.party?.controls as PartyPlayer?;
   StreamSubscription<void>? _partyChanges;
   bool _partyStarting = false, _partyLeaving = false;
+
+  /// The party's chat bar (phones) or panel (desktop) is open (see player/chat.dart).
+  bool _chatOpen = false;
   bool get _inParty => _party?.active ?? false;
 
   /// A guest follows the host's episode and the host's skips.
@@ -383,6 +388,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
   /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
   bool _onKey(KeyEvent event) {
+    if (_typing) return false; // the party's chat field has the keyboard
     if (isDesktop && !isTv) return _onDesktopKey(event);
     if (!isTv || !mounted) return false;
     // Releasing a held left/right lands the scrub with one seek.
@@ -498,18 +504,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// controls and the cursor go away while it plays.
   Widget _pointer(Widget child) => !isDesktop
       ? child
-      : Listener(
-          onPointerSignal: (e) {
-            if (e is PointerScrollEvent) {
-              _nudgeVolume(e.scrollDelta.dy < 0 ? .05 : -.05);
-            }
-          },
-          child: MouseRegion(
-            cursor: controls || !player.state.playing
-                ? MouseCursor.defer
-                : SystemMouseCursors.none,
-            onHover: (_) => _showControls(),
-            child: child,
+      // The party's chat panel, when open, beside it (see player/chat.dart).
+      : _besideChat(
+          Listener(
+            onPointerSignal: (e) {
+              if (e is PointerScrollEvent) {
+                _nudgeVolume(e.scrollDelta.dy < 0 ? .05 : -.05);
+              }
+            },
+            child: MouseRegion(
+              cursor: controls || !player.state.playing
+                  ? MouseCursor.defer
+                  : SystemMouseCursors.none,
+              onHover: (_) => _showControls(),
+              child: child,
+            ),
           ),
         );
 
@@ -1174,7 +1183,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     // With the controls hidden, the remote's keys go to the player itself (see _onKey).
-    if ((isTv || isDesktop) && !controls && !_keys.hasPrimaryFocus) {
+    if ((isTv || isDesktop) &&
+        !controls &&
+        !_keys.hasPrimaryFocus &&
+        !_typing) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
             !controls &&
@@ -1224,10 +1236,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // On TV, Back first hides the controls, like Netflix.
     return PopScope(
       // A host's way out ends the room for everyone: asked first (see player/party.dart).
-      canPop: !(isTv && controls && !locked) && !_hosting,
+      canPop: !(isTv && controls && !locked) && !_hosting && !_chatTakesBack,
       // Saved on the way out, not in dispose: the page underneath reloads history as soon as this pops.
       // Paused too, or it plays on through the exit animation over whatever comes next.
       onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _chatTakesBack) return _toggleChat();
         if (!didPop && _hosting && !(isTv && controls && !locked)) {
           _leaveHosting().ignore();
           return;
@@ -1242,6 +1255,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       child: Scaffold(
         key: _scaffold,
         backgroundColor: Colors.black,
+        // The party's chat bar sits over the keyboard; the video stays as it is behind them.
+        resizeToAvoidBottomInset: false,
         endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
         // Paused while the episodes are open, except on desktop, where you browse them as it plays.
         onEndDrawerChanged: isDesktop ? null : _onDialog,
@@ -1428,6 +1443,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
               if (_inParty && (!controls || locked)) _partyIndicator(),
+              ?_chatOverlay(size),
               IgnorePointer(
                 ignoring: !controls,
                 // Hidden controls can't hold D-pad focus.
@@ -1491,6 +1507,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 ),
+              ?_tvReactions(),
+              ..._chatBar(),
               if (error != null) _errorView(),
             ],
           ),
@@ -2114,6 +2132,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               const SizedBox(width: 4),
               Expanded(child: _titles(tv: false)),
               _partyButton(),
+              if (_inParty) _chatButton(),
               ..._menus(),
             ],
           ),

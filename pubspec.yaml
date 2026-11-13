@@ -26,6 +26,7 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.6
   pointycastle: ^4.0.0
+  qr: ^4.0.1
   screen_brightness: ^2.1.11
   shared_preferences: ^2.5.5
   window_manager: ^0.5.2
