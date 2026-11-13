@@ -28,6 +28,7 @@ extension _DeskPlayer on _PlayerScreenState {
                 const SizedBox(width: 8),
                 Expanded(child: _titles(tv: false)),
                 _partyButton(),
+                if (_inParty) _chatButton(),
                 if (_episodes.length > 1)
                   IconButton(
                     tooltip: 'Episodes',
