@@ -198,6 +198,23 @@ void main() {
     expect(tooSlow(dropped: 5, shown: 0), isTrue);
   });
 
+  test('an Android TV box is offered off and fast only', () {
+    expect(upscaleTiers(tv: false), [
+      Upscale.off,
+      Upscale.fast,
+      Upscale.quality,
+    ]);
+    expect(upscaleTiers(tv: true), [Upscale.off, Upscale.fast]);
+    // Quality saved on another layout (or before) runs fast there.
+    expect(offeredTier(Upscale.quality, tv: true), Upscale.fast);
+    for (final t in [Upscale.off, Upscale.fast]) {
+      expect(offeredTier(t, tv: true), t);
+    }
+    for (final t in Upscale.values) {
+      expect(offeredTier(t, tv: false), t);
+    }
+  });
+
   test('tiers store by a stable name', () {
     expect(Upscale.values.map((t) => t.name), ['off', 'fast', 'quality']);
     for (final t in Upscale.values) {
