@@ -915,9 +915,12 @@ class ExoPlayer {
   }
 
   Future<void> dispose() async {
-    await _ready;
+    // A backend that never started with nothing to fall back to (iOS, desktop) must still let the player close.
+    try {
+      await _ready;
+    } catch (_) {}
     _disposed = true;
-    await _backend.dispose();
+    await _release(_backend);
     stream._close();
     texture.dispose();
     cues.dispose();

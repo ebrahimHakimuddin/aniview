@@ -230,6 +230,16 @@ void main() {
     },
   );
 
+  test(
+    'a player that never started and has no fallback still closes',
+    () async {
+      final mpv = _Backend(VideoBackend.mediaKit, startFails: true);
+      final player = ExoPlayer(mpv);
+      await player.dispose();
+      expect(mpv.disposed, isTrue);
+    },
+  );
+
   testWidgets('mpv that can\'t start plays on Media3, and says so', (
     tester,
   ) async {
