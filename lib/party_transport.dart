@@ -239,7 +239,7 @@ class NostrTransport implements PartyTransport {
   static const defaultRelays = [
     'wss://relay.primal.net',
     'wss://relay.snort.social',
-    'wss://offchain.pub',
+    'wss://relay.nostr.net',
   ];
 
   final PartyRoom room;
