@@ -290,6 +290,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// Phones: episodes picked for a bulk action, by number.
   final picked = Selection<num, Episode>((e) => e.number);
+  bool _picking = false;
 
   /// Desktop: the page's scroll, a marker just above the episode rows, and the episode last jumped to (lit for a
   /// moment).
@@ -310,7 +311,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
   void initState() {
     super.initState();
     Analytics.screen('/details', title: titleOf(media));
-    picked.addListener(() => setState(() {}));
+    picked.addListener(() {
+      // Only entering or leaving selection rebuilds the page; the episode rows and the bar listen for the rest.
+      if (picked.active != _picking) {
+        setState(() => _picking = picked.active);
+      }
+    });
     _loadSites();
     Filler.of(media).then((kinds) {
       if (mounted && kinds.isNotEmpty) setState(() => filler = kinds);
@@ -582,7 +588,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   /// Phones, while picking episodes: download them, delete their downloads, or mark them (un)watched.
   Widget _pickedActions() => ListenableBuilder(
-    listenable: Downloads.instance,
+    listenable: Listenable.merge([Downloads.instance, picked]),
     builder: (context, _) => FutureBuilder(
       future: episodes,
       builder: (context, snap) {
@@ -1822,13 +1828,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final saved = eps.canPlay(episode);
     // Phones pick several to act on at once; TV keeps one episode's actions sheet.
     final picking = picked.active && !isTv;
-    return _EpisodeTile(
+    Widget tile(bool? selected) => _EpisodeTile(
       episode,
       kind: filler[episode.number],
       watched: watched,
       upNext: episode == plan.upNext,
       resumedPart: plan.resumedPart(episode),
-      selected: picking ? picked.has(episode) : null,
+      selected: selected,
       onDiscuss: isTv || picking || !show.onAniList
           ? null
           : () => openEpisodeDiscussion(
@@ -1864,7 +1870,70 @@ class _DetailsScreenState extends State<DetailsScreen> {
         _playEpisode(eps, episode);
       },
     );
+    return _PickedRow(
+      picked: picked,
+      episode: episode,
+      picking: picking,
+      builder: tile,
+    );
   }
+}
+
+/// An episode row that hears picks itself: a pick redraws only the rows whose state it changed, not the page or the
+/// other rows. The same widget whether picking or not, so entering or leaving selection updates each row in place
+/// instead of tearing it down.
+class _PickedRow extends StatefulWidget {
+  const _PickedRow({
+    required this.picked,
+    required this.episode,
+    required this.picking,
+    required this.builder,
+  });
+
+  final Selection<num, Episode> picked;
+  final Episode episode;
+
+  /// Whether the page is picking; [builder] gets null for "picked" when it isn't.
+  final bool picking;
+  final Widget Function(bool? picked) builder;
+
+  @override
+  State<_PickedRow> createState() => _PickedRowState();
+}
+
+class _PickedRowState extends State<_PickedRow> {
+  late bool _has = widget.picked.has(widget.episode);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.picked.addListener(_changed);
+  }
+
+  @override
+  void didUpdateWidget(_PickedRow old) {
+    super.didUpdateWidget(old);
+    if (old.picked != widget.picked) {
+      old.picked.removeListener(_changed);
+      widget.picked.addListener(_changed);
+    }
+    _has = widget.picked.has(widget.episode);
+  }
+
+  void _changed() {
+    final has = widget.picked.has(widget.episode);
+    if (has != _has) setState(() => _has = has);
+  }
+
+  @override
+  void dispose() {
+    widget.picked.removeListener(_changed);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.builder(widget.picking ? _has : null);
 }
 
 /// Your AniList entry for the show: status and episodes watched, with a bar; tap to edit.
@@ -2609,20 +2678,24 @@ class _DownloadButton extends StatelessWidget {
           icon: Icon(Icons.schedule_rounded, color: scheme.onSurfaceVariant),
           onPressed: () => Downloads.instance.remove(d!),
         ),
-        DownloadStatus.downloading => IconButton(
-          tooltip: '${(d!.progress * 100).round()}% · tap to cancel',
-          onPressed: () => Downloads.instance.remove(d),
-          icon: SizedBox.square(
-            dimension: 24,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: d.progress == 0 ? null : d.progress,
-                  strokeWidth: 2.5,
-                ),
-                const Icon(Icons.stop_rounded, size: 14),
-              ],
+        // A progress tick redraws this episode's button, not every episode's.
+        DownloadStatus.downloading => ListenableBuilder(
+          listenable: d!.ticks,
+          builder: (context, _) => IconButton(
+            tooltip: '${(d.progress * 100).round()}% · tap to cancel',
+            onPressed: () => Downloads.instance.remove(d),
+            icon: SizedBox.square(
+              dimension: 24,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: d.progress == 0 ? null : d.progress,
+                    strokeWidth: 2.5,
+                  ),
+                  const Icon(Icons.stop_rounded, size: 14),
+                ],
+              ),
             ),
           ),
         ),
