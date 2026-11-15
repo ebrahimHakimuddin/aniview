@@ -84,12 +84,16 @@ class _DeskShellState extends State<DeskShell> {
   final _search = ValueNotifier(const DeskSearchRequest(''));
   final _field = TextEditingController();
   final _fieldFocus = FocusNode();
+
+  /// Ticks when any stack pushed or popped. Only the back button follows it: rebuilding the shell would rebuild every
+  /// open page in every place (a Navigator rebuilt rebuilds all its routes), mid-transition.
+  final _stacks = ValueNotifier(0);
   // One each: an observer can watch only one Navigator.
   late final _observers = {
     for (final s in DeskSection.values)
       s: _Changes(
         onChange: () {
-          if (mounted) setState(() {});
+          if (mounted) _stacks.value++;
         },
         onTitle: (title, pushed) {
           final stack = _pageTitles[s]!;
@@ -126,6 +130,7 @@ class _DeskShellState extends State<DeskShell> {
     onDesktopSearch = null;
     deskPageContext = null;
     _search.dispose();
+    _stacks.dispose();
     _field.dispose();
     _fieldFocus.dispose();
     super.dispose();
@@ -253,21 +258,24 @@ class _DeskShellState extends State<DeskShell> {
           Expanded(
             child: Column(
               children: [
-                _TopBar(
-                  controller: _field,
-                  focus: _fieldFocus,
-                  canGoBack:
-                      (_nav?.canPop() ?? false) ||
-                      section == DeskSection.search,
-                  onBack: _back,
-                  onSearch: (text) => _ask(
-                    text,
-                    section == DeskSection.search
-                        ? _search.value.filters
-                        : const SearchFilters(),
+                ListenableBuilder(
+                  listenable: _stacks,
+                  builder: (context, _) => _TopBar(
+                    controller: _field,
+                    focus: _fieldFocus,
+                    canGoBack:
+                        (_nav?.canPop() ?? false) ||
+                        section == DeskSection.search,
+                    onBack: _back,
+                    onSearch: (text) => _ask(
+                      text,
+                      section == DeskSection.search
+                          ? _search.value.filters
+                          : const SearchFilters(),
+                    ),
+                    onRefresh: widget.onRefresh,
+                    actions: widget.actions,
                   ),
-                  onRefresh: widget.onRefresh,
-                  actions: widget.actions,
                 ),
                 Expanded(
                   // Switching place is the app's most-used move, so it's instant: no fade between them.
