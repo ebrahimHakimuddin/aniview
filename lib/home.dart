@@ -98,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen>
       onRemoteSearch = _remoteSearch;
       onRemotePlay = (id) => _land(RemoteIntent.remotePlay, id);
       onLeftEdge = () {
-        if (ModalRoute.of(context)?.isCurrent != true) return false;
+        if (!_onTop) return false;
         _openDrawer();
         return true;
       };
@@ -108,11 +108,15 @@ class _HomeScreenState extends State<HomeScreen>
       await checkForUpdate(context, quiet: true);
       if (!mounted) return;
       await maybeShowWhatsNew(context);
-      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+      if (mounted && _onTop) {
         await maybeShowSubscriptionSurvey(context);
       }
     });
   }
+
+  /// Nothing is open over Home (the navigator's first route). Not ModalRoute.of(context)?.isCurrent: that makes Home
+  /// depend on its route, so every page opened over Home, and every close, rebuilt Home and the whole feed under it.
+  bool get _onTop => !Navigator.of(context).canPop();
 
   /// The remote's search key: voice search on the Search page, from anywhere but the player.
   void _voiceSearch() {
@@ -139,6 +143,7 @@ class _HomeScreenState extends State<HomeScreen>
     feed.dispose();
     _tabCurve.dispose();
     _tabIn.dispose();
+    _drawerOpen.dispose();
     for (final node in [..._drawer, ..._pageFocus]) {
       node.dispose();
     }
@@ -559,12 +564,13 @@ class _HomeScreenState extends State<HomeScreen>
     _pages.length,
     (i) => FocusNode(debugLabel: 'drawer $i'),
   );
-  bool _drawerOpen = false;
+  // A notifier, not state: opening or closing the drawer rebuilds only the drawer, not every visited page.
+  final _drawerOpen = ValueNotifier(false);
   FocusNode? _lastInPage;
 
   void _openDrawer() {
     _lastInPage = FocusManager.instance.primaryFocus;
-    setState(() => _drawerOpen = true);
+    _drawerOpen.value = true;
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _drawer[tab].requestFocus(),
     );
@@ -573,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen>
   /// Back into the page: where focus was, or the page's first focusable thing.
   void _closeDrawer({bool fresh = false}) {
     final back = _lastInPage;
-    setState(() => _drawerOpen = false);
+    _drawerOpen.value = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!fresh && back != null && back.context?.mounted == true) {
         back.requestFocus();
@@ -632,7 +638,7 @@ class _HomeScreenState extends State<HomeScreen>
     canPop: false,
     onPopInvokedWithResult: (didPop, _) {
       if (didPop) return;
-      if (!_drawerOpen) return _openDrawer();
+      if (!_drawerOpen.value) return _openDrawer();
       if (tab != 0) return _tvSelect(0);
       SystemNavigator.pop();
     },
@@ -653,20 +659,23 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           // The drawer only takes focus while it's open, so Up and Down never wander into it.
-          ExcludeFocus(
-            excluding: !_drawerOpen,
-            child: Focus(
-              canRequestFocus: false,
-              skipTraversal: true,
-              onKeyEvent: _drawerKey,
-              child: FutureBuilder(
-                future: feed.viewer,
-                builder: (context, snap) => _TvDrawer(
-                  open: _drawerOpen,
-                  selected: tab,
-                  focusNodes: _drawer,
-                  avatar: snap.data?['avatar']?['large'] as String?,
-                  onSelect: _tvSelect,
+          ValueListenableBuilder(
+            valueListenable: _drawerOpen,
+            builder: (context, open, _) => ExcludeFocus(
+              excluding: !open,
+              child: Focus(
+                canRequestFocus: false,
+                skipTraversal: true,
+                onKeyEvent: _drawerKey,
+                child: FutureBuilder(
+                  future: feed.viewer,
+                  builder: (context, snap) => _TvDrawer(
+                    open: open,
+                    selected: tab,
+                    focusNodes: _drawer,
+                    avatar: snap.data?['avatar']?['large'] as String?,
+                    onSelect: _tvSelect,
+                  ),
                 ),
               ),
             ),

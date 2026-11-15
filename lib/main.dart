@@ -39,9 +39,10 @@ Future<void> main() async {
     loadSystemAccent(),
     openPosterCache(),
     AndroidApp.buttonNavigation().then((v) => buttonNavigation = v),
+    // Nothing above reads the layout while loading, so its platform call needn't wait its turn.
+    detectTv(layout: Settings.layout),
   ]);
   if (isDesktop) await setupWindow();
-  await detectTv(layout: Settings.layout);
   // Phones find it to pair as a remote and sign it in.
   if (deviceIsTv) TvLink.start().ignore();
   runApp(const App());
