@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:aniview/net.dart';
@@ -77,5 +78,18 @@ void main() {
         emitsError(isA<HttpException>()),
       ]),
     );
+  });
+
+  test('decodeJson decodes a big body off the UI isolate the same as here', () async {
+    final list = {
+      'data': [
+        for (var i = 0; i < 2000; i++)
+          {'id': i, 'title': 'Show $i', 'score': i / 3, 'tags': ['a', null]},
+      ],
+    };
+    final big = jsonEncode(list), small = '{"a":[1,2.5,"x",null,true]}';
+    expect(big.length, greaterThan(32 * 1024));
+    expect(await decodeJson(big), jsonDecode(big));
+    expect(await decodeJson(small), jsonDecode(small));
   });
 }

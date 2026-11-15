@@ -295,6 +295,9 @@ String oneVariant(String master, {int maxHeight = 0}) {
   ].join('\n');
 }
 
+// Built once: the relay runs on the UI isolate, and a media playlist has a line per segment.
+final _uriAttr = RegExp(r'URI="[^"]+"'), _uriValue = RegExp(r'URI="([^"]+)"');
+
 /// Points every URI in [playlist] back through [proxy]: entries of a master playlist stay `.m3u8`,
 /// entries of a media playlist (segments, keys, init maps) become `.ts`. [key], when given, is where every
 /// #EXT-X-KEY points instead.
@@ -316,7 +319,7 @@ String rewritePlaylist(
         final trimmed = line.trim();
         if (trimmed.isEmpty) return line;
         if (key != null && trimmed.startsWith('#EXT-X-KEY')) {
-          return trimmed.replaceFirst(RegExp(r'URI="[^"]+"'), 'URI="$key"');
+          return trimmed.replaceFirst(_uriAttr, 'URI="$key"');
         }
         if (trimmed.startsWith('#')) {
           final uriExt =
@@ -325,7 +328,7 @@ String rewritePlaylist(
               ? 'vtt.m3u8'
               : ext;
           return trimmed.replaceAllMapped(
-            RegExp(r'URI="([^"]+)"'),
+            _uriValue,
             (m) => 'URI="${proxy(base.resolve(m[1]!).toString(), uriExt)}"',
           );
         }

@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'anilist.dart';
 import 'desktop/sign_in.dart';
-import 'net.dart' show patience;
+import 'net.dart' show decodeJson, patience;
 import 'platform.dart';
 
 /// MyAnimeList's API v2: public browsing, a stand-in for AniList's when it is down, and (signed in) your list.
@@ -174,7 +174,8 @@ class MAL {
     if (res.statusCode ~/ 100 != 2) {
       throw Exception('MyAnimeList: HTTP ${res.statusCode}');
     }
-    return res.body.isEmpty ? {} : jsonDecode(res.body);
+    // The whole list comes 1000 entries a page.
+    return res.body.isEmpty ? {} : await decodeJson(res.body);
   }
 
   /// {name, avatar:{large}} in AniList's shape.
@@ -337,7 +338,7 @@ class MAL {
     if (res.statusCode != 200) {
       throw Exception('MyAnimeList: HTTP ${res.statusCode}');
     }
-    return jsonDecode(res.body);
+    return await decodeJson(res.body);
   }
 
   static const _formats = {

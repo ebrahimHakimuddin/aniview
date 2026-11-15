@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -9,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'desktop/sign_in.dart';
-import 'net.dart' show patience;
+import 'net.dart' show decodeJson, patience;
 import 'pairing.dart';
 import 'platform.dart';
 import 'settings.dart' show Settings, TitleLanguage;
@@ -239,13 +238,7 @@ class AniList {
         'AniList is getting too many requests. Try again in ${wait}s',
       );
     }
-    // A whole list is hundreds of KB: decoded on the UI thread it drops frames (a back animation, a scroll).
-    final text = res.body;
-    final body =
-        (text.length > 32 * 1024
-                ? await Isolate.run(() => jsonDecode(text))
-                : jsonDecode(text))
-            as Map<String, dynamic>;
+    final body = await decodeJson(res.body) as Map<String, dynamic>;
     final errors = body['errors'] as List?;
     if (errors != null && errors.isNotEmpty) {
       final message = errors.first['message'] as String;
