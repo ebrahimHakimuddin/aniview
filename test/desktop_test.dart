@@ -353,6 +353,41 @@ void main() {
     expect((menu.dy - at.dy).abs(), lessThan(40));
   });
 
+  testWidgets('a poster builds its hover controls only while hovered', (
+    tester,
+  ) async {
+    await shellLike(
+      tester,
+      Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 172,
+          child: DeskPoster({
+            'id': 1,
+            'title': {'userPreferred': 'A show'},
+          }),
+        ),
+      ),
+    );
+    expect(find.byTooltip('Watch next episode'), findsNothing);
+    // A desktop's highlights; the test platform defaults to a phone's.
+    FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.alwaysTraditional;
+    addTearDown(
+      () => FocusManager.instance.highlightStrategy =
+          FocusHighlightStrategy.automatic,
+    );
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: tester.getCenter(find.text('A show')));
+    await mouse.moveTo(tester.getCenter(find.byType(AspectRatio)));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Watch next episode'), findsOneWidget);
+    await mouse.moveTo(const Offset(1200, 700));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Watch next episode'), findsNothing);
+    await mouse.removePointer();
+  });
+
   for (final grouped in [true, false]) {
     testWidgets(
       'the desktop details page shows ${grouped ? 'its seasons' : 'related shows'} '

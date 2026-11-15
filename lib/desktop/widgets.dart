@@ -350,15 +350,22 @@ class DeskPoster extends StatelessWidget {
                           bottom: 0,
                           child: _Progress(watchedShare(progress, total)),
                         ),
-                      AnimatedOpacity(
-                        opacity: hovered ? 1 : 0,
+                      // Built only while shown or fading out: a grid of posters doesn't each carry a hidden set of
+                      // buttons, tooltips and a parsed synopsis.
+                      AnimatedSwitcher(
                         duration: motionMs(context, 140),
-                        child: _HoverOverlay(
-                          media: media,
-                          onPlay: () => _open(context, play: true),
-                          onChanged: onChanged,
-                          showAdd: !picking,
+                        layoutBuilder: (current, previous) => Stack(
+                          fit: StackFit.expand,
+                          children: [...previous, ?current],
                         ),
+                        child: hovered
+                            ? _HoverOverlay(
+                                media: media,
+                                onPlay: () => _open(context, play: true),
+                                onChanged: onChanged,
+                                showAdd: !picking,
+                              )
+                            : const SizedBox.shrink(),
                       ),
                       if (picking || (hovered && onToggle != null))
                         Positioned(
@@ -932,8 +939,9 @@ class _DeskHeroState extends State<DeskHero> {
       480.0,
     );
     return MouseRegion(
-      onEnter: (_) => setState(() => hovered = true),
-      onExit: (_) => setState(() => hovered = false),
+      // Only the turning timer reads it: no rebuild of the banner as the pointer crosses it.
+      onEnter: (_) => hovered = true,
+      onExit: (_) => hovered = false,
       child: SizedBox(
         height: height,
         child: Stack(
@@ -1131,11 +1139,14 @@ class ScrollArrows extends StatefulWidget {
 
 class _ScrollArrowsState extends State<ScrollArrows> {
   final controller = ScrollController();
-  bool hovered = false;
+
+  /// A notifier, not state: the pointer coming over a row shows its arrows without rebuilding every card in it.
+  final hovered = ValueNotifier(false);
 
   @override
   void dispose() {
     controller.dispose();
+    hovered.dispose();
     super.dispose();
   }
 
@@ -1166,23 +1177,28 @@ class _ScrollArrowsState extends State<ScrollArrows> {
   Widget build(BuildContext context) {
     final c = controller;
     return MouseRegion(
-      onEnter: (_) => setState(() => hovered = true),
-      onExit: (_) => setState(() => hovered = false),
+      onEnter: (_) => hovered.value = true,
+      onExit: (_) => hovered.value = false,
       child: Stack(
         children: [
           widget.builder(c),
-          if (hovered)
-            ListenableBuilder(
-              listenable: c,
-              builder: (context, _) => Stack(
-                children: [
-                  if (c.hasClients && c.offset > 0)
-                    _arrow(-1, Icons.chevron_left_rounded),
-                  if (c.hasClients && c.offset < c.position.maxScrollExtent)
-                    _arrow(1, Icons.chevron_right_rounded),
-                ],
-              ),
-            ),
+          ValueListenableBuilder(
+            valueListenable: hovered,
+            builder: (context, on, _) => !on
+                ? const SizedBox.shrink()
+                : ListenableBuilder(
+                    listenable: c,
+                    builder: (context, _) => Stack(
+                      children: [
+                        if (c.hasClients && c.offset > 0)
+                          _arrow(-1, Icons.chevron_left_rounded),
+                        if (c.hasClients &&
+                            c.offset < c.position.maxScrollExtent)
+                          _arrow(1, Icons.chevron_right_rounded),
+                      ],
+                    ),
+                  ),
+          ),
         ],
       ),
     );
