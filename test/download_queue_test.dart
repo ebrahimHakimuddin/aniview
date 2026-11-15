@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:aniview/downloads.dart';
 import 'package:aniview/downloads_view.dart';
 import 'package:aniview/sources.dart';
+import 'package:aniview/subtitles.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Download download(
@@ -278,5 +279,76 @@ void main() {
         'no servers',
       );
     });
+  });
+
+  test(
+    'entry finds each episode after adds, replacements, removals and a reload',
+    () {
+      final queue = DownloadQueue([
+        download(1, 1, status: DownloadStatus.done),
+        download(
+          1,
+          1,
+          status: DownloadStatus.failed,
+        ), // a duplicate an old index can hold
+        download(1, 2, dub: true),
+      ]);
+      final first = queue.items[0], duplicate = queue.items[1];
+      expect(queue.entry({'id': 1}, 1, false), same(first));
+      expect(queue.entry({'id': 1}, 2, true), same(queue.items[2]));
+      expect(queue.entry({'id': 1}, 2, false), isNull);
+      expect(queue.entry({'id': 1}, 2.0, true), same(queue.items[2]));
+
+      enqueue(queue, [3]);
+      expect(queue.entry({'id': 1}, 3, false), same(queue.items.last));
+
+      queue.remove(first);
+      expect(queue.entry({'id': 1}, 1, false), same(duplicate));
+      enqueue(queue, [1]); // the failed one is replaced in place
+      final replaced = queue.entry({'id': 1}, 1, false)!;
+      expect(replaced, isNot(same(duplicate)));
+      expect(queue.items, contains(replaced));
+      queue.remove(replaced);
+      expect(queue.entry({'id': 1}, 1, false), isNull);
+
+      final reloaded = DownloadQueue(
+        readIndex(jsonEncode([for (final d in queue.items) d.toJson()])),
+      );
+      for (final d in reloaded.items) {
+        expect(reloaded.entry(d.media, d.number, d.dub), same(d));
+      }
+      expect(reloaded.entry({'id': 1}, 1, false), isNull);
+
+      // Straight to the list, as the episode actions tests do.
+      queue.items.add(download(5, 1));
+      expect(queue.entry({'id': 5}, 1, false), same(queue.items.last));
+
+      queue.clear();
+      expect(queue.entry({'id': 1}, 3, false), isNull);
+    },
+  );
+
+  test('a long season encodes off the UI isolate exactly as here', () async {
+    List<Episode> season(int n) => [
+      for (var i = 1; i <= n; i++)
+        Episode(i, ref: {'id': 'e$i'}, title: 'Ep "$i"', overview: 'é\n$i'),
+    ];
+    for (final n in [3, 1200]) {
+      expect(await encodeSeason(season(n)), jsonEncode(season(n)));
+    }
+  });
+
+  test('a big subtitle file parses off the UI isolate exactly as here', () async {
+    String srt(int n) => [
+      for (var i = 1; i <= n; i++)
+        '$i\n00:${(i ~/ 60 % 60).toString().padLeft(2, '0')}:${(i % 60).toString().padLeft(2, '0')},500 --> '
+            '00:${(i ~/ 60 % 60).toString().padLeft(2, '0')}:${(i % 60).toString().padLeft(2, '0')},900\n<i>Line $i</i>\n',
+    ].join('\n');
+    for (final text in [srt(3), srt(3000)]) {
+      final cues = await cuesOf(text, 'srt');
+      expect(cues, isNotEmpty);
+      expect(cues, parseCues(text, 'srt'));
+    }
+    expect(srt(3000).length, greaterThan(32 * 1024));
   });
 }

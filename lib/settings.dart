@@ -1922,8 +1922,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           builder: (context, _) => DestructiveTile(
             icon: Icons.download_for_offline_outlined,
             title: 'Delete all downloads',
-            subtitle: Text(
-              '${formatBytes(Downloads.instance.totalBytes)} used on this device',
+            // Grows as a download runs: its progress ticks, not the list's changes.
+            subtitle: ListenableBuilder(
+              listenable: Downloads.instance.ticks,
+              builder: (context, _) => Text(
+                '${formatBytes(Downloads.instance.totalBytes)} used on this device',
+              ),
             ),
             onTap: Downloads.instance.items.isEmpty
                 ? null

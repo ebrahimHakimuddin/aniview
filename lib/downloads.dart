@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -78,6 +80,11 @@ class Download {
   /// The copy saved to the gallery, deleted with the download.
   String? galleryUri;
 
+  /// Fires on this download's progress updates ([progress], [bytes]), at most 10 times a second, for the one row
+  /// showing it. Anything else about it (its status, its place in the list) changes through [Downloads] itself.
+  Listenable get ticks => _ticks;
+  final _ticks = _Ticks();
+
   /// "Title - Episode 3 (Dub)", safe as a file name.
   String get name =>
       '${titleOf(media)} - Episode ${epNumber(number)}${dub ? ' (Dub)' : ''}'
@@ -150,6 +157,10 @@ class Download {
   );
 }
 
+class _Ticks extends ChangeNotifier {
+  void fire() => notifyListeners();
+}
+
 /// The downloads in an index file; an entry that can't be read is skipped, not the whole list (the next save would
 /// otherwise write the empty list over every download).
 @visibleForTesting
@@ -201,7 +212,7 @@ class DownloadQueue {
     }
   }
 
-  final List<Download> items = [];
+  final List<Download> items = _IndexedDownloads();
 
   /// The download being fetched.
   Download? active;
@@ -214,12 +225,8 @@ class DownloadQueue {
       d == null || d.status == DownloadStatus.failed;
 
   /// The download entry (in any state) for this episode and audio.
-  Download? entry(Map media, num number, bool dub) => items
-      .where(
-        (d) =>
-            d.media['id'] == media['id'] && d.number == number && d.dub == dub,
-      )
-      .firstOrNull;
+  Download? entry(Map media, num number, bool dub) =>
+      (items as _IndexedDownloads).entry(media['id'], number, dub);
 
   /// Queues [episodes], skipping ones already queued or saved and retrying failed ones.
   void enqueue(
@@ -293,6 +300,49 @@ class DownloadQueue {
   bool clear() {
     items.clear();
     return active != null;
+  }
+}
+
+/// A list of downloads that also finds one by episode and audio without a scan: every episode row on screen looks
+/// itself up on every change to the list. Any change to the list (the queue's, or a test's straight to [items]) drops
+/// the index, rebuilt on the next lookup; progress changes no entry, so lookups between changes are O(1).
+class _IndexedDownloads extends ListBase<Download> {
+  final _list = <Download>[];
+  Map<(Object?, num, bool), Download>? _byEpisode;
+
+  /// The first download of this episode and audio, as a scan in list order finds it.
+  Download? entry(Object? mediaId, num number, bool dub) => (_byEpisode ??= {
+    for (final d in _list.reversed) (d.media['id'], d.number, d.dub): d,
+  })[(mediaId, number, dub)];
+
+  @override
+  int get length => _list.length;
+
+  @override
+  set length(int length) {
+    _list.length = length;
+    _byEpisode = null;
+  }
+
+  @override
+  Download operator [](int index) => _list[index];
+
+  @override
+  void operator []=(int index, Download value) {
+    _list[index] = value;
+    _byEpisode = null;
+  }
+
+  @override
+  void add(Download element) {
+    _list.add(element);
+    _byEpisode = null;
+  }
+
+  @override
+  void addAll(Iterable<Download> iterable) {
+    _list.addAll(iterable);
+    _byEpisode = null;
   }
 }
 
@@ -392,14 +442,19 @@ class Downloads extends ChangeNotifier {
   /// Marks a finished download whose files are gone (deleted, with the index write after it lost) as failed, so it
   /// isn't offered for playback; retrying downloads it again. A download in a chosen Android folder isn't checked.
   Future<List<Download>> _markMissing(List<Download> saved) async {
-    for (final d in saved) {
-      if (d.status != DownloadStatus.done || d.storageUri != null) continue;
-      if (!await File(p.join(_dir(d).path, d.video ?? 'index.m3u8')).exists()) {
-        d
-          ..status = DownloadStatus.failed
-          ..error = 'The downloaded files are missing';
-      }
-    }
+    // All at once: one by one, a big library's checks hold the first frame back (load runs before runApp).
+    await Future.wait([
+      for (final d in saved)
+        if (d.status == DownloadStatus.done && d.storageUri == null)
+          File(p.join(_dir(d).path, d.video ?? 'index.m3u8'))
+              .exists()
+              .then((found) {
+                if (found) return;
+                d
+                  ..status = DownloadStatus.failed
+                  ..error = 'The downloaded files are missing';
+              }),
+    ]);
     return saved;
   }
 
@@ -595,7 +650,7 @@ class Downloads extends ChangeNotifier {
     try {
       final file = _seasonFile(media);
       await file.parent.create(recursive: true);
-      await file.writeAsString(jsonEncode(season));
+      await file.writeAsString(await encodeSeason(season));
       // The cache is optional; offline falls back to the downloaded episodes.
     } catch (_) {}
   }
@@ -716,6 +771,39 @@ class Downloads extends ChangeNotifier {
         ...extra,
       })
       .catchError((Object _) => null); // no notifications off Android
+
+  /// Fires on every download's progress updates, for what adds them up (the bytes on this device, a show's size).
+  /// A row showing one download listens to its [Download.ticks] instead, and this notifier's own listeners hear
+  /// only changes to the list (an entry added, removed, started, finished), so a tick redraws one progress bar and
+  /// the totals rather than every row.
+  Listenable get ticks => _ticks;
+  final _ticks = _Ticks();
+
+  /// [d]'s progress for the screens, at most 10 times a second (and its end): a chunk (a few KB) or a small
+  /// segment arrives far more often.
+  void _tick(Download d) {
+    final now = DateTime.now();
+    if (d.progress < 1 && now.difference(_tickedAt) < _tickEvery) return;
+    _tickedAt = now;
+    _progressed(d);
+  }
+
+  void _progressed(Download d) {
+    d._ticks.fire();
+    _ticks.fire();
+    _notifyProgress();
+  }
+
+  /// What a running download does on each progress update, after the test has changed [d]'s progress or bytes.
+  @visibleForTesting
+  void debugProgressed(Download d) => _progressed(d);
+
+  /// What a change to the list sends, after the test has changed [items] or an entry's status.
+  @visibleForTesting
+  void debugChanged() => notifyListeners();
+
+  var _tickedAt = DateTime(0);
+  static const _tickEvery = Duration(milliseconds: 100);
 
   void _notify({bool save = false}) {
     notifyListeners();
@@ -920,7 +1008,6 @@ class Downloads extends ChangeNotifier {
     final sink = part.openWrite(
       mode: have > 0 ? FileMode.append : FileMode.write,
     );
-    var shown = -1;
     try {
       await for (final chunk in response.stream) {
         if (_queue.cancelled) throw _Cancelled();
@@ -934,11 +1021,7 @@ class Downloads extends ChangeNotifier {
         d.bytes = have;
         // ponytail: no total (chunked replies) leaves the bar at 0 until done
         if (total != null && total > 0) d.progress = have / total;
-        // A chunk is a few KB: the screen and notification hear of every 0.2% instead.
-        if ((d.progress * 500).floor() != shown) {
-          shown = (d.progress * 500).floor();
-          _notify();
-        }
+        _tick(d);
       }
     } finally {
       await sink.close();
@@ -1000,7 +1083,7 @@ class Downloads extends ChangeNotifier {
           }
           d.bytes += await file.length();
           d.progress = ++done / files.length;
-          _notify();
+          _tick(d);
         }
       } catch (_) {
         stop = true;
@@ -1047,7 +1130,7 @@ class Downloads extends ChangeNotifier {
         for (final s in d.subtitles)
           (
             s.label,
-            parseCues(
+            await cuesOf(
               await File('${dir.path}/${s.url}').readAsString(),
               s.url.split('.').last,
             ),
@@ -1060,6 +1143,23 @@ class Downloads extends ChangeNotifier {
     }
   }
 }
+
+/// [season] as JSON; a long show's (a thousand episodes with their overviews runs to hundreds of KB) encoded off
+/// the UI isolate. Plain maps go over, as JSON is all they hold.
+@visibleForTesting
+Future<String> encodeSeason(List<Episode> season) async {
+  if (season.length <= 300) return jsonEncode(season);
+  final json = [for (final e in season) e.toJson()];
+  return Isolate.run(() => jsonEncode(json));
+}
+
+/// [parseCues], off the UI isolate for a big file (a styled ASS track runs to megabytes); a small one here, where
+/// spawning an isolate would cost more than parsing it.
+@visibleForTesting
+Future<List<Cue>> cuesOf(String text, String format) async =>
+    text.length > 32 * 1024
+    ? await Isolate.run(() => parseCues(text, format))
+    : parseCues(text, format);
 
 /// Whether the start of a download is an HLS playlist rather than video.
 @visibleForTesting

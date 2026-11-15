@@ -65,27 +65,33 @@ class _DeskDownloadsState extends State<DeskDownloads> {
       }
       final view = DownloadsView(items, filter: filter);
       filter = view.filter;
+      final shows = view.shows;
+      // Built once a list change, so a progress tick redraws the header's text and not its buttons.
+      final actions = [
+        TextButton.icon(
+          onPressed: () => AndroidApp.open(Downloads.instance.folder),
+          icon: const Icon(Icons.folder_open_rounded),
+          label: const Text('Show in folder'),
+        ),
+        const SizedBox(width: 8),
+        TextButton.icon(
+          onPressed: () => confirmDeleteDownloads(context, [...items]),
+          style: TextButton.styleFrom(foregroundColor: scheme.error),
+          icon: const Icon(Icons.delete_sweep_outlined),
+          label: const Text('Delete all'),
+        ),
+      ];
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          DeskHeader(
-            'Downloads',
-            note:
-                '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
-            actions: [
-              TextButton.icon(
-                onPressed: () => AndroidApp.open(Downloads.instance.folder),
-                icon: const Icon(Icons.folder_open_rounded),
-                label: const Text('Show in folder'),
-              ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () => confirmDeleteDownloads(context, [...items]),
-                style: TextButton.styleFrom(foregroundColor: scheme.error),
-                icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('Delete all'),
-              ),
-            ],
+          ListenableBuilder(
+            listenable: Downloads.instance.ticks,
+            builder: (context, _) => DeskHeader(
+              'Downloads',
+              note:
+                  '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
+              actions: actions,
+            ),
           ),
           const SizedBox(height: 8),
           SizedBox(
@@ -127,14 +133,16 @@ class _DeskDownloadsState extends State<DeskDownloads> {
             ),
           ),
           Expanded(
-            child: ListView(
+            // Lazy: a change to the list rebuilds only the cards in view; a progress tick, only its own row's progress.
+            child: ListView.builder(
               padding: const EdgeInsets.fromLTRB(
                 deskMargin,
                 12,
                 deskMargin,
                 48,
               ),
-              children: [for (final show in view.shows) _ShowCard(show)],
+              itemCount: shows.length,
+              itemBuilder: (_, i) => _ShowCard(shows[i]),
             ),
           ),
         ],
@@ -188,10 +196,15 @@ class _ShowCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: text.titleMedium,
                         ),
-                        Text(
-                          show.summary,
-                          style: text.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                        ListenableBuilder(
+                          listenable: Listenable.merge([
+                            for (final d in show.all) d.ticks,
+                          ]),
+                          builder: (context, _) => Text(
+                            show.summary,
+                            style: text.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
                       ],
@@ -291,23 +304,30 @@ class _Episode extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  Text(
-                    DownloadsView.statusText(d),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(
-                      color: failed ? scheme.error : scheme.onSurfaceVariant,
+                  // A progress tick redraws these two, not the row.
+                  ListenableBuilder(
+                    listenable: d.ticks,
+                    builder: (context, _) => Text(
+                      DownloadsView.statusText(d),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.bodySmall?.copyWith(
+                        color: failed ? scheme.error : scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   if (active)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: LinearProgressIndicator(
-                        value: d.status == DownloadStatus.queued
-                            ? 0
-                            : d.progress,
-                        minHeight: 3,
-                        borderRadius: BorderRadius.circular(2),
+                      child: ListenableBuilder(
+                        listenable: d.ticks,
+                        builder: (context, _) => LinearProgressIndicator(
+                          value: d.status == DownloadStatus.queued
+                              ? 0
+                              : d.progress,
+                          minHeight: 3,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
                 ],

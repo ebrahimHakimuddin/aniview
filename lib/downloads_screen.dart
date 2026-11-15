@@ -74,20 +74,33 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         }
         final view = DownloadsView(items, filter: filter, toggled: toggled);
         filter = view.filter;
-        return ListView(
+        // One row per show header or episode, built as it scrolls in. A change to the list rebuilds the rows in view;
+        // a progress tick, only the totals and its own row's progress.
+        final rows = <(ShowDownloads, Download?)>[
+          for (final show in view.shows) ...[
+            (show, null),
+            if (show.open)
+              for (final d in show.shown) (show, d),
+          ],
+        ];
+        return ListView.builder(
           padding: EdgeInsets.only(
             bottom: 32 + MediaQuery.paddingOf(context).bottom,
           ),
-          children: [
-            Padding(
+          itemCount: 2 + rows.length,
+          itemBuilder: (context, i) => switch (i) {
+            0 => Padding(
               padding: EdgeInsets.symmetric(horizontal: side),
-              child: Text(
-                '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+              child: ListenableBuilder(
+                listenable: Downloads.instance.ticks,
+                builder: (context, _) => Text(
+                  '${items.length} episodes · ${formatBytes(Downloads.instance.totalBytes)} on this device',
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: scheme.onSurfaceVariant),
+                ),
               ),
             ),
-            SizedBox(
+            1 => SizedBox(
               height: 56,
               child: ListView(
                 scrollDirection: Axis.horizontal,
@@ -105,27 +118,22 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ],
               ),
             ),
-            for (final show in view.shows) _show(show),
-          ],
+            _ => switch (rows[i - 2]) {
+              (final show, null) => _ShowHeader(
+                show,
+                onToggle: () => setState(
+                  () => toggled.contains(show.id)
+                      ? toggled.remove(show.id)
+                      : toggled.add(show.id),
+                ),
+                onDelete: () => _deleteShow(show.all),
+              ),
+              (final show, final d?) => _DownloadTile(d, show.all),
+            },
+          },
         );
       },
     ),
-  );
-
-  Widget _show(ShowDownloads show) => Column(
-    children: [
-      _ShowHeader(
-        show,
-        onToggle: () => setState(
-          () => toggled.contains(show.id)
-              ? toggled.remove(show.id)
-              : toggled.add(show.id),
-        ),
-        onDelete: () => _deleteShow(show.all),
-      ),
-      if (show.open)
-        for (final d in show.shown) _DownloadTile(d, show.all),
-    ],
   );
 }
 
@@ -159,7 +167,10 @@ class _ShowHeader extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: Theme.of(context).textTheme.titleMedium,
       ),
-      subtitle: Text(show.summary),
+      subtitle: ListenableBuilder(
+        listenable: Listenable.merge([for (final d in show.all) d.ticks]),
+        builder: (context, _) => Text(show.summary),
+      ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -229,26 +240,30 @@ class _DownloadTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            DownloadsView.statusText(d),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: failed ? TextStyle(color: scheme.error) : null,
-          ),
-          if (active)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: LinearProgressIndicator(
-                value: d.status == DownloadStatus.queued ? 0 : d.progress,
-                minHeight: 3,
-                borderRadius: BorderRadius.circular(2),
-              ),
+      // A progress tick redraws this, not the tile.
+      subtitle: ListenableBuilder(
+        listenable: d.ticks,
+        builder: (context, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              DownloadsView.statusText(d),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: failed ? TextStyle(color: scheme.error) : null,
             ),
-        ],
+            if (active)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(
+                  value: d.status == DownloadStatus.queued ? 0 : d.progress,
+                  minHeight: 3,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+          ],
+        ),
       ),
       trailing: switch (d.status) {
         DownloadStatus.done => IconButton(
