@@ -566,12 +566,25 @@ List<BoxShadow> accentGlow([double alpha = .35, double blur = 24]) => [
 ];
 
 /// Fades and lifts its child in the first time it's built, [index] steps (of 40ms, up to 8) after the first, so
-/// a row or grid arrives in a quick cascade. Still when animations are off.
+/// a row or grid arrives in a quick cascade. Still when animations are off, and when built while a list around it
+/// scrolls: that's a tile scrolling (back) into view, not the row arriving.
 class FadeIn extends StatelessWidget {
   const FadeIn({super.key, required this.child, this.index = 0});
 
   final Widget child;
   final int index;
+
+  /// Whether any list around [context] is being dragged, flung or animated.
+  static bool _scrolling(BuildContext context) {
+    for (
+      var list = Scrollable.maybeOf(context);
+      list != null;
+      list = Scrollable.maybeOf(list.context)
+    ) {
+      if (list.position.isScrollingNotifier.value) return true;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -579,16 +592,16 @@ class FadeIn extends StatelessWidget {
     final delay = index.clamp(0, 8) * 40;
     final total = 320 + delay;
     return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
+      // Only the first build's begin counts, so a tile built mid-scroll stays shown once the scroll stops.
+      tween: Tween(begin: _scrolling(context) ? 1 : 0, end: 1),
       duration: Duration(milliseconds: total),
       curve: Interval(delay / total, 1, curve: Curves.easeOutCubic),
       child: child,
-      builder: (context, t, child) => Opacity(
-        opacity: t,
-        child: Transform.translate(
-          offset: Offset(0, (1 - t) * 16),
-          child: child,
-        ),
+      // The translate outside the opacity: the opacity is a repaint boundary, so moving it reuses the child's
+      // recorded layer instead of repainting the whole card each frame (a transform inside it dirtied the card).
+      builder: (context, t, child) => Transform.translate(
+        offset: Offset(0, (1 - t) * 16),
+        child: Opacity(opacity: t, child: child),
       ),
     );
   }
@@ -867,15 +880,17 @@ class FloatingNav extends StatelessWidget {
                                 AnimatedSwitcher(
                                   duration: motionMs(context, 220),
                                   switchInCurve: Curves.easeOutCubic,
+                                  // drive, not a CurvedAnimation: that subscribes to the switcher's controller and
+                                  // was never disposed, and this runs again on every rebuild of the nav.
                                   transitionBuilder: (child, a) =>
                                       ScaleTransition(
-                                        scale: Tween(begin: .6, end: 1.0)
-                                            .animate(
-                                              CurvedAnimation(
-                                                parent: a,
-                                                curve: Curves.easeOutCubic,
-                                              ),
+                                        scale: a.drive(
+                                          Tween(begin: .6, end: 1.0).chain(
+                                            CurveTween(
+                                              curve: Curves.easeOutCubic,
                                             ),
+                                          ),
+                                        ),
                                         child: FadeTransition(
                                           opacity: a,
                                           child: child,
@@ -1314,8 +1329,9 @@ class Artwork extends StatelessWidget {
                 image: ResizeImage.resizeIfNeeded(
                   full || !box.maxWidth.isFinite
                       ? null
-                      : (box.maxWidth * MediaQuery.devicePixelRatioOf(context))
-                            .round(),
+                      : decodeWidth(
+                          box.maxWidth * MediaQuery.devicePixelRatioOf(context),
+                        ),
                   null,
                   switch (posterCache) {
                     final cache? => CachedPoster(url, cache),
@@ -1339,6 +1355,11 @@ class Artwork extends StatelessWidget {
     );
   }
 }
+
+/// [pixels] rounded up to a step of 64, so a box that resizes every frame (the desktop sidebar animating, a window
+/// being dragged) keeps one cache key and decode instead of a new one per pixel for every image on screen.
+@visibleForTesting
+int decodeWidth(double pixels) => (pixels / 64).ceil() * 64;
 
 /// A tappable, focusable picture. On TV it scales 1.1× with a white border and a glow in the show's colour while
 /// focused (the Google TV card focus state); on phones it dips slightly while pressed.

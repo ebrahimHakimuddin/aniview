@@ -56,14 +56,25 @@ class _WelcomeState extends State<Welcome> with SingleTickerProviderStateMixin {
     }
   }
 
+  // Made once: a CurvedAnimation listens to [_run] until disposed, so one per build would pile up listeners.
+  late final _mark = _step(0, .27, Curves.easeOutBack);
+  late final _rest = _step(.27, .64, Curves.easeInOutCubic);
+  late final _pulse = _step(.16, .57, Curves.linear);
+  late final _glow = _step(0, .4);
+  late final _greeting = _step(.61, .84);
+  late final _out = _step(.84, 1, Curves.easeIn);
+
   @override
   void dispose() {
+    for (final curve in [_mark, _rest, _pulse, _glow, _greeting, _out]) {
+      curve.dispose();
+    }
     _run.dispose();
     super.dispose();
   }
 
   /// [_run] between [begin] and [end] (fractions of it), eased.
-  Animation<double> _step(
+  CurvedAnimation _step(
     double begin,
     double end, [
     Curve curve = Curves.easeOutCubic,
@@ -84,12 +95,11 @@ class _WelcomeState extends State<Welcome> with SingleTickerProviderStateMixin {
           : 'assets/icon/aniview_wordmark.png',
       width: width,
       semanticLabel: 'AniView',
+      // Decoded at the size shown, not the 2172px source, on the app's first frames.
+      cacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
     );
-    final mark = _step(0, .27, Curves.easeOutBack);
-    final rest = _step(.27, .64, Curves.easeInOutCubic);
-    final pulse = _step(.16, .57, Curves.linear);
-    final greeting = _step(.61, .84);
-    final out = _step(.84, 1, Curves.easeIn);
+    final mark = _mark, rest = _rest, pulse = _pulse;
+    final greeting = _greeting, out = _out;
     // Always this Stack, so [child] keeps its place (and its state) when the greeting goes: swapping in the bare
     // child would build the app's home again, and its first-launch work (What's new) with it.
     return Stack(
@@ -113,7 +123,7 @@ class _WelcomeState extends State<Welcome> with SingleTickerProviderStateMixin {
                     children: [
                       // The brand's cyan, softly behind the mark.
                       FadeTransition(
-                        opacity: _step(0, .4),
+                        opacity: _glow,
                         child: Container(
                           width: width * 1.8,
                           height: width * 1.8,
