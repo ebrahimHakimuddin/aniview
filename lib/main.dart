@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'desktop.dart';
 import 'downloads.dart';
 import 'pairing.dart';
+import 'party_ui.dart' show listenForPartyLinks;
 import 'platform.dart';
 import 'home.dart';
 import 'image_cache.dart';
@@ -16,18 +17,24 @@ import 'tracker.dart';
 import 'sources.dart';
 import 'tv.dart';
 import 'ui.dart';
+import 'upscale.dart';
 import 'welcome.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Start receiving iOS URL-scheme callbacks before asynchronous startup work.
   if (Platform.isIOS) AppLinks();
-  // iOS and desktop bundle their own libmpv. Android keeps ExoPlayer and has no libmpv. On Linux,
+  // Watch party invites (aniview://party/<code>) open the join dialog; Android, iOS and desktop.
+  listenForPartyLinks();
+  // iOS and desktop bundle their own libmpv. Android plays through ExoPlayer and loads its libmpv only when an
+  // upscaling player first needs it (exo.dart), so it isn't initialized here. On Linux,
   // name the soname the video plugin links: plain 'libmpv.so' can load the host's copy beside an AppImage's own, and
   // two libmpvs abort on the first video.
   if (videoBackendFor(Platform.operatingSystem) == VideoBackend.mediaKit) {
     MediaKit.ensureInitialized(libmpv: Platform.isLinux ? 'libmpv.so.2' : null);
   }
+  // Anime4K's licence on the licences page; its shaders are bundled on every platform.
+  registerShaderLicense();
   // Build the top sites on app load; screens await it later.
   Sites.all().ignore();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

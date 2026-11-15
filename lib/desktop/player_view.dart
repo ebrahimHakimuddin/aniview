@@ -23,10 +23,12 @@ extension _DeskPlayer on _PlayerScreenState {
                 IconButton(
                   tooltip: 'Back  (Esc)',
                   icon: const Icon(Icons.arrow_back_rounded),
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.maybePop(context),
                 ),
                 const SizedBox(width: 8),
                 Expanded(child: _titles(tv: false)),
+                _partyButton(),
+                if (_inParty) _chatButton(),
                 if (_episodes.length > 1)
                   IconButton(
                     tooltip: 'Episodes',
@@ -90,6 +92,7 @@ extension _DeskPlayer on _PlayerScreenState {
                     if (_canSwitchServer) _serverMenu(),
                     if (_qualities.isNotEmpty) _qualityMenu(),
                     _speedMenu(),
+                    if (_upscaler != null) _upscaleMenu(),
                     _fitButton(),
                     if (supportsExternalPlayer)
                       IconButton(

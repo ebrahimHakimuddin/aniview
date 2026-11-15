@@ -15,9 +15,12 @@ import 'desktop/motion.dart';
 import 'desktop/widgets.dart';
 import 'downloads.dart';
 import 'episode_actions.dart';
+import 'exo.dart' show PlayerBackend;
 import 'history.dart';
 import 'playback.dart';
 import 'pairing.dart';
+import 'party.dart' show PartySession;
+import 'party_ui.dart' show PartyJoin;
 import 'platform.dart';
 import 'player.dart';
 import 'search.dart';
@@ -34,11 +37,14 @@ import 'ui.dart';
 
 part 'desktop/details_page.dart';
 
+/// With [party], the page plays the party's episode as a guest as soon as its site lists it (see
+/// [DetailsScreen.party]).
 Future<void> openDetails(
   BuildContext context,
   Map media, {
   VoidCallback? onBack,
   bool autoplay = false,
+  PartyJoin? party,
 }) async {
   await pushSettled(
     // The top bar sits outside the section's Navigator: pushed from there the show would cover the sidebar too. Not
@@ -49,13 +55,17 @@ Future<void> openDetails(
     MaterialPageRoute(
       // The desktop's window title follows the show (see DeskShell).
       settings: RouteSettings(name: 'show', arguments: titleOf(media)),
-      builder: (_) => DetailsScreen(media, autoplay: autoplay),
+      builder: (_) => DetailsScreen(media, autoplay: autoplay, party: party),
     ),
   );
   onBack?.call();
 }
 
 bool _playerOpening = false;
+
+/// The backend for players opened from a show page; null for the platform's own. Replaced in tests.
+@visibleForTesting
+PlayerBackend? Function() showPlayerBackend = () => null;
 
 /// Every way into the player comes through here, so a second tap before the first player shows can't open
 /// another one on top (two players, two soundtracks).
@@ -67,8 +77,12 @@ Future<void> _openPlayer(
   required List<Episode> episodes,
   required int index,
   required bool dub,
+  PartySession? party,
 }) async {
-  if (_playerOpening) return;
+  if (_playerOpening) {
+    party?.leave().ignore(); // nothing will play in it
+    return;
+  }
   _playerOpening = true;
   try {
     // On desktop the player covers the whole window, not just the page area beside the sidebar.
@@ -84,6 +98,8 @@ Future<void> _openPlayer(
           episodes: episodes,
           index: index,
           dub: dub,
+          party: party,
+          backend: showPlayerBackend(),
         ),
       ),
     );
@@ -238,9 +254,18 @@ class _PlayActionState extends State<PlayAction> {
 
 /// A show: its art and details, the main play action, your AniList entry, and its episodes on the chosen site.
 class DetailsScreen extends StatefulWidget {
-  const DetailsScreen(this.media, {super.key, this.autoplay = false});
+  const DetailsScreen(
+    this.media, {
+    super.key,
+    this.autoplay = false,
+    this.party,
+  });
 
   final Map media;
+
+  /// A watch party joined from Home: the page plays its episode as a guest once the chosen site lists it, or says
+  /// it can't and leaves the room.
+  final PartyJoin? party;
 
   /// Starts what the play button offers as soon as it's known ("Play on TV" from the phone).
   final bool autoplay;
@@ -395,6 +420,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   @override
   void dispose() {
+    // Gone before the party's episode could play: nothing holds the room open.
+    if (!_partyDone) widget.party?.link.session.leave().ignore();
     picked.dispose();
     scroll.dispose();
     _highlightTimer?.cancel();
@@ -439,9 +466,58 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final found = await _held(Sites.all());
       if (!mounted) return;
       setState(() => sources = found);
-      if (Sites.preferred(found) case final preferred?) _select(preferred);
+      if (Sites.preferred(found) case final preferred?) {
+        _select(preferred);
+        if (widget.party != null) _playParty(episodes!);
+      } else {
+        _partyMissed('No site is set up to play ${titleOf(media)}');
+      }
     } catch (e) {
       if (mounted) setState(() => sitesError = e);
+      _partyMissed('${titleOf(media)} can\'t be played here right now');
+    }
+  }
+
+  /// [DetailsScreen.party] has been handed to a player, or left.
+  bool _partyDone = false;
+
+  /// Plays the party's episode from the episodes the site [listed], as a guest.
+  Future<void> _playParty(Future<List<Episode>> listed) async {
+    final party = widget.party;
+    if (party == null || _partyDone) return;
+    final site = source?.name ?? 'this site';
+    final List<Episode> list;
+    try {
+      list = await listed;
+    } catch (_) {
+      return _partyMissed('${titleOf(media)} isn\'t on $site');
+    }
+    if (!mounted || _partyDone) return;
+    final number = party.episode;
+    final episode = list.where((e) => e.number == number).firstOrNull;
+    final eps = _showEpisodes(list, source);
+    if (episode == null || eps.start(episode) == null) {
+      return _partyMissed('Episode ${epNumber(number)} isn\'t on $site');
+    }
+    if (party.link.session.ended) {
+      _partyDone = true;
+      return showError(context, 'The party ended');
+    }
+    _partyDone = true;
+    await _playEpisode(eps, episode, party: party.link.session);
+  }
+
+  /// The party's episode can't play here: says so and leaves the room.
+  void _partyMissed(String why) {
+    final party = widget.party;
+    if (party == null || _partyDone) return;
+    _partyDone = true;
+    party.link.session.leave().ignore();
+    if (mounted) {
+      showError(
+        context,
+        '$why, so you can\'t watch along. You left the party.',
+      );
     }
   }
 
@@ -473,7 +549,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
   );
 
   /// Plays [episode] from this page, or says why it can't.
-  Future<void> _playEpisode(ShowEpisodes eps, Episode episode) async {
+  /// With [party], as a guest in that watch party.
+  Future<void> _playEpisode(
+    ShowEpisodes eps,
+    Episode episode, {
+    PartySession? party,
+  }) async {
     final start = eps.start(episode);
     if (start == null) {
       return showError(
@@ -489,6 +570,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       episodes: start.episodes,
       index: start.index,
       dub: dub,
+      party: party,
     );
     _reloadRecord(); // progress and resume point changed
   }
