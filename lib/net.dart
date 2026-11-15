@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -83,6 +84,12 @@ class HttpNet implements Net {
   Future<Uint8List> bytes(String url, {Map<String, String>? headers}) async =>
       (await _get(url, headers)).bodyBytes;
 }
+
+/// [text] decoded; a big one (a whole AniList/MAL list, a Jellyfin library is hundreds of KB) off the UI isolate,
+/// where it would drop frames. A small one stays here: spawning an isolate costs more than it saves.
+Future<dynamic> decodeJson(String text) async => text.length > 32 * 1024
+    ? await Isolate.run(() => jsonDecode(text))
+    : jsonDecode(text);
 
 Future<String> postJson(
   String url,

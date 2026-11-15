@@ -50,8 +50,14 @@ Duration? _parseTime(String s) {
   );
 }
 
+// Built once rather than per line: a season's subtitles run to thousands of lines.
+final _tag = RegExp(r'<[^>]*>'),
+    _drawing = RegExp(r'\\p[1-9]'),
+    _override = RegExp(r'\{[^}]*\}'),
+    _newline = RegExp(r'\\[Nn]');
+
 String _plain(String s) => s
-    .replaceAll(RegExp(r'<[^>]*>'), '')
+    .replaceAll(_tag, '')
     .replaceAll('&amp;', '&')
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
@@ -118,10 +124,10 @@ List<Cue> _assCues(String text) {
     if (!fields.contains('Start') || !fields.contains('Text')) return cues;
     final body = field('Text');
     // Vector drawings (signs drawn with \p1) have no words to show.
-    if (RegExp(r'\\p[1-9]').hasMatch(body)) continue;
+    if (_drawing.hasMatch(body)) continue;
     final words = body
-        .replaceAll(RegExp(r'\{[^}]*\}'), '')
-        .replaceAll(RegExp(r'\\[Nn]'), '\n')
+        .replaceAll(_override, '')
+        .replaceAll(_newline, '\n')
         .replaceAll(r'\h', ' ')
         .trim();
     final start = _parseTime(field('Start')), end = _parseTime(field('End'));

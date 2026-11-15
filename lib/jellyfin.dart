@@ -134,7 +134,8 @@ class Jellyfin extends Source {
   Map<String, String> get _headers => {'Authorization': _authorization(token)};
 
   Future<dynamic> _api(String path) async =>
-      jsonDecode(await net.text('$base$path', headers: _headers));
+      // The whole library (_library) is hundreds of KB on a big server.
+      decodeJson(await net.text('$base$path', headers: _headers));
 
   Future<List> _items(String query) async =>
       (await _api(
