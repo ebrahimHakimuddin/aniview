@@ -73,7 +73,12 @@ extension _DeskDetails on _DetailsScreenState {
                 Positioned.fill(
                   child: ListenableBuilder(
                     listenable: scroll,
-                    builder: (context, _) {
+                    // Built with the page, not on every scroll frame: only where it sits follows the scroll.
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.only(bottom: 32),
+                      child: _deskSide(text),
+                    ),
+                    builder: (context, side) {
                       final top =
                           (bannerEnd - (scroll.hasClients ? scroll.offset : 0))
                               .clamp(16.0, box.maxHeight);
@@ -84,10 +89,7 @@ extension _DeskDetails on _DetailsScreenState {
                           child: SizedBox(
                             width: sideWidth,
                             height: box.maxHeight - top,
-                            child: SingleChildScrollView(
-                              padding: const EdgeInsets.only(bottom: 32),
-                              child: _deskSide(text),
-                            ),
+                            child: side,
                           ),
                         ),
                       );
@@ -515,7 +517,6 @@ extension _DeskDetails on _DetailsScreenState {
     final upNext = episode == plan.upNext;
     final part = plan.resumedPart(episode);
     final picking = picked.active;
-    final isPicked = picking && picked.has(episode);
 
     Future<void> play() => _playEpisode(eps, episode);
 
@@ -541,7 +542,7 @@ extension _DeskDetails on _DetailsScreenState {
       resumedPart: part,
       onTap: () {},
     );
-    return Padding(
+    Widget row(bool isPicked) => Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Hover(
         pressScale: .99,
@@ -729,6 +730,13 @@ extension _DeskDetails on _DetailsScreenState {
           ),
         ),
       ),
+    );
+    // A pick redraws its own row, not the page; entering or leaving selection keeps the row's element.
+    return _PickedRow(
+      picked: picked,
+      episode: episode,
+      picking: picking,
+      builder: (isPicked) => row(isPicked ?? false),
     );
   }
 
