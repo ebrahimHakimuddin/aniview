@@ -122,7 +122,12 @@ extension _DeskPlayer on _PlayerScreenState {
     child: bar,
   );
 
-  Widget _volumeControl() => Row(
+  Widget _volumeControl() => ValueListenableBuilder(
+    valueListenable: _volume,
+    builder: (context, volume, _) => _volumeRow(volume),
+  );
+
+  Widget _volumeRow(double volume) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
       IconButton(
@@ -153,7 +158,7 @@ extension _DeskPlayer on _PlayerScreenState {
           child: Slider(
             value: volume,
             onChanged: (v) {
-              _set(() => volume = v);
+              this.volume = v;
               player.setVolume(v).ignore();
             },
           ),
