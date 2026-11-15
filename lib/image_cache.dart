@@ -89,13 +89,14 @@ class CachedPoster extends ImageProvider<CachedPoster> {
   Future<ui.Codec> load(ImageDecoderCallback decode) async {
     final file = this.file;
     try {
-      final bytes = await file.readAsBytes();
-      final codec = await decode(await ui.ImmutableBuffer.fromUint8List(bytes));
+      // Read natively, as FileImage does: the bytes never land on the Dart heap and are not copied again.
+      final codec = await decode(
+        await ui.ImmutableBuffer.fromFilePath(file.path),
+      );
       _touch(file);
       return codec;
-    } on PathNotFoundException {
-      // Not cached yet.
     } catch (_) {
+      // Not cached yet (deleting then fails quietly), or a file that will not decode.
       await file.delete().then((_) {}, onError: (_) {});
     }
     // A block, not an arrow: whenComplete would wait on the removed future, which is this one.
