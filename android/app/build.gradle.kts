@@ -14,6 +14,8 @@ val keyProperties = Properties().apply {
 
 // `flutter build apk --android-project-arg=aniviewBeta=true` makes a second, installable app.
 val betaBuild = project.findProperty("aniviewBeta") == "true"
+// `ORG_GRADLE_PROJECT_aniviewPerf=true` makes a third app for perf runs, so `flutter drive` never touches a real install.
+val perfBuild = project.findProperty("aniviewPerf") == "true"
 
 android {
     namespace = "com.kidfury.aniview"
@@ -27,8 +29,16 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = if (betaBuild) "com.kidfury.aniview.beta" else "com.kidfury.aniview"
-        manifestPlaceholders["appLabel"] = if (betaBuild) "AniView Beta" else "AniView"
+        applicationId = when {
+            perfBuild -> "com.kidfury.aniview.perf"
+            betaBuild -> "com.kidfury.aniview.beta"
+            else -> "com.kidfury.aniview"
+        }
+        manifestPlaceholders["appLabel"] = when {
+            perfBuild -> "AniView Perf"
+            betaBuild -> "AniView Beta"
+            else -> "AniView"
+        }
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
