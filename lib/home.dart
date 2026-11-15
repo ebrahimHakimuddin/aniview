@@ -18,6 +18,7 @@ import 'latest_episodes_section.dart';
 import 'library.dart';
 import 'notifications.dart';
 import 'pairing.dart';
+import 'party_ui.dart';
 import 'platform.dart';
 import 'player.dart';
 import 'search.dart';
@@ -94,6 +95,8 @@ class _HomeScreenState extends State<HomeScreen>
       search: _voiceSearch,
     );
     if (!isTv && !Platform.isIOS) TvRemote.check();
+    partyLinkArrived.addListener(_onPartyLink);
+    _onPartyLink(); // the link the app was opened with, if it came first
     if (isTv) {
       onRemoteSearch = _remoteSearch;
       onRemotePlay = (id) => _land(RemoteIntent.remotePlay, id);
@@ -139,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen>
     onLeftEdge = null;
     onRemoteSearch = null;
     onRemotePlay = null;
+    partyLinkArrived.removeListener(_onPartyLink);
     WidgetsBinding.instance.removeObserver(this);
     feed.dispose();
     _tabCurve.dispose();
@@ -185,11 +189,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Opens a show as [intent] asks (see [decide]). Home is the root route, so its context can do it whenever
-  /// one arrives; whatever's playing gives way to it.
-  Future<void> _land(RemoteIntent intent, int id) async {
+  /// one arrives; whatever's playing gives way to it. With [party], its page plays the party's episode as a guest.
+  Future<void> _land(RemoteIntent intent, int id, {PartyJoin? party}) async {
     Analytics.event(intent.event, {'media_id': id});
     try {
-      final record = intent == RemoteIntent.notification
+      final record =
+          intent == RemoteIntent.notification || intent == RemoteIntent.party
           ? null
           : await WatchHistory.byId(id);
       if (!mounted) return;
@@ -205,13 +210,44 @@ class _HomeScreenState extends State<HomeScreen>
           media,
           onBack: _reloadLists,
           autoplay: go.autoplay,
+          party: party,
         );
       }
     } catch (e) {
+      party?.link.session
+          .leave()
+          .ignore(); // the show didn't open: nothing will play in the room
       if (mounted) showError(context, e);
     }
     if (intent != RemoteIntent.notification) _reloadLists();
   }
+
+  /// "Join a party", with [code] filled in when a link brought it: once the host's episode is known, its show
+  /// opens and plays it as a guest.
+  Future<void> _joinParty([String? code]) => joinParty(
+    context,
+    code: code,
+    land: (link, id, episode) =>
+        _land(RemoteIntent.party, id, party: (link: link, episode: episode)),
+  );
+
+  /// An `aniview://party/…` link opened the app: the join dialog, with its code.
+  void _onPartyLink() {
+    final room = partyLinkArrived.value;
+    if (room == null || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || partyLinkArrived.value != room) return;
+      partyLinkArrived.value = null;
+      _joinParty(room.display);
+    });
+  }
+
+  Widget get _joinPartyButton => IconButton(
+    tooltip: 'Join a party',
+    iconSize: 28,
+    icon: const Icon(Icons.group_add_outlined),
+    onPressed: _joinParty,
+  );
 
   /// Keeps the background new-episode check current with recently watched shows and the account's watching list.
   Future<void> _scheduleNotifications() async {
@@ -450,6 +486,7 @@ class _HomeScreenState extends State<HomeScreen>
     ),
     _Page.me => _MeScreen(
       feed,
+      onJoinParty: _joinParty,
       onRefresh: _refresh,
       onReload: _reloadLists,
       onSignIn: _signIn,
@@ -545,7 +582,7 @@ class _HomeScreenState extends State<HomeScreen>
     onRefresh: _refresh,
     onReload: _reloadLists,
     onSignIn: _signIn,
-    actions: [_randomButton, _releaseBell, _remoteButton],
+    actions: [_randomButton, _joinPartyButton, _releaseBell, _remoteButton],
   );
 
   // ───────────────────────────── TV ─────────────────────────────
@@ -1719,7 +1756,7 @@ class _SignInCard extends StatelessWidget {
   }
 }
 
-/// Phones: your AniList account and stats, and the way to Downloads and Settings.
+/// Phones and TV: your AniList account and stats, and the way to joining a party, Downloads and Settings.
 class _MeScreen extends StatelessWidget {
   const _MeScreen(
     this.feed, {
@@ -1727,12 +1764,13 @@ class _MeScreen extends StatelessWidget {
     required this.onReload,
     required this.onSignIn,
     required this.onHome,
+    required this.onJoinParty,
   });
 
   final HomeFeed feed;
   final Future<void> Function() onRefresh;
   final void Function({bool force}) onReload;
-  final VoidCallback onSignIn, onHome;
+  final VoidCallback onSignIn, onHome, onJoinParty;
 
   @override
   Widget build(BuildContext context) {
@@ -1794,6 +1832,11 @@ class _MeScreen extends StatelessWidget {
                             ),
                           ],
                         ),
+                      ),
+                      IconButton(
+                        tooltip: 'Join a party',
+                        icon: const Icon(Icons.group_add_outlined),
+                        onPressed: onJoinParty,
                       ),
                       IconButton(
                         tooltip: 'Downloads',

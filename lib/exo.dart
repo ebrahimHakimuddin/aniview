@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'party.dart' show PartyOp;
 import 'platform.dart';
 
 /// A subtitle or audio track the stream or a file beside it brings; [id] picks it in [ExoPlayer.setSubtitleTrack]
@@ -46,12 +47,43 @@ class ExoPlayerState {
 
   /// The picture's size once known.
   Size? size;
+
+  /// The speed last set (by [ExoPlayer.setRate] or [ExoPlayer.applyRate]).
+  double rate = 1;
 }
 
+/// Asked before the person's own play, pause, seek or speed change takes effect; false stops it (see
+/// [ExoPlayer.intent]).
+typedef PlayerIntent = bool Function(
+  PartyOp op, {
+  Duration? position,
+  double? rate,
+});
+
 /// Where [ExoPlayer]'s commands go and its events come from: Media3 ExoPlayer on the Android side (see
-/// ExoPlayers.kt) over a channel, media_kit's native iOS/desktop libraries, or a fake in tests. Commands are the
-/// channel's (`open`, `seek`, `subtitle`, …); events are maps of what changed (`position`, `tracks`, …).
+/// ExoPlayers.kt) over a channel, media_kit's native libraries (iOS, desktop, and Android while upscaling), or a fake
+/// in tests. Commands are the channel's (`open`, `seek`, `subtitle`, …); events are maps of what changed
+/// (`position`, `tracks`, …).
 abstract class PlayerBackend {
+  /// The backend a new player gets: the platform's (see [videoBackendFor]), where [upscale] picks mpv on Android
+  /// too. Android's mpv falls back to Media3 for a video it can't open ([fallback]).
+  static PlayerBackend forSession({bool upscale = false}) {
+    final kind = videoBackendFor(playbackOs, upscale: upscale);
+    return switch (kind) {
+      VideoBackend.exoPlayer => _AndroidBackend(),
+      VideoBackend.mediaKit => _MediaKitBackend(
+        fallback: kind == videoBackendFor(playbackOs) ? null : forSession,
+      ),
+    };
+  }
+
+  /// Which player this is; fakes in tests answer as the platform's own unless they say otherwise.
+  VideoBackend get kind => videoBackendFor(playbackOs);
+
+  /// Makes the backend to play on instead when this one can't open a video (see [ExoPlayer.fallBack]); null for
+  /// none.
+  PlayerBackend Function()? get fallback => null;
+
   /// Creates the player; [on] gets every event from then on.
   Future<void> start(void Function(Map event) on);
   Future<void> call(String method, Map<String, Object?> args);
@@ -62,6 +94,12 @@ abstract class PlayerBackend {
 
   /// The media_kit picture's controller; null where the backend exposes a texture directly.
   VideoController? get video => null;
+
+  /// Whether it takes the `shaders` command (mpv's GLSL shaders, see [ExoPlayer.setShaders]). Media3 doesn't.
+  bool get supportsShaders => false;
+
+  /// The player's own [name]d property as text (mpv's `frame-drop-count`, …); null where there's none.
+  Future<String?> property(String name) async => null;
 }
 
 /// Android: the player lives in ExoPlayers.kt and draws into a texture, announced as a `texture` event.
@@ -69,6 +107,9 @@ class _AndroidBackend extends PlayerBackend {
   static const _channel = MethodChannel('aniview/exo');
   int? _id;
   StreamSubscription? _events;
+
+  @override
+  VideoBackend get kind => VideoBackend.exoPlayer;
 
   @override
   Future<void> start(void Function(Map event) on) async {
@@ -158,16 +199,95 @@ class MediaKitTrackLoader {
   }
 }
 
-/// media_kit on iOS and desktop, answering the same commands and events as Media3.
-/// iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture renderer.
+/// Puts mpv's GLSL shaders in place through [command] (mpv's own commands) and sizes the picture through [setSize].
+class MediaKitShaders {
+  MediaKitShaders({required this.command, required this.setSize});
+
+  final Future<void> Function(List<String>) command;
+
+  /// The picture's output size; both null for the video's own.
+  final Future<void> Function({int? width, int? height}) setSize;
+
+  /// Runs the shader files at [paths] (absolute), in order, drawing into [target]; none (and the video's own size)
+  /// when [paths] is empty.
+  ///
+  /// One `append` per file rather than one joined `set`: the list's separator is ':' or ';' depending on the OS.
+  /// media_kit draws at the video's own resolution, where Anime4K's upscalers skip themselves, so the picture is
+  /// sized to [target] while they run. Unsetting the size first makes the new size take even when media_kit put the
+  /// video's own back for a new file without telling its controller.
+  Future<void> apply(List<String> paths, {Size? target}) async {
+    await command(const ['change-list', 'glsl-shaders', 'clr', '']);
+    await setSize();
+    if (paths.isEmpty) return;
+    if (target != null && !target.isEmpty) {
+      await setSize(width: target.width.round(), height: target.height.round());
+    }
+    for (final path in paths) {
+      await command(['change-list', 'glsl-shaders', 'append', path]);
+    }
+  }
+}
+
+/// Which player has the app's one mpv: the newest to start. A route's dispose runs after its exit animation, by
+/// which time a player opened meanwhile (a party link, "Bring the TV in", remote play) may have it.
+@visibleForTesting
+abstract final class MpvOwner {
+  static Object? _current;
+
+  static void claim(Object player) => _current = player;
+
+  /// Whether [player] still had the mpv; nobody has it after.
+  static bool release(Object player) {
+    if (!identical(_current, player)) return false;
+    _current = null;
+    return true;
+  }
+}
+
+/// media_kit on iOS and desktop, and on Android for a player opened with upscaling on, answering the same commands
+/// and events as Media3. iOS uses media_kit_libs_ios_video's XCFrameworks and media_kit_video's iOS texture
+/// renderer; Android media_kit_libs_android_video's libmpv (see [_AndroidMpv]).
 class _MediaKitBackend extends PlayerBackend {
+  _MediaKitBackend({this.fallback});
+
   // One mpv for the app's whole run, stopped between videos: a new instance after another has shut down can abort
   // inside libmpv (m_config_core.c "group_index >= 0") as it opens its first file.
   static mk.Player? _sharedMpv;
   static VideoController? _sharedVideo;
 
-  final mk.Player _mpv = _sharedMpv ??= mk.Player();
+  /// The shared mpv, loading libmpv first on Android, where only an upscaling player needs it (main() loads it
+  /// elsewhere; a second call does nothing).
+  static mk.Player _newMpv() {
+    if (Platform.isAndroid) mk.MediaKit.ensureInitialized();
+    return mk.Player();
+  }
+
+  late final mk.Player _mpv = _sharedMpv ??= _newMpv();
   final _tracks = MediaKitTrackLoader();
+  late final _shaders = MediaKitShaders(
+    command: (args) => (_mpv.platform as mk.NativePlayer).command(args),
+    setSize: ({width, height}) async => _android != null
+        ? _android!.setSize(width: width, height: height)
+        : video?.setSize(width: width, height: height),
+  );
+
+  /// What Android needs on top (null elsewhere).
+  _AndroidMpv? _android;
+
+  @override
+  final PlayerBackend Function()? fallback;
+
+  @override
+  VideoBackend get kind => VideoBackend.mediaKit;
+
+  @override
+  bool get supportsShaders => true;
+
+  @override
+  Future<String?> property(String name) async {
+    final value = await (_mpv.platform as mk.NativePlayer).getProperty(name);
+    return value.isEmpty ? null : value;
+  }
 
   /// A download carries its subtitles twice: styled files beside it, and plain copies inside (mov_text) for other
   /// apps. Only the files are listed.
@@ -178,8 +298,15 @@ class _MediaKitBackend extends PlayerBackend {
 
   @override
   Future<void> start(void Function(Map event) on) async {
+    MpvOwner.claim(this);
     final mpv = _mpv;
-    video = _sharedVideo ??= VideoController(mpv);
+    final video = this.video = _sharedVideo ??= VideoController(
+      mpv,
+      configuration: Platform.isAndroid
+          ? _AndroidMpv.video
+          : const VideoControllerConfiguration(),
+    );
+    if (Platform.isAndroid) await (_android = _AndroidMpv(mpv, video)).start();
     final s = mpv.stream;
     // Each event key is read on its own, so the position event carries what it needs.
     void position(Duration _) => on({
@@ -223,7 +350,8 @@ class _MediaKitBackend extends PlayerBackend {
     ];
   }
 
-  late List<StreamSubscription> _events;
+  /// Empty until [start] gets that far: a backend that failed to start is still disposed.
+  var _events = <StreamSubscription>[];
 
   void _size(mk.Player mpv, void Function(Map event) on) {
     if (mpv.state.width case final w? when w > 0) {
@@ -279,12 +407,24 @@ class _MediaKitBackend extends PlayerBackend {
           'auto' => mk.AudioTrack.auto(),
           final id => mpv.state.tracks.audio.firstWhere((t) => t.id == id),
         });
+      case 'shaders':
+        await _shaders.apply(
+          (args['paths']! as List).cast<String>(),
+          target: switch ((args['width'], args['height'])) {
+            (final num w, final num h) => Size(w.toDouble(), h.toDouble()),
+            _ => null,
+          },
+        );
       // 'quality': mpv takes the stream's own pick, there's no cap to set yet.
     }
   }
 
+  /// mpv's own volume; on Android the phone's media volume, as Media3 moves it, so the volume keys and the swipe
+  /// stay one control.
   @override
-  Future<void> setVolume(double level) => call('volume', {'level': level});
+  Future<void> setVolume(double level) => Platform.isAndroid
+      ? AndroidApp.setVolume(level)
+      : call('volume', {'level': level});
 
   @override
   Future<void> dispose() async {
@@ -292,32 +432,226 @@ class _MediaKitBackend extends PlayerBackend {
     for (final sub in _events) {
       sub.cancel();
     }
-    await _mpv.stop();
-    await _mpv.setVolume(100);
+    // A newer player has the mpv: its video, shaders, channel and audio focus stay as they are.
+    final owner = MpvOwner.release(this);
+    if (owner) {
+      await _mpv.stop();
+      await _mpv.setVolume(100);
+      // The mpv lives on for the next video: it starts with no shaders, at its own size.
+      await _shaders.apply(const []);
+    }
+    await _android?.dispose(owner: owner);
   }
 }
 
-/// The video player: Media3 on Android; native media_kit on iOS and desktop (see [PlayerBackend]).
-/// Reads like media_kit's player: [state] for now, [stream] for changes.
-class ExoPlayer {
-  ExoPlayer([PlayerBackend? backend])
-    : _backend =
-          backend ??
-          switch (videoBackendFor(Platform.operatingSystem)) {
-            VideoBackend.exoPlayer => _AndroidBackend(),
-            VideoBackend.mediaKit => _MediaKitBackend(),
-          } {
-    _ready = _backend.start(_on);
+/// Android plays through mpv only while upscaling (see [videoBackendFor]). This gives that mpv what Media3 does on its
+/// own in ExoPlayers.kt, and what media_kit leaves out there:
+///
+/// * Audio focus, a pause when headphones come out, the screen kept on and the network awake while it plays:
+///   MpvSession.kt on `aniview/mpv`, told `playing` and `end`, calls `pause` and `play` back.
+/// * A buffer like Media3's two minutes.
+/// * The picture's size. media_kit sizes the surface mpv draws into to the video's own there, and has no setSize
+///   (it throws); Anime4K's upscalers skip themselves at that size, so the surface is resized through media_kit's
+///   own channel, and put back to the target whenever media_kit resets it for a new video.
+/// * Hardware decoding that keeps frames on mpv's GPU renderer, where the shaders run ([video]).
+class _AndroidMpv {
+  _AndroidMpv(this.mpv, this.controller);
+
+  final mk.Player mpv;
+  final VideoController controller;
+
+  /// media_kit_video's Android defaults are vo=gpu (gpu-context=android, opengl-es) with hwdec=auto-safe (no on an
+  /// emulator). Under vo=gpu every hwdec still renders through mpv's GPU renderer, where the shaders run; only
+  /// vo=mediacodec_embed, which nothing here sets, would hand frames straight to the screen. The libmpv bundled
+  /// (libmpv-android-video-build 1.1.7: vo_gpu without libplacebo) has the AImageReader interop, so auto-safe would
+  /// decode direct `mediacodec` into external OES textures. MediaCodec copied back to memory is pinned instead: plain
+  /// textures the shaders hook the same on every GPU driver, at the cost of a copy per frame; mpv decodes in
+  /// software if it fails.
+  static const video = VideoControllerConfiguration(hwdec: 'mediacodec-copy');
+
+  /// Up to two minutes ahead, as Media3 buffers (ExoPlayers.kt), bounded for a phone's memory.
+  static const buffer = {
+    'cache': 'yes',
+    'cache-secs': '120',
+    'demuxer-readahead-secs': '120',
+    'demuxer-max-bytes': '${100 << 20}',
+    'demuxer-max-back-bytes': '${25 << 20}',
+  };
+
+  static const _session = MethodChannel('aniview/mpv');
+  static const _mediaKitVideo = MethodChannel(
+    'com.alexmercerind/media_kit_video',
+  );
+
+  StreamSubscription? _playing;
+
+  /// The surface size the shaders draw at; null for the video's own.
+  Size? _target;
+
+  Future<void> start() async {
+    final native = mpv.platform as mk.NativePlayer;
+    for (final MapEntry(:key, :value) in buffer.entries) {
+      await native.setProperty(key, value);
+    }
+    _session.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'pause':
+          await mpv.pause();
+        case 'play':
+          await mpv.play();
+      }
+    });
+    _playing = mpv.stream.playing.listen(
+      (playing) => _tell('playing', playing),
+    );
+    controller.rect.addListener(_keepSize);
   }
 
-  final PlayerBackend _backend;
-  late final Future<void> _ready;
+  /// Lets go of the picture and the mpv's events; as [owner], the session too.
+  Future<void> dispose({required bool owner}) async {
+    controller.rect.removeListener(_keepSize);
+    _target = null;
+    await _playing?.cancel();
+    if (!owner) return;
+    _session.setMethodCallHandler(null);
+    await _tell('end');
+  }
+
+  Future<void> _tell(String method, [Object? args]) async {
+    try {
+      await _session.invokeMethod(method, args);
+    } on PlatformException catch (e) {
+      debugPrint('mpv session: $method failed: $e');
+    }
+  }
+
+  /// The picture drawn at [width]×[height] (both null: the video's own).
+  Future<void> setSize({int? width, int? height}) {
+    _target = width == null || height == null
+        ? null
+        : Size(width.toDouble(), height.toDouble());
+    return _resize();
+  }
+
+  /// media_kit put the video's own size back (a new video): the target goes back on.
+  void _keepSize() {
+    final rect = controller.rect.value;
+    if (_target case final target? when rect != null && rect.size != target) {
+      _resize().ignore();
+    }
+  }
+
+  Future<void> _resize() async {
+    final params = mpv.state.videoParams;
+    final turned = params.rotate == 90 || params.rotate == 270;
+    final size =
+        _target ??
+        switch (turned ? (params.dh, params.dw) : (params.dw, params.dh)) {
+          (final int w, final int h) when w > 0 && h > 0 => Size(
+            w.toDouble(),
+            h.toDouble(),
+          ),
+          _ => null,
+        };
+    if (size == null) return;
+    await _mediaKitVideo.invokeMethod('VideoOutputManager.SetSurfaceSize', {
+      'handle': '${await mpv.handle}',
+      'width': '${size.width.round()}',
+      'height': '${size.height.round()}',
+    });
+  }
+}
+
+/// The video player: Media3 on Android, mpv there while upscaling; native media_kit on iOS and desktop (see
+/// [PlayerBackend]). Reads like media_kit's player: [state] for now, [stream] for changes.
+class ExoPlayer {
+  /// Plays through [backend], by default the platform's own ([PlayerBackend.forSession]), kept for the player's
+  /// life but for a [fallBack].
+  ExoPlayer([PlayerBackend? backend])
+    : _backend = backend ?? PlayerBackend.forSession() {
+    _fallback = _backend.fallback;
+    playingOn = ValueNotifier(_backend.kind);
+    _ready = _first();
+  }
+
+  PlayerBackend _backend;
+  late Future<void> _ready;
   bool _disposed = false;
+
+  /// What plays: Media3 or mpv, whatever the platform's default (see [videoBackendFor]).
+  VideoBackend get backend => _backend.kind;
+
+  /// [backend], for the picture to follow a [fallBack].
+  late final ValueNotifier<VideoBackend> playingOn;
+
+  PlayerBackend Function()? _fallback;
+
+  /// Whether [fallBack] has somewhere to go.
+  bool get canFallBack => _fallback != null && !_disposed;
+
+  /// Events from [backend] only once it's no longer the player's.
+  Future<void> _start(PlayerBackend backend) => backend.start((e) {
+    if (identical(backend, _backend) && !_disposed) _on(e);
+  });
+
+  /// Starts the backend; one that can't start (mpv's libraries failing to load, say) moves onto its fallback where
+  /// there is one, as [fallBack] does.
+  Future<void> _first() async {
+    try {
+      await _start(_backend);
+    } catch (_) {
+      if (_fallback == null) rethrow;
+      final old = _swap();
+      await _release(old);
+      await _start(_backend);
+    }
+  }
+
+  /// Makes the fallback the player's backend, returning the one it replaces.
+  PlayerBackend _swap() {
+    final old = _backend;
+    _backend = _fallback!();
+    _fallback = null;
+    texture.value = null;
+    state
+      ..size = null
+      ..heights = const []
+      ..playing = false;
+    playingOn.value = _backend.kind;
+    return old;
+  }
+
+  /// Disposes [backend], which may not have started, as far as it gets.
+  static Future<void> _release(PlayerBackend backend) async {
+    try {
+      await backend.dispose();
+    } catch (e) {
+      debugPrint('player: disposing the old backend failed: $e');
+    }
+  }
+
+  /// Moves onto the backend this one falls back to (Media3, when an Android upscaling session's mpv can't open the
+  /// video) for the rest of the player's life; the old one is disposed, and nothing plays until the next [open].
+  /// False when there's none to go to.
+  Future<bool> fallBack() async {
+    if (_fallback == null || _disposed) return false;
+    _loads++; // a load still settling on the old backend stops
+    final settled = _ready, old = _swap(), next = _backend;
+    _ready = () async {
+      try {
+        await settled;
+      } catch (_) {}
+      await _release(old);
+      await _start(next);
+    }();
+    await _ready;
+    return true;
+  }
 
   /// Counts [load]s, so one overtaken by the next stops settling.
   int _loads = 0;
 
-  /// The media_kit picture's controller; null on Android, which draws [texture].
+  /// The media_kit picture's controller; null where Media3 plays, which draws [texture].
   VideoController? get video => _backend.video;
 
   /// The texture the picture draws into, once the player exists.
@@ -460,7 +794,7 @@ class ExoPlayer {
     // Some streams ignore the start position; land there anyway.
     if (resume != null &&
         state.position < resume - const Duration(seconds: 3)) {
-      await seek(resume);
+      await applySeek(resume);
     }
     final String shown;
     if (subtitlesOff) {
@@ -477,7 +811,7 @@ class ExoPlayer {
         case final track?) {
       await setAudioTrack(track);
     }
-    await setRate(rate);
+    await applyRate(rate);
     return overtaken() ? null : shown;
   }
 
@@ -506,16 +840,41 @@ class ExoPlayer {
     return _call('stop');
   }
 
-  Future<void> play() => _call('play');
-  Future<void> pause() => _call('pause');
+  /// Asked before [play], [pause], [seek] and [setRate] act, which do nothing when it says no: a watch party's
+  /// say over the person's presses. The `apply*` methods never ask it, so what the party itself does can't come
+  /// back as a press.
+  PlayerIntent? intent;
+
+  Future<void> play() async {
+    if (intent?.call(PartyOp.play) ?? true) await applyPlay();
+  }
+
+  Future<void> pause() async {
+    if (intent?.call(PartyOp.pause) ?? true) await applyPause();
+  }
+
   Future<void> playOrPause() => state.playing ? pause() : play();
 
-  Future<void> seek(Duration to) {
+  Future<void> seek(Duration to) async {
+    if (intent?.call(PartyOp.seek, position: to) ?? true) await applySeek(to);
+  }
+
+  Future<void> setRate(double rate) async {
+    if (intent?.call(PartyOp.rate, rate: rate) ?? true) await applyRate(rate);
+  }
+
+  Future<void> applyPlay() => _call('play');
+  Future<void> applyPause() => _call('pause');
+
+  Future<void> applySeek(Duration to) {
     state.position = to;
     return _call('seek', {'ms': to.inMilliseconds});
   }
 
-  Future<void> setRate(double rate) => _call('rate', {'rate': rate});
+  Future<void> applyRate(double rate) {
+    state.rate = rate;
+    return _call('rate', {'rate': rate});
+  }
 
   /// Caps the picture at [height] lines (0: no cap); [exact] keeps it there on a slow connection.
   Future<void> setQuality(int height, {bool exact = false}) =>
@@ -529,6 +888,26 @@ class ExoPlayer {
   Future<void> setAudioTrack(SubtitleTrack track) =>
       _call('audio', {'track': track.id});
 
+  /// Whether [setShaders] does anything here: mpv runs shaders, Media3 doesn't.
+  bool get supportsShaders => _backend.supportsShaders;
+
+  /// Runs the GLSL shader files at [paths] (absolute, in order) over the picture, drawn at [target] (physical
+  /// pixels) rather than the video's own size; none when [paths] is empty. Nothing where [supportsShaders] is false.
+  Future<void> setShaders(List<String> paths, {Size? target}) async {
+    if (!supportsShaders) return;
+    await _call('shaders', {
+      'paths': paths,
+      'width': target?.width.round(),
+      'height': target?.height.round(),
+    });
+  }
+
+  /// The backend's own [name]d property (mpv's `frame-drop-count`, …), or null.
+  Future<String?> property(String name) async {
+    await _ready;
+    return _disposed ? null : _backend.property(name);
+  }
+
   /// The player's own volume, 0–1 (Android moves the phone's media volume instead).
   Future<void> setVolume(double level) async {
     await _ready;
@@ -536,12 +915,16 @@ class ExoPlayer {
   }
 
   Future<void> dispose() async {
-    await _ready;
+    // A backend that never started with nothing to fall back to (iOS, desktop) must still let the player close.
+    try {
+      await _ready;
+    } catch (_) {}
     _disposed = true;
-    await _backend.dispose();
+    await _release(_backend);
     stream._close();
     texture.dispose();
     cues.dispose();
+    playingOn.dispose();
   }
 }
 
@@ -600,58 +983,66 @@ class ExoVideo extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ColoredBox(
     color: Colors.black,
-    child: Stack(
-      fit: StackFit.expand,
-      children: [
-        if (player.video case final video?)
-          Video(
-            controller: video,
-            fit: fit,
-            controls: NoVideoControls,
-            fill: Colors.black,
-            subtitleViewConfiguration: const SubtitleViewConfiguration(
-              visible: false,
-            ),
-          )
-        else
-          ValueListenableBuilder(
-            valueListenable: player.texture,
-            builder: (context, texture, _) => texture == null
-                ? const SizedBox.expand()
-                : StreamBuilder(
-                    stream: player.stream.size,
-                    initialData: player.state.size,
-                    builder: (context, snap) {
-                      final size = snap.data;
-                      if (size == null) return const SizedBox.expand();
-                      return ClipRect(
-                        child: FittedBox(
-                          fit: fit,
-                          child: SizedBox(
-                            width: size.width,
-                            height: size.height,
-                            child: Texture(
-                              textureId: texture,
-                              filterQuality: FilterQuality.low,
-                            ),
+    child: ValueListenableBuilder(
+      // A fallBack from mpv to Media3 swaps the picture.
+      valueListenable: player.playingOn,
+      builder: (context, _, _) => _picture(),
+    ),
+  );
+
+  Widget _picture() => Stack(
+    fit: StackFit.expand,
+    children: [
+      if (player.video case final video?)
+        Video(
+          controller: video,
+          fit: fit,
+          controls: NoVideoControls,
+          fill: Colors.black,
+          // As Media3 does there: screen off or Home leaves it playing (MpvSession.kt pauses for the audio's sake).
+          pauseUponEnteringBackgroundMode: !Platform.isAndroid,
+          subtitleViewConfiguration: const SubtitleViewConfiguration(
+            visible: false,
+          ),
+        )
+      else
+        ValueListenableBuilder(
+          valueListenable: player.texture,
+          builder: (context, texture, _) => texture == null
+              ? const SizedBox.expand()
+              : StreamBuilder(
+                  stream: player.stream.size,
+                  initialData: player.state.size,
+                  builder: (context, snap) {
+                    final size = snap.data;
+                    if (size == null) return const SizedBox.expand();
+                    return ClipRect(
+                      child: FittedBox(
+                        fit: fit,
+                        child: SizedBox(
+                          width: size.width,
+                          height: size.height,
+                          child: Texture(
+                            textureId: texture,
+                            filterQuality: FilterQuality.low,
                           ),
                         ),
-                      );
-                    },
-                  ),
-          ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 200),
-          left: 24,
-          right: 24,
-          bottom: subtitleBottom,
-          child: ValueListenableBuilder(
-            valueListenable: player.cues,
-            builder: (context, text, _) =>
-                Text(text, textAlign: TextAlign.center, style: subtitleStyle),
-          ),
+                      ),
+                    );
+                  },
+                ),
         ),
-      ],
-    ),
+      AnimatedPositioned(
+        duration: const Duration(milliseconds: 200),
+        left: 24,
+        right: 24,
+        bottom: subtitleBottom,
+        child: ValueListenableBuilder(
+          valueListenable: player.cues,
+          builder: (context, text, _) =>
+              Text(text, textAlign: TextAlign.center, style: subtitleStyle),
+        ),
+      ),
+    ],
   );
 }

@@ -17,6 +17,11 @@ import 'hls_proxy.dart';
 import 'filler.dart';
 import 'jellyfin.dart';
 import 'metadata.dart';
+import 'party.dart';
+import 'party_chat.dart';
+import 'party_player.dart';
+import 'party_transport.dart' show PartyRoom;
+import 'party_ui.dart';
 import 'settings.dart';
 import 'site_listing.dart';
 import 'sources.dart';
@@ -28,8 +33,13 @@ import 'ui.dart';
 import 'desktop.dart' show setPlayerTitle;
 import 'platform.dart';
 import 'playback.dart';
+import 'upscale.dart';
+import 'upscaler.dart';
 
 part 'desktop/player_view.dart';
+part 'player/upscaling.dart';
+part 'player/party.dart';
+part 'player/chat.dart';
 
 /// Full-screen player with Dantotsu-style gestures: double-tap seek, optional swipe seek and brightness (left) /
 /// volume (right) swipes, hold for 2× or to pause, lock, episode drawer, server/subtitle/speed pickers, AniSkip with
@@ -50,9 +60,15 @@ class PlayerScreen extends StatefulWidget {
     required this.dub,
     this.sourceName,
     this.backend,
+    this.party,
   });
 
   final PlayerBackend? backend;
+
+  /// A watch party to play in step with, not yet started (or started early, see [PartyPlayer.startEarly]); its
+  /// controls must be a [PartyPlayer] (see there). The player starts it, and leaves it when it closes. Without one,
+  /// "Watch together" starts a party here (see player/party.dart).
+  final PartySession? party;
   final Map media;
   final Source?
   source; // null when playing downloads while the site is unreachable
@@ -70,7 +86,23 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   // ExoPlayer, as CloudStream plays: hardware decoding with fallback to another decoder, and a deep buffer.
-  late final player = ExoPlayer(widget.backend);
+  // Android: mpv instead while upscaling, for this player's life (see player/upscaling.dart).
+  late final player = ExoPlayer(
+    widget.backend ?? PlayerBackend.forSession(upscale: _upscaleOnOpen),
+  );
+
+  /// The watch party joined or started here, and its hold on the player; null outside one.
+  late PartySession? _partySession = widget.party;
+  late PartyPlayer? _party = widget.party?.controls as PartyPlayer?;
+  StreamSubscription<void>? _partyChanges;
+  bool _partyStarting = false, _partyLeaving = false;
+
+  /// The party's chat bar (phones) or panel (desktop) is open (see player/chat.dart).
+  bool _chatOpen = false;
+  bool get _inParty => _party?.active ?? false;
+
+  /// A guest follows the host's episode and the host's skips.
+  bool get _guest => _inParty && !_party!.isHost;
   final _scaffold = GlobalKey<ScaffoldState>();
   // The site playing: the one the page chose, until "Try another site" moves it.
   late Source? _source = widget.source;
@@ -80,6 +112,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Filler episodes, which "next" passes over when Settings say to skip them.
   Set<num> _filler = const {};
+
+  /// Anime4K upscaling, where mpv plays (see player/upscaling.dart).
+  Upscaler? _upscaler;
 
   PlaybackSession _newSession(int index) => PlaybackSession(
     _episodes,
@@ -213,8 +248,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   late final _lifecycle = AppLifecycleListener(
     onHide: () {
       _saveHistory();
-      // iOS may suspend the app immediately. Keep playback foreground-only and resume explicitly.
-      if (Platform.isIOS) player.pause().ignore();
+      // iOS may suspend the app immediately. Keep playback foreground-only and resume explicitly. Not a press, so a
+      // watch party isn't asked (nor paused).
+      if (Platform.isIOS) player.applyPause().ignore();
     },
   );
 
@@ -247,6 +283,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     onRemoteSeek = (to) =>
         player.seek(PlaybackSession.clamp(to, player.state.duration));
     _lifecycle;
+    player.playingOn.addListener(_movedOffMpv);
     player.setQuality(Settings.streamQuality).ignore();
     ScreenBrightness().application.then((v) => brightness = v).ignore();
     Analytics.screen('/player', title: 'Player');
@@ -267,7 +304,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         switch (session.onError(
           position,
           player.state.duration,
-          exoPlayer: !usesMediaKit,
+          exoPlayer: !_onMpv,
         )) {
           case ErrorAction.ignore:
             return;
@@ -276,22 +313,88 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _hint('Playback failed · reloading', icon: Icons.refresh_rounded);
             _play(current!, at: position);
           case ErrorAction.nextServer:
-            _serverFailed(Exception(e));
+            if (!_upscalingFellBack()) _serverFailed(Exception(e));
         }
       }),
       player.stream.completed.listen((done) {
-        if (done && session.advancesOnFinish) {
+        if (done && session.advancesOnFinish && !_guest) {
           _load(session.nextIndex);
         }
       }),
     ];
+    _joinParty();
     _load(index);
     _scheduleHide();
+  }
+
+  void _joinParty() {
+    final party = _partySession;
+    if (party == null) return;
+    _partyChanges = party.changes.listen((_) => _refresh());
+    _party!.attach(
+      party,
+      player,
+      episode: _partyEpisode,
+      open: _openPartyEpisode,
+      refused: () {
+        _refusals++;
+        _hint(
+          'Only the host can control playback',
+          icon: Icons.lock_outline_rounded,
+        );
+      },
+      rate: rate,
+      roomRateChanged: (r) {
+        if (mounted) setState(() => rate = r);
+      },
+      ended: _partyEnded,
+    );
+  }
+
+  /// Presses the party refused (a guest's, under host-only control).
+  int _refusals = 0;
+
+  /// Runs [press], a play, pause, seek or speed change of the person's; null when the party refused it, so the
+  /// press's own hint doesn't cover the refusal.
+  Future<void>? _press(Future<void> Function() press) {
+    final before = _refusals;
+    final done = press();
+    return _refusals == before ? done : null;
+  }
+
+  /// Episode [number] of this show as a party names it; null for a show with neither id.
+  PartyEpisode? _partyKey(num number) {
+    int? id(Object? v) => v is int && v > 0 ? v : null;
+    final anilist = id(Show(widget.media).anilistId),
+        mal = id(widget.media['idMal']);
+    if (anilist == null && mal == null) return null;
+    return PartyEpisode(anilist: anilist, mal: mal, number: number);
+  }
+
+  /// What's open, as a party names it; null while nothing is.
+  PartyEpisode? _partyEpisode() =>
+      current == null ? null : _partyKey(episode.number);
+
+  /// The host moved to [target]: open it at [at] when it's an episode of this show.
+  void _openPartyEpisode(PartyEpisode target, Duration at) {
+    if (!mounted || _partyKey(target.number)?.sameAs(target) != true) {
+      return; // another show
+    }
+    final i = _episodes.indexWhere((e) => e.number == target.number);
+    if (i < 0) {
+      _hint(
+        'Episode ${epNumber(target.number)} isn\'t on $_sourceName',
+        icon: Icons.error_outline,
+      );
+      return;
+    }
+    _load(i, at: at, follow: true);
   }
 
   /// TV remote: with the controls hidden, left/right seek, OK plays/pauses and up/down bring the controls
   /// up; with them showing, the D-pad moves between buttons. Media keys work either way.
   bool _onKey(KeyEvent event) {
+    if (_typing) return false; // the party's chat field has the keyboard
     if (isDesktop && !isTv) return _onDesktopKey(event);
     if (!isTv || !mounted) return false;
     // Releasing a held left/right lands the scrub with one seek.
@@ -383,8 +486,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           0,
           _speeds.length - 1,
         )];
+    if (_press(() => player.setRate(next)) == null) return;
     setState(() => rate = next);
-    player.setRate(next);
     _hint('$next×', icon: Icons.speed_rounded);
   }
 
@@ -407,18 +510,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// controls and the cursor go away while it plays.
   Widget _pointer(Widget child) => !isDesktop
       ? child
-      : Listener(
-          onPointerSignal: (e) {
-            if (e is PointerScrollEvent) {
-              _nudgeVolume(e.scrollDelta.dy < 0 ? .05 : -.05);
-            }
-          },
-          child: MouseRegion(
-            cursor: controls || !player.state.playing
-                ? MouseCursor.defer
-                : SystemMouseCursors.none,
-            onHover: (_) => _showControls(),
-            child: child,
+      // The party's chat panel, when open, beside it (see player/chat.dart).
+      : _besideChat(
+          Listener(
+            onPointerSignal: (e) {
+              if (e is PointerScrollEvent) {
+                _nudgeVolume(e.scrollDelta.dy < 0 ? .05 : -.05);
+              }
+            },
+            child: MouseRegion(
+              cursor: controls || !player.state.playing
+                  ? MouseCursor.defer
+                  : SystemMouseCursors.none,
+              onHover: (_) => _showControls(),
+              child: child,
+            ),
           ),
         );
 
@@ -525,6 +631,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hintNote.dispose();
     _volume.dispose();
     _seekTarget.dispose();
+    _upscaler?.dispose();
+    _partyChanges?.cancel();
+    _party?.detach();
+    _partySession?.leave().ignore();
     player.dispose();
     if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
@@ -543,7 +653,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _load(int i, {Duration? at}) async {
+  /// [follow]: the party's host moved there; a guest's own move to another episode is refused.
+  Future<void> _load(int i, {Duration? at, bool follow = false}) async {
+    if (_guest && !follow && i != index) {
+      return _hint(
+        'The host picks the episode',
+        icon: Icons.lock_outline_rounded,
+      );
+    }
     _saveHistory(); // where the outgoing episode stopped, before index moves on
     setState(() {
       session.start(i);
@@ -641,11 +758,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     bool stale() =>
         !mounted || generation != _playGeneration || current != stream;
     setState(() => session.playing(stream));
+    _party?.tick(); // the episode is open: a host tells the room
     var loaded = false;
     try {
       final address = await StreamAddress.instance.forPlayer(stream);
       if (stale()) return;
-      if (usesMediaKit) {
+      if (_onMpv) {
         final heights = await configureQuality(
           address.url,
           quality == 0 ? Settings.streamQuality : quality,
@@ -686,7 +804,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       if (stale()) return;
       // A Cloudflare check is the site's, not a dead server: the error view offers to verify it.
-      if (loaded || !usesMediaKit || e is CloudflareChallenge) {
+      if (loaded || !_onMpv || e is CloudflareChallenge) {
         setState(() => error = e);
       } else {
         _serverFailed(e);
@@ -723,6 +841,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       return null;
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _layoutUpscaler(); // the window resized or went fullscreen
   }
 
   bool get _hasAudios => player.state.audios.length > 1;
@@ -783,7 +907,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     (q) async {
       if (!mounted || _changingQuality || q == quality) return;
       setState(() => quality = q);
-      if (usesMediaKit && current != null) {
+      if (_onMpv && current != null) {
         _changingQuality = true;
         final stream = current!;
         final generation = _playGeneration + 1;
@@ -809,7 +933,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (track != null) await _setSubtitle(track, selectedSubtitle);
           }
           if (!wasPlaying && mounted && generation == _playGeneration) {
-            await player.pause();
+            await player.applyPause(); // as it was, not a press
           }
         } catch (e) {
           if (mounted && generation == _playGeneration) {
@@ -830,8 +954,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   _Choice<double> get _speedChoice =>
       _Choice('Speed', {for (final r in _speeds) r: '$r×'}, rate, (r) async {
         if (!mounted) return;
+        final asked = _press(() => player.setRate(r));
+        if (asked == null) return;
         setState(() => rate = r);
-        await player.setRate(r);
+        await asked;
       });
 
   /// [choice] as a sheet (a panel on TV).
@@ -854,7 +980,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onPosition(Duration position) {
     session.progressed(position);
     _checkWatched(position, player.state.duration);
-    if (session.autoSkip(position) case final skip?) {
+    // Off for a guest, whose host's skip arrives as a seek; the host's goes out to the room like a press.
+    if ((_guest ? null : session.autoSkip(position)) case final skip?) {
       player.seek(skip.end);
       _hint('Skipped ${_skipName(skip.type)}');
     }
@@ -980,7 +1107,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.state.duration,
       seconds,
     );
-    player.seek(to);
+    if (_press(() => player.seek(to)) == null) return;
     if (!controls) _showTimeline();
     _hint(
       total > 0 ? '+${total}s' : '${total}s',
@@ -1065,7 +1192,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   Widget build(BuildContext context) {
     // With the controls hidden, the remote's keys go to the player itself (see _onKey).
-    if ((isTv || isDesktop) && !controls && !_keys.hasPrimaryFocus) {
+    if ((isTv || isDesktop) &&
+        !controls &&
+        !_keys.hasPrimaryFocus &&
+        !_typing) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted &&
             !controls &&
@@ -1105,18 +1235,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
         error == null && (current == null || player.state.buffering);
     // A mouse clicks, wheels and hovers instead (see [_pointer]).
     final swipes = !isDesktop && !locked && Settings.swipeGestures;
-    final hold = locked || isDesktop ? 'off' : Settings.holdGesture;
+    final hold = locked || isDesktop
+        ? 'off'
+        : _inParty && Settings.holdGesture != 'pause'
+        ? 'off' // 2× would pull everyone along, or a guest out of step
+        : Settings.holdGesture;
     final upNext = _upNext(position);
 
     // On TV, Back first hides the controls, like Netflix.
     return PopScope(
-      canPop: !(isTv && controls && !locked),
+      // A host's way out ends the room for everyone: asked first (see player/party.dart).
+      canPop: !(isTv && controls && !locked) && !_hosting && !_chatTakesBack,
       // Saved on the way out, not in dispose: the page underneath reloads history as soon as this pops.
       // Paused too, or it plays on through the exit animation over whatever comes next.
       onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _chatTakesBack) return _toggleChat();
+        if (!didPop && _hosting && !(isTv && controls && !locked)) {
+          _leaveHosting().ignore();
+          return;
+        }
         if (!didPop) return setState(() => controls = false);
         _saveHistory();
-        player.pause();
+        player.applyPause(); // leaving isn't a press: a guest's doesn't pause the room
         // Rotate back now rather than after the route is gone, so the page underneath isn't shown sideways.
         restoreOrientation();
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -1124,6 +1264,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       child: Scaffold(
         key: _scaffold,
         backgroundColor: Colors.black,
+        // The party's chat bar sits over the keyboard; the video stays as it is behind them.
+        resizeToAvoidBottomInset: false,
         endDrawerEnableOpenDragGesture: false, // horizontal swipes seek
         // Paused while the episodes are open, except on desktop, where you browse them as it plays.
         onEndDrawerChanged: isDesktop ? null : _onDialog,
@@ -1199,7 +1341,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         HapticFeedback.mediumImpact();
                         if (hold == 'pause') {
                           heldPlaying = player.state.playing;
-                          player.pause();
+                          if (_press(player.pause) == null) {
+                            heldPlaying = false;
+                            return;
+                          }
                           _hint(
                             'Paused · release to play',
                             icon: Icons.pause_rounded,
@@ -1317,7 +1462,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         ),
                 ),
               ),
+              // Keyed too (see there): the party's indicator comes and goes with the controls, and its chat with the party.
+              if (_inParty && (!controls || locked)) _partyIndicator(),
+              ?_chatOverlay(size),
               IgnorePointer(
+                // Keyed itself as well, so nothing coming and going ahead of it can remount it.
+                key: const ValueKey('controls'),
                 ignoring: !controls,
                 // Hidden controls can't hold D-pad focus.
                 child: ExcludeFocus(
@@ -1383,6 +1533,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 ),
+              ?_tvReactions(),
+              ..._chatBar(),
               if (error != null) _errorView(),
             ],
           ),
@@ -1543,6 +1695,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onDialog(bool open) {
+    if (_inParty) return; // a menu mustn't pause the whole room
     if (open) {
       _openedPlaying = player.state.playing;
       if (_openedPlaying) player.pause();
@@ -1565,7 +1718,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool get _canSwitchServer => streams.length > 1 && streams.contains(current);
 
-  List<int> get _qualities => usesMediaKit
+  List<int> get _qualities => _onMpv
       ? _desktopHeights
       : player.state.heights.where((h) => h >= 480).toList();
 
@@ -1949,6 +2102,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 hasNext ? () => _load(session.nextIndex) : null,
               ),
               const SizedBox(width: 24),
+              if (_partyKey(episode.number) != null)
+                control(Icons.groups_outlined, _partyLabel, _watchTogether),
               if (_episodes.length > 1)
                 control(
                   Icons.video_library_outlined,
@@ -1982,6 +2137,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   _pickQuality,
                 ),
               control(Icons.speed_rounded, 'Speed · $rate×', _pickSpeed),
+              if (_offersUpscaling)
+                control(
+                  Icons.auto_awesome_outlined,
+                  'Upscaling · $_upscaleLabel',
+                  () => _open(_upscaleChoice),
+                ),
               control(_fitIcon, 'Picture · ${pictureFits[fit]}', _cycleFit),
               if (supportsExternalPlayer)
                 control(
@@ -2006,10 +2167,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
               IconButton(
                 tooltip: 'Back',
                 icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.maybePop(context),
               ),
               const SizedBox(width: 4),
               Expanded(child: _titles(tv: false)),
+              _partyButton(),
+              if (_inParty) _chatButton(),
               ..._menus(),
             ],
           ),
@@ -2074,6 +2237,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ?_serverButton(),
               ?_qualityButton(),
               _speedButton(),
+              ?_upscaleButton(),
               _fitButton(),
             ],
           ),
