@@ -209,7 +209,9 @@ class _SearchScreenState extends State<SearchScreen> {
   final controller = TextEditingController();
   final fieldFocus = FocusNode();
   bool _filtersVisible = true;
-  Map? _preview;
+
+  /// The focused result on TV; only the preview listens, so a D-pad move doesn't rebuild the page.
+  final _preview = ValueNotifier<Map?>(null);
   late final search = SearchSession(
     fetch: (query, filters, page) => Tracker.search(query, filters, page: page),
     filters:
@@ -266,6 +268,7 @@ class _SearchScreenState extends State<SearchScreen> {
     voiceSearch.removeListener(_voiceRequested);
     remoteQuery.removeListener(_remoteTyped);
     search.dispose();
+    _preview.dispose();
     controller.dispose();
     fieldFocus.dispose();
     super.dispose();
@@ -536,10 +539,13 @@ class _SearchScreenState extends State<SearchScreen> {
                           Expanded(child: _results()),
                           SizedBox(
                             width: MediaQuery.sizeOf(context).width * .32,
-                            child: _TvPreview(
-                              search.items.contains(_preview)
-                                  ? _preview!
-                                  : search.items.first,
+                            child: ValueListenableBuilder(
+                              valueListenable: _preview,
+                              builder: (context, preview, _) => _TvPreview(
+                                search.items.contains(preview)
+                                    ? preview!
+                                    : search.items.first,
+                              ),
                             ),
                           ),
                           SizedBox(width: side),
@@ -731,7 +737,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   search.items[i],
                   onBack: _remember,
                   onFocused: (media) {
-                    if (mounted) setState(() => _preview = media);
+                    if (mounted) _preview.value = media;
                   },
                 ),
               ),

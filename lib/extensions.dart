@@ -336,91 +336,96 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
             (query.isEmpty || e.name.toLowerCase().contains(query)))
           e,
     ];
-    return ListView(
+    final head = [
+      const SectionHeader('Repos'),
+      for (final repo in catalog.repos)
+        ListTile(
+          leading: const Icon(Icons.inventory_2_outlined),
+          title: Text(repo.name),
+          subtitle: Text(
+            repo.index,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            tooltip: 'Remove repo',
+            icon: const Icon(Icons.delete_outline_rounded),
+            onPressed: () => _removeRepo(repo),
+          ),
+        ),
+      if (catalog.installed.isNotEmpty) ...[
+        const SectionHeader('Installed'),
+        for (final ext in catalog.installed.values)
+          _tile(
+            icon: byPkg[ext.pkg]?.icon,
+            title: ext.sources.join(', '),
+            subtitle: [
+              if (byPkg[ext.pkg]?.lang case final lang?) lang.toUpperCase(),
+              'v${ext.version}',
+            ].join(' · '),
+            busy: _busy.contains(ext.pkg),
+            actions: [
+              if (byPkg[ext.pkg] case final listed?
+                  when listed.version != ext.version)
+                TextButton(
+                  onPressed: () =>
+                      _run(ext.pkg, () => Extensions.install(listed)),
+                  child: const Text('Update'),
+                ),
+              IconButton(
+                tooltip: 'Remove',
+                icon: const Icon(Icons.delete_outline_rounded),
+                onPressed: () =>
+                    _run(ext.pkg, () => Extensions.uninstall(ext.pkg)),
+              ),
+            ],
+          ),
+      ],
+      if (catalog.available.isNotEmpty) ...[
+        const SectionHeader('Available'),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
+          child: TextField(
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search_rounded),
+              hintText: 'Search extensions',
+            ),
+            onChanged: (v) => setState(() => _filter = v),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Show 18+ extensions'),
+          value: _nsfw,
+          onChanged: (v) => setState(() => _nsfw = v),
+        ),
+      ],
+    ];
+    // Repos list hundreds of extensions: only the tiles in view are built, on each keystroke of the filter too.
+    return ListView.builder(
       padding: EdgeInsets.only(
         bottom: 32 + MediaQuery.paddingOf(context).bottom,
       ),
-      children: [
-        const SectionHeader('Repos'),
-        for (final repo in catalog.repos)
-          ListTile(
-            leading: const Icon(Icons.inventory_2_outlined),
-            title: Text(repo.name),
-            subtitle: Text(
-              repo.index,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      itemCount: head.length + offered.length,
+      itemBuilder: (context, i) {
+        if (i < head.length) return head[i];
+        final e = offered[i - head.length];
+        return _tile(
+          icon: e.icon,
+          title: e.name,
+          subtitle: [
+            e.lang.toUpperCase(),
+            'v${e.version}',
+            if (e.nsfw) '18+',
+          ].join(' · '),
+          busy: _busy.contains(e.pkg),
+          actions: [
+            TextButton(
+              onPressed: () => _install(e),
+              child: const Text('Install'),
             ),
-            trailing: IconButton(
-              tooltip: 'Remove repo',
-              icon: const Icon(Icons.delete_outline_rounded),
-              onPressed: () => _removeRepo(repo),
-            ),
-          ),
-        if (catalog.installed.isNotEmpty) ...[
-          const SectionHeader('Installed'),
-          for (final ext in catalog.installed.values)
-            _tile(
-              icon: byPkg[ext.pkg]?.icon,
-              title: ext.sources.join(', '),
-              subtitle: [
-                if (byPkg[ext.pkg]?.lang case final lang?) lang.toUpperCase(),
-                'v${ext.version}',
-              ].join(' · '),
-              busy: _busy.contains(ext.pkg),
-              actions: [
-                if (byPkg[ext.pkg] case final listed?
-                    when listed.version != ext.version)
-                  TextButton(
-                    onPressed: () =>
-                        _run(ext.pkg, () => Extensions.install(listed)),
-                    child: const Text('Update'),
-                  ),
-                IconButton(
-                  tooltip: 'Remove',
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  onPressed: () =>
-                      _run(ext.pkg, () => Extensions.uninstall(ext.pkg)),
-                ),
-              ],
-            ),
-        ],
-        if (catalog.available.isNotEmpty) ...[
-          const SectionHeader('Available'),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
-            child: TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search_rounded),
-                hintText: 'Search extensions',
-              ),
-              onChanged: (v) => setState(() => _filter = v),
-            ),
-          ),
-          SwitchListTile(
-            title: const Text('Show 18+ extensions'),
-            value: _nsfw,
-            onChanged: (v) => setState(() => _nsfw = v),
-          ),
-          for (final e in offered)
-            _tile(
-              icon: e.icon,
-              title: e.name,
-              subtitle: [
-                e.lang.toUpperCase(),
-                'v${e.version}',
-                if (e.nsfw) '18+',
-              ].join(' · '),
-              busy: _busy.contains(e.pkg),
-              actions: [
-                TextButton(
-                  onPressed: () => _install(e),
-                  child: const Text('Install'),
-                ),
-              ],
-            ),
-        ],
-      ],
+          ],
+        );
+      },
     );
   }
 
