@@ -148,8 +148,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// has one named alike.
   String? audio;
   Object? error;
-  String? hint;
-  IconData? hintIcon;
+
+  /// The pill over the video; a notifier so drags and scrubs, which update it per event, rebuild only the pill.
+  final _hintNote = ValueNotifier<({String text, IconData? icon})?>(null);
   bool controls = true, locked = false;
 
   /// Whether the video was playing when a hold paused it, to play it again on release.
@@ -166,17 +167,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<int> _desktopHeights = const [];
   bool _changingQuality = false;
   int _playGeneration = 0;
-  double rate = Settings.speed, brightness = .5, volume = 1, doubleTapX = 0;
+  double rate = Settings.speed, brightness = .5, doubleTapX = 0;
+
+  /// 0–1; a notifier so only the desktop's volume control rebuilds as it changes (a drag, the wheel, keys).
+  final _volume = ValueNotifier<double>(1);
+  double get volume => _volume.value;
+  set volume(double v) => _volume.value = v;
   // Desktop: the volume before M muted it, the pointer's place over the seek bar (0–1), and always on top.
   double _beforeMute = 1;
   final _seekHover = ValueNotifier<double?>(null);
   bool _onTop = false, _overControls = false;
 
-  /// For the desktop controls, which live in their own file and can't call [setState].
-  void _set(VoidCallback change) => setState(change);
   // The phone's media volume as 0–1.
 
-  Duration? seekTarget;
+  /// Where a drag or held key is scrubbing to; only the timelines listen, so scrubbing doesn't rebuild the player.
+  final _seekTarget = ValueNotifier<Duration?>(null);
   Duration? _startAt; // where the current server was asked to start
   Timer? _hideTimer, _hintTimer;
   late final List<StreamSubscription> _subs;
@@ -191,7 +196,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _showTimeline() {
     _timelineTimer?.cancel();
-    setState(() => _timelineShown = true);
+    if (!_timelineShown) setState(() => _timelineShown = true);
     _timelineTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _timelineShown = false);
     });
@@ -293,7 +298,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (event is KeyUpEvent) {
       if (session.release() case final to?) {
         player.seek(to);
-        seekTarget = null;
+        _seekTarget.value = null;
         _showTimeline();
       }
       return false;
@@ -491,7 +496,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ? session.hold(player.state.duration, step)
         : null;
     if (held != null) {
-      seekTarget = held;
+      _seekTarget.value = held;
       _showTimeline();
       _hint(formatDuration(held), icon: step > 0 ? _forwardIcon : _replayIcon);
     } else {
@@ -517,6 +522,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hintTimer?.cancel();
     _timelineTimer?.cancel();
     _seekHover.dispose();
+    _hintNote.dispose();
+    _volume.dispose();
+    _seekTarget.dispose();
     player.dispose();
     if (Platform.isAndroid || Platform.isIOS) {
       ScreenBrightness().resetApplicationScreenBrightness();
@@ -954,15 +962,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _hint(String text, {IconData? icon, bool sticky = false}) {
     _hintTimer?.cancel();
     if (!mounted) return;
-    setState(() {
-      hint = text;
-      hintIcon = icon;
-    });
+    _hintNote.value = (text: text, icon: icon);
     if (!sticky) {
-      _hintTimer = Timer(
-        const Duration(milliseconds: 1500),
-        () => mounted ? setState(() => hint = null) : null,
-      );
+      _hintTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) _hintNote.value = null;
+      });
     }
   }
 
@@ -1006,7 +1010,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  void _clearHint([Object? _]) => _hint(hint ?? '', icon: hintIcon);
+  /// Lets a held (sticky) hint fade as usual; with none showing, shows nothing rather than an empty box.
+  void _clearHint([Object? _]) {
+    final note = _hintNote.value;
+    if (note != null) _hint(note.text, icon: note.icon);
+  }
 
   IconData get _replayIcon => switch (Settings.seekSeconds) {
     5 => Icons.replay_5_rounded,
@@ -1225,79 +1233,90 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 onVerticalDragEnd: !swipes ? null : _clearHint,
                 onHorizontalDragStart: !swipes
                     ? null
-                    : (_) => seekTarget = player.state.position,
+                    : (_) => _seekTarget.value = player.state.position,
                 onHorizontalDragUpdate: !swipes
                     ? null
                     : (d) {
-                        seekTarget = _clamp(
-                          seekTarget! +
+                        final target = _seekTarget.value = _clamp(
+                          _seekTarget.value! +
                               Duration(
                                 milliseconds: (d.delta.dx * 250).round(),
                               ),
                         );
-                        final diff = (seekTarget! - position).inSeconds;
+                        final diff = (target - position).inSeconds;
                         _hint(
-                          '${formatDuration(seekTarget!)}  (${diff >= 0 ? '+' : ''}${diff}s)',
+                          '${formatDuration(target)}  (${diff >= 0 ? '+' : ''}${diff}s)',
                           sticky: true,
                         );
                       },
                 onHorizontalDragEnd: !swipes
                     ? null
                     : (_) {
-                        player.seek(seekTarget!);
-                        seekTarget = null;
+                        player.seek(_seekTarget.value!);
+                        _seekTarget.value = null;
                         _clearHint();
                       },
               ),
+              // Keyed: unkeyed, the spinner or the 2× badge coming and going would remount the controls after them.
               if (loading)
                 const IgnorePointer(
+                  key: ValueKey('loading'),
                   child: Center(
                     child: CircularProgressIndicator(color: Colors.white),
                   ),
                 ),
               if (fastHeld)
                 const IgnorePointer(
+                  key: ValueKey('fast'),
                   child: Align(
                     alignment: Alignment(0, -.85),
                     child: _FastForward(),
                   ),
                 ),
-              if (hint != null)
-                IgnorePointer(
-                  child: Align(
-                    alignment: const Alignment(0, -.6),
-                    child: DecoratedBox(
-                      // Dark in every theme: it sits on the video, and its text is white.
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .7),
-                        borderRadius: BorderRadius.circular(radiusLarge),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (hintIcon != null) ...[
-                              Icon(hintIcon, size: 20, color: Colors.white),
-                              const SizedBox(width: 8),
-                            ],
-                            Text(
-                              hint!,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
+              IgnorePointer(
+                child: ValueListenableBuilder(
+                  valueListenable: _hintNote,
+                  builder: (context, note, _) => note == null
+                      ? const SizedBox.shrink()
+                      : Align(
+                          alignment: const Alignment(0, -.6),
+                          child: DecoratedBox(
+                            // Dark in every theme: it sits on the video, and its text is white.
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: .7),
+                              borderRadius: BorderRadius.circular(radiusLarge),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 12,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (note.icon != null) ...[
+                                    Icon(
+                                      note.icon,
+                                      size: 20,
+                                      color: Colors.white,
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
+                                  Text(
+                                    note.text,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
-                  ),
                 ),
+              ),
               IgnorePointer(
                 ignoring: !controls,
                 // Hidden controls can't hold D-pad focus.
@@ -1306,15 +1325,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: AnimatedOpacity(
                     opacity: controls ? 1 : 0,
                     duration: motionMs(context, 200),
-                    child: Focus(
-                      focusNode: _controlsNode,
-                      child: locked
-                          ? _lockedOverlay()
-                          : isTv
-                          ? _tvOverlay(position, loading)
-                          : isDesktop
-                          ? _deskOverlay(position, loading)
-                          : _overlay(position, loading),
+                    // The seek bar and times repaint every second, the subtitles at each line: neither repaints the other.
+                    child: RepaintBoundary(
+                      child: Focus(
+                        focusNode: _controlsNode,
+                        child: locked
+                            ? _lockedOverlay()
+                            : isTv
+                            ? _tvOverlay(position, loading)
+                            : isDesktop
+                            ? _deskOverlay(position, loading)
+                            : _overlay(position, loading),
+                      ),
                     ),
                   ),
                 ),
@@ -1690,22 +1712,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  /// The position, the seek bar and the length.
+  /// The position, the seek bar and the length. Rebuilt alone while scrubbing (see [_scrubbed]).
   Widget _timeline(Duration position) {
     final duration = player.state.duration;
-    final shown = seekTarget ?? position;
     const tabular = TextStyle(
       color: Colors.white,
       fontFeatures: [FontFeature.tabularFigures()],
     );
-    return Row(
-      children: [
-        Text(formatDuration(shown), style: tabular),
-        Expanded(child: ExcludeFocus(child: _seekBar(shown, duration))),
-        Text(formatDuration(duration), style: tabular),
-      ],
+    return _scrubbed(
+      (shown) => Row(
+        children: [
+          Text(formatDuration(shown), style: tabular),
+          Expanded(child: ExcludeFocus(child: _seekBar(shown, duration))),
+          Text(formatDuration(duration), style: tabular),
+        ],
+      ),
     );
   }
+
+  /// [build] with the time to show: the scrub target, else where it plays. Read live, not the build's position:
+  /// letting go of a scrub rebuilds only this, and [ExoPlayer.seek] has already moved the position there.
+  Widget _scrubbed(Widget Function(Duration shown) build) =>
+      ValueListenableBuilder(
+        valueListenable: _seekTarget,
+        builder: (context, target, _) => build(target ?? player.state.position),
+      );
 
   /// Names the focused TV control, between the times under the seek bar.
   final _tvLabel = ValueNotifier<String>('');
@@ -1716,7 +1747,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _tvOverlay(Duration position, bool loading) {
     final title = episode.title;
     final duration = player.state.duration;
-    final shown = seekTarget ?? position;
     final skip = Settings.skipMode == SkipMode.off
         ? null
         : session.activeSkip(position);
@@ -1838,7 +1868,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: AnimatedOpacity(
                     opacity: focused ? 1 : .85,
                     duration: motionMs(context, 150),
-                    child: ExcludeFocus(child: _seekBar(shown, duration)),
+                    child: ExcludeFocus(
+                      child: _scrubbed((shown) => _seekBar(shown, duration)),
+                    ),
                   ),
                 );
               },
@@ -1848,7 +1880,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Text(formatDuration(shown), style: tabular),
+                _scrubbed(
+                  (shown) => Text(formatDuration(shown), style: tabular),
+                ),
                 Expanded(
                   child: ValueListenableBuilder(
                     valueListenable: _tvLabel,
@@ -1867,11 +1901,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   ),
                 ),
-                Text(
-                  duration > Duration.zero
-                      ? '-${formatDuration(duration - shown)}'
-                      : '',
-                  style: tabular,
+                _scrubbed(
+                  (shown) => Text(
+                    duration > Duration.zero
+                        ? '-${formatDuration(duration - shown)}'
+                        : '',
+                    style: tabular,
+                  ),
                 ),
               ],
             ),
@@ -2088,12 +2124,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     .toDouble()
                     .clamp(0, max),
                 onChangeStart: (_) => _hideTimer?.cancel(),
-                onChanged: (v) => setState(
-                  () => seekTarget = Duration(milliseconds: v.round()),
-                ),
+                onChanged: (v) =>
+                    _seekTarget.value = Duration(milliseconds: v.round()),
                 onChangeEnd: (v) {
                   player.seek(Duration(milliseconds: v.round()));
-                  seekTarget = null;
+                  _seekTarget.value = null;
                   _scheduleHide();
                 },
               ),
@@ -2469,16 +2504,16 @@ class _FastForwardState extends State<_FastForward>
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (var i = 0; i < 3; i++)
-                  Opacity(
-                    // Each chevron brightens as the wave reaches it, then fades.
-                    opacity: switch ((wave.value * 3 - i) % 3) {
-                      final phase when phase < 1 => 1 - phase * .7,
-                      _ => .3,
-                    },
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      size: 20,
-                      color: Colors.white,
+                  Icon(
+                    Icons.play_arrow_rounded,
+                    size: 20,
+                    // Each chevron brightens as the wave reaches it, then fades. In the colour, not an Opacity: that
+                    // would be a layer per chevron every frame.
+                    color: Colors.white.withValues(
+                      alpha: switch ((wave.value * 3 - i) % 3) {
+                        final phase when phase < 1 => 1 - phase * .7,
+                        _ => .3,
+                      },
                     ),
                   ),
               ],
