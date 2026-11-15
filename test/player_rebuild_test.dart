@@ -1,3 +1,5 @@
+import 'package:aniview/party.dart';
+import 'package:aniview/party_player.dart';
 import 'package:aniview/platform.dart';
 import 'package:aniview/player.dart';
 import 'package:aniview/settings.dart';
@@ -16,6 +18,7 @@ Future<Backend> _open(
   int id, {
   bool desktop = true,
   Map<String, Object> prefs = const {},
+  PartySession? party,
 }) async {
   SharedPreferences.setMockInitialValues({'resume': false, ...prefs});
   await Settings.load();
@@ -45,6 +48,7 @@ Future<Backend> _open(
         index: 0,
         dub: false,
         backend: backend,
+        party: party,
       ),
     ),
   );
@@ -133,6 +137,64 @@ void main() {
     await tester.pump(const Duration(seconds: 2)); // the hint goes
     expect(find.text('100%'), findsNothing);
     expect(identical(tester.state(next), before), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('a watch party\'s overlays keep the controls mounted', (
+    tester,
+  ) async {
+    final hub = LoopbackHub();
+    final party = PartySession(
+      transport: hub.join(),
+      controls: PartyPlayer(),
+      isHost: true,
+      name: 'host',
+      tickEvery: null,
+    );
+    await _open(tester, 7007012, party: party);
+    final next = find.byTooltip('Next episode  (N)');
+    final before = tester.state(next);
+    final indicator = find.byKey(const ValueKey('party-indicator'));
+    final chat = find.byKey(const ValueKey('party-chat-overlay'));
+    // The player's own Stack, around the controls: what comes and goes in it must be keyed, so the unkeyed
+    // children are the same whatever shows.
+    List<Type> unkeyed() => [
+      for (final child
+          in tester
+              .widget<Stack>(
+                find
+                    .ancestor(
+                      of: find.byKey(const ValueKey('controls')),
+                      matching: find.byType(Stack),
+                    )
+                    .first,
+              )
+              .children)
+        if (child.key == null) child.runtimeType,
+    ];
+    final steady = unkeyed();
+    expect(chat, findsOneWidget);
+    expect(indicator, findsNothing);
+    // The controls hide as it plays: the party's indicator comes up ahead of them in the Stack.
+    await tester.pump(const Duration(seconds: 4));
+    expect(indicator, findsOneWidget);
+    expect(unkeyed(), steady);
+    expect(identical(tester.state(next), before), isTrue);
+    // The pointer brings them back, and the indicator goes.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(700, 400));
+    await mouse.moveTo(const Offset(710, 410));
+    await tester.pump();
+    expect(indicator, findsNothing);
+    expect(identical(tester.state(next), before), isTrue);
+    // Leaving the room takes its chat away, again without remounting them.
+    await party.leave();
+    await tester.pump();
+    expect(chat, findsNothing);
+    expect(unkeyed(), steady);
+    expect(identical(tester.state(next), before), isTrue);
+    await mouse.removePointer();
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 5));
   });
