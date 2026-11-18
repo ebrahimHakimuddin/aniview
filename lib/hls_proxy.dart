@@ -20,6 +20,7 @@ class HlsProxy {
   static final _keys = <Uint8List?>[];
   static final _dirs = <String>[];
   static final _documents = <(String, String)>[];
+  static final _deferred = <Future<String> Function()>[];
 
   /// Leads every path, so other apps on the device can't use the relay or read downloads without an address it gave out.
   static final _token = base64Url
@@ -96,6 +97,20 @@ class HlsProxy {
     return 'http://127.0.0.1:$port/$_token/document/$index/${Uri.encodeComponent(file)}';
   }
 
+  /// Local URL that, once played, redirects to the address [resolve] works out (a torrent's, which takes a while to
+  /// find): only the stream the player opens is resolved. A failure is tried afresh on the next request.
+  static Future<String> deferred(
+    Future<String> Function() resolve,
+    String ext,
+  ) async {
+    final port = (await _server).port;
+    Future<String>? once;
+    _deferred.add(
+      () => once ??= resolve()..then((_) {}, onError: (_) => once = null),
+    );
+    return 'http://127.0.0.1:$port/$_token/later/${_deferred.length - 1}/stream.$ext';
+  }
+
   // The upstream URL lives in the path (no query) so FFmpeg's segment-extension check sees `.ts`/`.m3u8`.
   static String _local(int port, int id, String upstream, String ext) =>
       'http://127.0.0.1:$port/$_token/$id/${base64Url.encode(utf8.encode(upstream)).replaceAll('=', '')}.$ext';
@@ -170,6 +185,11 @@ class HlsProxy {
           response.add(bytes);
         }
         return await response.close();
+      }
+      if (path case ['later', final id, _]) {
+        return await response.redirect(
+          Uri.parse(await _deferred[int.parse(id)]()),
+        );
       }
       if (path case ['key', final id]) {
         response.add(_keys[int.parse(id)]!);

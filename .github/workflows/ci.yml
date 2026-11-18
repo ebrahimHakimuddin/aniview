@@ -191,6 +191,13 @@ jobs:
               /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $name" "$plist"
             codesign --force --deep --sign - --entitlements macos/Runner/Release.entitlements "dmg/$name.app"
           fi
+          # rqbit, the torrent engine run beside the app (lib/torrent.dart; pinned like linux/CMakeLists.txt): signed
+          # to inherit the app's sandbox, as a sandboxed app's helper must be, then the app signed again over it.
+          curl -fsSL -o rqbit https://github.com/ikatson/rqbit/releases/download/v9.1.0/rqbit-osx-universal
+          echo "de978a3ddd9732181745a76d054faccd4df3e3caaae98e487292fea6637f1f73  rqbit" | shasum -a 256 -c -
+          install -m 755 rqbit "dmg/$name.app/Contents/MacOS/rqbit"
+          codesign --force --sign - --entitlements macos/Runner/Rqbit.entitlements "dmg/$name.app/Contents/MacOS/rqbit"
+          codesign --force --sign - --entitlements macos/Runner/Release.entitlements "dmg/$name.app"
           python3 tool/check_macos_bundle.py "dmg/$name.app"
           ln -s /Applications dmg/Applications
           hdiutil create -volname "$name" -srcfolder dmg -ov -format UDZO "$file"
