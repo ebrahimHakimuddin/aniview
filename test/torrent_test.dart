@@ -189,6 +189,7 @@ void main() {
       expect(response.statusCode, HttpStatus.found);
       expect(response.headers.value('location'), 'https://dl.rd/x.mkv');
       expect(added, ['aaa']);
+      expect(Settings.torrentGroup('1'), 'SubsPlease');
     },
   );
 
@@ -396,4 +397,169 @@ void main() {
     expect(asked.last, '/torrents/2/update_only_files');
     expect(chosen['bbb'], [0]);
   });
+
+  test(
+    'SeaDex picks on Nyaa are read with their files; private ones are not',
+    () {
+      final picks = seadexReleases({
+        'items': [
+          {
+            'expand': {
+              'trs': [
+                {
+                  'tracker': 'Nyaa',
+                  'infoHash': '143ED15E5E3DF072AE91ADAEB149973A887590DD',
+                  'releaseGroup': 'PMR',
+                  'dualAudio': true,
+                  'isBest': true,
+                  'url': 'https://nyaa.si/view/1961373',
+                  'files': [
+                    {'name': 'Frieren - S01E01 (BD Remux 1080p) [PMR].mkv'},
+                    {'name': 'Extras/NCOP.mkv'},
+                  ],
+                },
+                {
+                  'tracker': 'AB',
+                  'infoHash': '<redacted>',
+                  'releaseGroup': 'LostYears',
+                  'isBest': false,
+                  'files': [],
+                },
+              ],
+            },
+          },
+        ],
+      }, 'Frieren');
+      expect(picks, hasLength(1));
+      final pick = picks.single;
+      expect(pick.title, '[PMR] Frieren [Dual Audio] (1080p)');
+      expect(pick.hash, '143ed15e5e3df072ae91adaeb149973a887590dd');
+      expect(pick.curated, Curated.best);
+      expect(pick.files, [
+        'Frieren - S01E01 (BD Remux 1080p) [PMR].mkv',
+        'NCOP.mkv',
+      ]);
+      expect(
+        nyaaPage(
+          '<div class="panel panel-success"><div class="col-md-1">Seeders:</div>\n'
+          '<div class="col-md-5"><span style="color: green;">26</span></div>',
+        ),
+        (seeders: 26, trusted: true),
+      );
+    },
+  );
+
+  test(
+    'Nyaa is searched by AniList and ani.zip titles, also without punctuation',
+    () {
+      expect(
+        searchTitles(
+          {
+            'title': {
+              'romaji': 'Sousou no Frieren 2nd Season',
+              'english': "Frieren: Beyond Journey's End Season 2",
+            },
+          },
+          {
+            'titles': {
+              'x-jat': 'Sousou no Frieren',
+              'en': 'Frieren: Beyond Journey`s End',
+              'ja': '葬送のフリーレン',
+            },
+          },
+        ),
+        [
+          'Sousou no Frieren',
+          "Frieren: Beyond Journey's End",
+          'Frieren Beyond Journeys End',
+        ],
+      );
+    },
+  );
+
+  test('the group last played and SeaDex picks rank above the rest', () {
+    const popular = Release('[A] Show - 01 (1080p)', 'a', seeders: 900);
+    const best = Release(
+      '[B] Show (1080p)',
+      'b',
+      seeders: 5,
+      curated: Curated.best,
+    );
+    const alt = Release(
+      '[C] Show (1080p)',
+      'c',
+      seeders: 50,
+      curated: Curated.alt,
+    );
+    const usual = Release('[D] Show - 01 (720p)', 'd', seeders: 2);
+    final all = [popular, alt, usual, best];
+    expect(rankReleases(all, {}).map((r) => r.hash), ['b', 'c', 'a', 'd']);
+    expect(rankReleases(all, {}, group: 'D').map((r) => r.hash), [
+      'd',
+      'b',
+      'c',
+      'a',
+    ]);
+    Settings.rememberTorrentGroup('7', 'D');
+    Settings.rememberTorrentGroup('7', 'B');
+    expect(Settings.torrentGroup('7'), 'B');
+    expect(Settings.torrentGroup('8'), isNull);
+  });
+
+  test(
+    'SeaDex picks join Nyaa\'s releases, seeded from their Nyaa page',
+    () async {
+      Map pick(String hash, String group, bool best, String url) => {
+        'tracker': 'Nyaa',
+        'infoHash': hash,
+        'releaseGroup': group,
+        'isBest': best,
+        'url': url,
+        'files': [
+          {'name': 'Show - 01 (1080p).mkv'},
+          {'name': 'Show - 02 (1080p).mkv'},
+        ],
+      };
+      final net = FakeNet({
+        'seadex.moe': jsonEncode({
+          'items': [
+            {
+              'expand': {
+                'trs': [
+                  pick('a' * 40, 'Best', true, 'https://nyaa.si/view/1'),
+                  pick('b' * 40, 'Alt', false, 'https://nyaa.si/view/2'),
+                ],
+              },
+            },
+          ],
+        }),
+        'nyaa.si/view/1':
+            '<div class="col-md-1">Seeders:</div><div><span>12</span></div>',
+        'seeders': rss([
+          ('[Alt] Show (01-02) (1080p) [Batch]', 'b' * 40, 40),
+          ('[Other] Show - 01 (1080p)', 'c' * 40, 300),
+        ]),
+      });
+      httpClient = MockClient((_) async => http.Response('{}', 404));
+      Settings.realDebridKey =
+          'key'; // no TorBox: nothing is held back as uncached
+      final streams = await TorrentSource(net: net).streams(
+        {
+          'id': 3,
+          'title': {'romaji': 'Show'},
+        },
+        const Episode(1, ref: 1),
+        dub: false,
+      );
+      expect(streams.map((s) => s.label), [
+        'Best · 1080p · batch · SeaDex best · 12 seeds',
+        'Alt · 1080p · batch · SeaDex alt · 40 seeds',
+        'Other · 1080p · 300 seeds',
+      ]);
+      // Only the pick Nyaa's search didn't list is looked up.
+      expect(net.requests.where((u) => u.contains('/view/')), [
+        'https://nyaa.si/view/1',
+      ]);
+    },
+  );
 }

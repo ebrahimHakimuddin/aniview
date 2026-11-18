@@ -481,6 +481,31 @@ class Settings {
       (_loaded ? _prefs.getString('real_debrid_key') : null) ?? '';
   static set realDebridKey(String v) => _prefs.setString('real_debrid_key', v);
 
+  /// The release group whose torrent last played for each show (keyed by its AniList id), which torrent.dart ranks
+  /// first for its other episodes. The most recent 200 shows.
+  static String? torrentGroup(String show) => _torrentGroups[show];
+  static void rememberTorrentGroup(String show, String group) {
+    final groups = _torrentGroups
+      ..remove(show)
+      ..[show] = group;
+    while (groups.length > 200) {
+      groups.remove(groups.keys.first);
+    }
+    _prefs.setString('torrent_groups', jsonEncode(groups));
+  }
+
+  static Map<String, String> get _torrentGroups {
+    try {
+      return {
+        ...(jsonDecode(
+          (_loaded ? _prefs.getString('torrent_groups') : null) ?? '{}',
+        ) as Map).cast<String, String>(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
   /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
   static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;
   static set skipFiller(bool v) => _prefs.setBool('skip_filler', v);
