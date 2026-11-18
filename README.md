@@ -43,6 +43,9 @@ among built-in sources because its verification frequently blocks playback; it r
 Any of these can be left out: without AniList's client id there's no AniList sign-in, without MyAnimeList's no fallback and no MyAnimeList sign-in,
 without a Rybbit site id no analytics. Analytics defaults to `https://rybbit.clouderp.co.tz`;
 override it with `--dart-define=RYBBIT_HOST=https://…` when using another Rybbit instance.
+`--dart-define=PARTY_RELAY=wss://…` makes our own watch party relay ([docs/party-relay.md](docs/party-relay.md)) the
+first default relay, with the public Nostr relays after it as fallback; without it parties use only the public ones.
+Release builds take it from `dart_defines.env` (locally) or the `DART_DEFINES` secret (CI), like the other defines.
 
 ## Release
 

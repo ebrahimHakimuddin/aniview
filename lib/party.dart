@@ -49,7 +49,7 @@ class PartyEpisode {
   String toString() => 'PartyEpisode($anilist/$mal #$number)';
 }
 
-/// Carries a room's messages. The real one (encrypted, over public relays) is separate; [LoopbackHub] is the
+/// Carries a room's messages. The real one (encrypted, over Nostr relays) is separate; [LoopbackHub] is the
 /// in-memory one for tests. [incoming] must not echo the peer's own messages back (it's harmless if it does).
 abstract class PartyTransport {
   Stream<String> get incoming;
