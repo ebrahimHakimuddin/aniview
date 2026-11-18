@@ -13,17 +13,35 @@ import 'metadata.dart';
 import 'settings.dart';
 import 'sources.dart';
 
-/// A torrent listed on Nyaa.
+/// How SeaDex's editors rate a release: the best one for the show, or an alternative to it.
+enum Curated { best, alt }
+
+/// A torrent listed on Nyaa, or picked on SeaDex.
 class Release {
   const Release(
     this.title,
     this.hash, {
     this.seeders = 0,
     this.trusted = false,
+    this.curated,
+    this.files,
+    this.page,
   });
   final String title, hash;
   final int seeders;
   final bool trusted;
+
+  /// Its rating on SeaDex; null when it isn't there.
+  final Curated? curated;
+
+  /// The names of its files, when known before it's added (SeaDex lists them).
+  final List<String>? files;
+
+  /// Its page on Nyaa, which shows its seeders, for one found on SeaDex.
+  final String? page;
+
+  /// The group that released it: the "[Group]" its title starts with.
+  String? get group => RegExp(r'^\[([^\]]+)\]').firstMatch(title)?[1];
 
   String get magnet =>
       'magnet:?xt=urn:btih:$hash&dn=${Uri.encodeQueryComponent(title)}'
@@ -42,6 +60,46 @@ List<Release> nyaaReleases(String rss) => [
         trusted: _tag(item[1]!, 'nyaa:trusted') == 'Yes',
       ),
 ];
+
+/// The releases in SeaDex's answer for a show ([show] names them), those on Nyaa: a private tracker's hash is
+/// withheld. SeaDex lists no seeders.
+List<Release> seadexReleases(Map json, String show) => [
+  for (final entry in json['items'] as List? ?? const [])
+    for (final t in entry['expand']?['trs'] as List? ?? const [])
+      if (t['tracker'] == 'Nyaa' &&
+          RegExp(r'^[0-9a-fA-F]{40}$').hasMatch('${t['infoHash']}'))
+        Release(
+          [
+            '[${t['releaseGroup']}] $show',
+            if (t['dualAudio'] == true) '[Dual Audio]',
+            // Its files say what the release doesn't: the resolution, which ranks it.
+            if (RegExp(
+                  r'\b(2160|1080|720|480)p\b',
+                ).firstMatch('${(t['files'] as List?)?.firstOrNull?['name']}')
+                case final m?)
+              '(${m[0]})',
+          ].join(' '),
+          '${t['infoHash']}'.toLowerCase(),
+          curated: t['isBest'] == true ? Curated.best : Curated.alt,
+          files: [
+            for (final f in t['files'] as List? ?? const [])
+              '${f['name']}'.split('/').last,
+          ],
+          page: '${t['url']}',
+        ),
+];
+
+/// The seeders and trust a Nyaa torrent page shows.
+({int seeders, bool trusted}) nyaaPage(String html) => (
+  seeders:
+      int.tryParse(
+        RegExp(r'Seeders:</div>\s*<div[^>]*>\s*<span[^>]*>(\d+)')
+                .firstMatch(html)?[1] ??
+            '',
+      ) ??
+      0,
+  trusted: html.contains('panel panel-success'),
+);
 
 String? _tag(String xml, String name) =>
     RegExp('<$name>([^<]*)</$name>').firstMatch(xml)?[1]?.trim();
@@ -448,12 +506,28 @@ class TorrentSource extends Source {
     final absolute =
         episodes[epNumber(n)]?['absoluteEpisodeNumber'] as num? ?? n;
     final season = episodes['1']?['seasonNumber'] as int? ?? 1;
-    final releases = await this.releases(media, n, absolute);
-    bool holds(Release r) {
-      final held = episodesIn(r.title);
-      return covers(held, n, absolute: absolute, season: season) ||
-          _wholeSeason(held, r.title, season);
-    }
+    final show = '${media['id'] ?? 'mal:${media['idMal']}'}';
+    final (listed, picks) = await (
+      this.releases(media, n, absolute, zip: zip, season: season),
+      curatedReleases(media, zip),
+    ).wait;
+    // A pick found on Nyaa too keeps Nyaa's title and seeders.
+    final byHash = {for (final r in listed) r.hash: r};
+    final releases = [
+      for (final r in picks)
+        if (byHash.remove(r.hash) case final on?)
+          Release(
+            on.title,
+            r.hash,
+            seeders: on.seeders,
+            trusted: on.trusted,
+            curated: r.curated,
+            files: r.files,
+          )
+        else
+          r,
+      ...byHash.values,
+    ];
 
     bool wanted(String file) {
       final held = episodesIn(file);
@@ -461,8 +535,15 @@ class TorrentSource extends Source {
           covers(held, n, absolute: absolute, season: season);
     }
 
+    bool holds(Release r) {
+      if (r.files case final files?) return pickFile(files, wanted) != null;
+      final held = episodesIn(r.title);
+      return covers(held, n, absolute: absolute, season: season) ||
+          _wholeSeason(held, r.title, season);
+    }
+
     final torbox = Debrid.saved.whereType<TorBox>().firstOrNull;
-    final found = [
+    final found = await Future.wait([
       for (final r in releases)
         if (holds(r) &&
             (!dub ||
@@ -470,8 +551,8 @@ class TorrentSource extends Source {
                   r'dual[- ]?audio|\bdub',
                   caseSensitive: false,
                 ).hasMatch(r.title)))
-          r,
-    ];
+          r.page == null ? Future.value(r) : _seeded(r),
+    ]);
     final cached = torbox == null || found.isEmpty
         ? const <String>{}
         : await torbox
@@ -483,35 +564,83 @@ class TorrentSource extends Source {
     final ranked = rankReleases(
       found,
       cached,
+      group: Settings.torrentGroup(show),
     ).where((r) => !onlyCached || cached.contains(r.hash)).take(6);
     return [
       for (final r in ranked)
         VideoStream(
           _label(r, cached.contains(r.hash)),
-          await HlsProxy.deferred(() => play(r, wanted), 'mkv'),
+          await HlsProxy.deferred(() async {
+            final url = await play(r, wanted);
+            // The next episodes rank this group first, so a show doesn't change hands halfway.
+            if (r.group case final group?) {
+              Settings.rememberTorrentGroup(show, group);
+            }
+            return url;
+          }, 'mkv'),
           const {},
         ),
     ];
   }
 
+  /// SeaDex's (releases.moe) picks for the show, found by its AniList id: none for a show AniList doesn't know, or
+  /// while SeaDex is down.
+  Future<List<Release>> curatedReleases(Map media, Map zip) async {
+    final id = media['id'] ?? zip['mappings']?['anilist_id'];
+    if (id is! int) return const [];
+    try {
+      final json = jsonDecode(
+        await net.text(
+          'https://seadex.moe/api/collections/entries/records'
+          '?filter=${Uri.encodeQueryComponent('alID=$id')}&expand=trs&skipTotal=1',
+        ),
+      );
+      final title = media['title'] as Map?;
+      return seadexReleases(
+        json,
+        '${title?['english'] ?? title?['romaji'] ?? ''}'.trim(),
+      );
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// [r] with the seeders its Nyaa page shows, which SeaDex doesn't list; as it was when the page can't be read.
+  Future<Release> _seeded(Release r) async {
+    if (!r.page!.startsWith('https://nyaa.si/view/')) return r;
+    try {
+      final page = nyaaPage(await net.text(r.page!));
+      return Release(
+        r.title,
+        r.hash,
+        seeders: page.seeders,
+        trusted: page.trusted,
+        curated: r.curated,
+        files: r.files,
+      );
+    } catch (_) {
+      return r;
+    }
+  }
+
   /// Nyaa's releases for the show: by title (whole seasons, the most seeded first), and by title and episode.
-  Future<List<Release>> releases(Map media, num n, num absolute) async {
-    final suffix = RegExp(
-      r'[\s:]*(\(\d{4}\)|\d+(st|nd|rd|th) Season|Season \d+|Part \d+|Cour \d+)$',
-      caseSensitive: false,
-    );
-    final titles = {
-      for (final t in [media['title']?['romaji'], media['title']?['english']])
-        if (t is String && t.isNotEmpty) t.replaceFirst(suffix, ''),
-    };
+  Future<List<Release>> releases(
+    Map media,
+    num n,
+    num absolute, {
+    Map zip = const {},
+    int season = 1,
+  }) async {
     String q(String query, [String sort = '']) =>
         '$base/?page=rss&c=1_2&f=0&q=${Uri.encodeQueryComponent(query)}$sort';
     final pages = await Future.wait([
       for (final url in {
-        for (final t in titles) ...[
+        for (final t in searchTitles(media, zip)) ...[
           q(t, '&s=seeders&o=desc'),
           q('$t ${epNumber(absolute).padLeft(2, '0')}'),
           if (absolute != n) q('$t ${epNumber(n).padLeft(2, '0')}'),
+          // A sequel's episode named by its season: "Show S2 - 05".
+          if (season > 1) q('$t S$season ${epNumber(n).padLeft(2, '0')}'),
         ],
       })
         net.text(url).then(nyaaReleases, onError: (_) => <Release>[]),
@@ -541,9 +670,45 @@ class TorrentSource extends Source {
   }
 }
 
-/// [releases] best first: cached on the debrid service, from a trusted uploader, 1080p, one episode rather than a
-/// whole season, then the most seeded. A dead torrent is left out unless cached.
-List<Release> rankReleases(List<Release> releases, Set<String> cached) {
+/// What Nyaa is searched for, at most [max]: the show's romaji and English titles, then ani.zip's and AniList's
+/// synonyms, without the season or year AniList adds; then the same without punctuation, which groups often drop.
+List<String> searchTitles(Map media, Map zip, {int max = 4}) {
+  final suffix = RegExp(
+    r'[\s:]*(\(\d{4}\)|\d+(st|nd|rd|th) Season|Season \d+|Part \d+|Cour \d+)$',
+    caseSensitive: false,
+  );
+  final bases = [
+    for (final t in [
+      media['title']?['romaji'],
+      media['title']?['english'],
+      zip['titles']?['x-jat'],
+      zip['titles']?['en'],
+      ...?(media['synonyms'] as List?),
+    ])
+      // Nyaa's English-translated releases are named in Latin letters.
+      if (t is String && !RegExp(r'[^\u0000-\u024F]').hasMatch(t))
+        t.replaceAll('`', "'").replaceFirst(suffix, '').trim(),
+  ];
+  String plain(String t) => t
+      .replaceAll(RegExp(r'''['’"]'''), '')
+      .replaceAll(RegExp(r'[:!?,.\-–]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  final seen = <String>{};
+  return [
+    for (final t in [...bases, ...bases.map(plain)])
+      if (t.length >= 3 && seen.add(t.toLowerCase())) t,
+  ].take(max).toList();
+}
+
+/// [releases] best first: cached on the debrid service, from the [group] last played for the show, SeaDex's best
+/// then its alternatives, from a trusted uploader, 1080p, one episode rather than a whole season, then the most
+/// seeded. A dead torrent is left out unless cached.
+List<Release> rankReleases(
+  List<Release> releases,
+  Set<String> cached, {
+  String? group,
+}) {
   int resolution(Release r) => r.title.contains('1080')
       ? 3
       : r.title.contains('720')
@@ -556,6 +721,11 @@ List<Release> rankReleases(List<Release> releases, Set<String> cached) {
     return held.from != null && held.from == held.to;
   }
 
+  int curation(Release r) => switch (r.curated) {
+    Curated.best => 2,
+    Curated.alt => 1,
+    null => 0,
+  };
   int flag(bool b) => b ? 1 : 0;
   return [
     for (final r in releases)
@@ -563,6 +733,9 @@ List<Release> rankReleases(List<Release> releases, Set<String> cached) {
   ]..sort(
     (a, b) => [
       flag(cached.contains(b.hash)) - flag(cached.contains(a.hash)),
+      flag(group != null && b.group == group) -
+          flag(group != null && a.group == group),
+      curation(b) - curation(a),
       flag(b.trusted) - flag(a.trusted),
       resolution(b) - resolution(a),
       flag(single(b)) - flag(single(a)),
@@ -572,10 +745,15 @@ List<Release> rankReleases(List<Release> releases, Set<String> cached) {
 }
 
 String _label(Release r, bool cached) => [
-  RegExp(r'^\[([^\]]+)\]').firstMatch(r.title)?[1] ?? 'Torrent',
+  r.group ?? 'Torrent',
   ?RegExp(r'\b(2160|1080|720|480)p\b').firstMatch(r.title)?[0],
   if (episodesIn(r.title) case (from: final a, to: final b, season: _)
       when a == null || a != b)
     'batch',
+  ?switch (r.curated) {
+    Curated.best => 'SeaDex best',
+    Curated.alt => 'SeaDex alt',
+    null => null,
+  },
   cached ? 'cached' : '${r.seeders} seeds',
 ].join(' · ');
