@@ -1,0 +1,40 @@
+# The watch party relay (tool/party_relay.dart), behind a Cloudflare Tunnel. Installed by deploy.sh.
+[Unit]
+Description=AniView watch party relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/party-relay
+Environment=HOST=127.0.0.1 PORT=7447
+Restart=always
+RestartSec=2
+
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+
+# The relay reads a whole WebSocket frame before it can reject it for size: this cap plus the restart is the backstop.
+MemoryMax=300M
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
