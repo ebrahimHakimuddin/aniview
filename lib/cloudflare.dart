@@ -44,14 +44,11 @@ ChallengeHandler uiChallenge(BuildContext context) => (challenge) async {
 Future<T> withCloudflare<T>(BuildContext context, Future<T> Function() task) =>
     withChallenge(uiChallenge(context), task);
 
-/// Loads [url] in an invisible WebView — Chromium's network stack plus the shared cookie jar, which Cloudflare
-/// accepts — and returns the page HTML, or its text for JSON endpoints. Automatic Cloudflare checks are given
-/// a few seconds to pass; ones that need the user throw [CloudflareChallenge] for [withCloudflare] to show.
-Future<String> browserFetch(
-  String url, {
-  String? referer,
-  bool text = false,
-}) async {
+/// Loads [url] in an invisible WebView — the platform browser's network stack plus the shared cookie jar, which
+/// Cloudflare accepts — and returns the page HTML, or the document's text when it isn't HTML (a JSON endpoint).
+/// Automatic Cloudflare checks are given a few seconds to pass; ones that need the user throw [CloudflareChallenge]
+/// for [withCloudflare] to show.
+Future<String> browserFetch(String url, {String? referer}) async {
   final result = Completer<String>();
   Timer? challengeTimeout;
   final view = HeadlessInAppWebView(
@@ -70,9 +67,10 @@ Future<String> browserFetch(
         return;
       }
       final body = await controller.evaluateJavascript(
-        source: text
-            ? 'document.body.innerText'
-            : 'document.documentElement.outerHTML',
+        // A non-HTML response is shown as text in the page; a browser's JSON viewer keeps the raw text in a <pre>.
+        source: '''document.contentType == 'text/html'
+            ? document.documentElement.outerHTML
+            : (document.querySelector('pre') || document.body).textContent''',
       );
       if (!result.isCompleted) result.complete('${body ?? ''}');
     },
@@ -93,20 +91,22 @@ Future<String> browserFetch(
   }
 }
 
-/// GETs over HTTP/2 with the in-app browser's cookies and user agent (what a cf_clearance cookie is bound to), so
-/// only the first request to a Cloudflare-challenged site pays for a WebView. Without a valid clearance, the site is
-/// opened in the browser first ([browserFetch]), which may throw [CloudflareChallenge].
+/// GETs over HTTP/2 with the in-app browser's cookies and user agent (what a cf_clearance cookie is bound to), so a
+/// request the site accepts from Dart's client skips the WebView. A refused one (403/503: no clearance, or the site
+/// tells Dart's client from the browser) is fetched by the browser itself ([browserFetch]), which may throw
+/// [CloudflareChallenge]; the next request tries Dart's client again.
 class CloudflareNet implements Net {
-  /// [request] and [verify] are what touch the WebView and its cookies; replaced in tests.
+  /// [request] and [browse] are what touch the WebView and its cookies; replaced in tests.
   CloudflareNet({
     Future<(int, Uint8List)> Function(Uri uri, Map<String, String> headers)?
     request,
-    Future<void> Function(String origin)? verify,
+    Future<String> Function(String url, String? referer)? browse,
   }) : _request = request ?? _withCookies,
-       _verify = verify ?? ((origin) => browserFetch(origin));
+       _browse =
+           browse ?? ((url, referer) => browserFetch(url, referer: referer));
 
   final Future<(int, Uint8List)> Function(Uri, Map<String, String>) _request;
-  final Future<void> Function(String) _verify;
+  final Future<String> Function(String, String?) _browse;
 
   static Future<(int, Uint8List)> _withCookies(
     Uri uri,
@@ -126,10 +126,11 @@ class CloudflareNet implements Net {
   @override
   Future<Uint8List> bytes(String url, {Map<String, String>? headers}) async {
     final uri = Uri.parse(url);
-    var (status, body) = await _request(uri, headers ?? const {});
+    final (status, body) = await _request(uri, headers ?? const {});
     if (status == 403 || status == 503) {
-      await _verify('${uri.origin}/');
-      (status, body) = await _request(uri, headers ?? const {});
+      // shortcut: a site that never accepts Dart's client costs a fresh WebView load per request, and the body is the
+      // page's text (no raw bytes, no status); keep one WebView per origin or route straight to it if that's too slow.
+      return utf8.encode(await _browse(url, headers?['Referer']));
     }
     if (status != 200) throw HttpException('HTTP $status', uri: uri);
     return body;
