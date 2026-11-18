@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:aniview/cloudflare.dart';
@@ -381,46 +380,38 @@ void main() {
           asked.add('$uri');
           return (200, Uint8List.fromList(utf8.encode('hello')));
         },
-        verify: (_) async => fail('no check was due'),
+        browse: (_, _) async => fail('no browser load was due'),
       );
       expect(await net.text('https://pahe.test/api?m=x'), 'hello');
       expect(asked, ['https://pahe.test/api?m=x']);
     });
 
     test(
-      'opens the site in the browser once, then asks again, when refused',
+      'a request the site refuses is answered by the browser\'s page',
       () async {
-        final statuses = [403, 200];
-        final verified = <String>[];
+        final browsed = <String>[];
         final net = CloudflareNet(
-          request: (_, _) async => (statuses.removeAt(0), Uint8List(0)),
-          verify: (origin) async => verified.add(origin),
+          request: (_, _) async => (403, Uint8List(0)),
+          browse: (url, referer) async {
+            browsed.add('$url from $referer');
+            return 'the page';
+          },
         );
-        await net.bytes('https://pahe.test/anime/x');
-        expect(verified, ['https://pahe.test/']);
-      },
-    );
-
-    test(
-      'gives up with the status when the browser doesn\'t clear it',
-      () async {
-        var verified = 0;
-        final net = CloudflareNet(
-          request: (_, _) async => (503, Uint8List(0)),
-          verify: (_) async => verified++,
+        expect(
+          await net.text(
+            'https://pahe.test/play/x',
+            headers: {'Referer': 'https://pahe.test/'},
+          ),
+          'the page',
         );
-        await expectLater(
-          net.text('https://pahe.test/x'),
-          throwsA(isA<HttpException>()),
-        );
-        expect(verified, 1);
+        expect(browsed, ['https://pahe.test/play/x from https://pahe.test/']);
       },
     );
 
     test('lets the browser\'s Cloudflare challenge through', () async {
       final net = CloudflareNet(
         request: (_, _) async => (403, Uint8List(0)),
-        verify: (origin) async => throw CloudflareChallenge(origin),
+        browse: (url, _) async => throw CloudflareChallenge(url),
       );
       await expectLater(
         net.text('https://pahe.test/x'),
