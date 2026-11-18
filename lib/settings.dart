@@ -28,6 +28,7 @@ import 'jellyfin.dart';
 import 'jellyseerr.dart';
 import 'notifications.dart';
 import 'sources.dart';
+import 'torrent.dart';
 import 'pairing.dart';
 import 'party_transport.dart' show NostrTransport;
 import 'party.dart' show partyNameLength;
@@ -466,6 +467,19 @@ class Settings {
       (_loaded ? _prefs.getString('jellyseerr_cookie') : null) ?? '';
   static set jellyseerrCookie(String v) =>
       _prefs.setString('jellyseerr_cookie', v);
+
+  /// Whether shows are also found on Nyaa and played as torrents (see torrent.dart): off until the user opts in.
+  static bool get torrents =>
+      (_loaded ? _prefs.getBool('torrents') : null) ?? false;
+  static set torrents(bool v) => _prefs.setBool('torrents', v);
+
+  /// Debrid API keys; a torrent plays through the first one that has it cached, else peer to peer. Empty is unset.
+  static String get torboxKey =>
+      (_loaded ? _prefs.getString('torbox_key') : null) ?? '';
+  static set torboxKey(String v) => _prefs.setString('torbox_key', v);
+  static String get realDebridKey =>
+      (_loaded ? _prefs.getString('real_debrid_key') : null) ?? '';
+  static set realDebridKey(String v) => _prefs.setString('real_debrid_key', v);
 
   /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
   static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;

@@ -13,6 +13,7 @@ import 'metadata.dart';
 import 'net.dart';
 import 'platform.dart';
 import 'settings.dart';
+import 'torrent.dart';
 
 export 'net.dart';
 
@@ -36,7 +37,14 @@ class Sites {
         final (installed, loaded) = await extensions;
         if (!loaded) _current = null;
         // The user's own server first: what's there is theirs to watch.
-        return [?Jellyfin.saved(), ...sites, ...installed];
+        return [
+          ?Jellyfin.saved(),
+          ...sites,
+          if (Settings.torrents &&
+              (Debrid.saved.isNotEmpty || PeerEngine.available))
+            TorrentSource(),
+          ...installed,
+        ];
       }).catchError((Object e) {
         _current = null;
         throw e;

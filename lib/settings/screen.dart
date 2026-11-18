@@ -618,7 +618,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
     ]),
+    _Group('Torrents', [
+      SwitchListTile(
+        secondary: const Icon(Icons.hub_rounded),
+        title: const Text('Play torrents'),
+        subtitle: Text(
+          PeerEngine.available
+              ? 'Finds episodes on Nyaa. Without a debrid service they play peer to peer, '
+                    'and others in the swarm see your IP address'
+              : 'Finds episodes on Nyaa and plays them through your debrid service. '
+                    'Add a TorBox or Real-Debrid key below',
+        ),
+        value: Settings.torrents,
+        onChanged: (v) {
+          Settings.torrents = v;
+          Sites.reload();
+          setState(() {});
+        },
+      ),
+      if (Settings.torrents)
+        for (final (name, get, set) in [
+          (
+            'TorBox',
+            () => Settings.torboxKey,
+            (String v) => Settings.torboxKey = v,
+          ),
+          (
+            'Real-Debrid',
+            () => Settings.realDebridKey,
+            (String v) => Settings.realDebridKey = v,
+          ),
+        ])
+          ListTile(
+            leading: const Icon(Icons.bolt_rounded),
+            title: Text(name),
+            subtitle: Text(
+              get().isEmpty
+                  ? 'Add your API key to play cached torrents at once'
+                  : 'API key saved',
+            ),
+            onTap: () => _debridKey(name, get(), set),
+          ),
+    ]),
   ];
+
+  Future<void> _debridKey(
+    String name,
+    String current,
+    void Function(String) save,
+  ) async {
+    final key = TextEditingController(text: current);
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (context) => PanelDialog(
+        title: Text('$name API key'),
+        content: TextField(
+          controller: key,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: 'API key'),
+          onSubmitted: (v) => Navigator.pop(context, v.trim()),
+        ),
+        actions: [
+          if (current.isNotEmpty)
+            TextButton(
+              onPressed: () => Navigator.pop(context, ''),
+              child: const Text('Remove'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, key.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (saved == null || !mounted) return;
+    save(saved);
+    Sites.reload(); // the Torrents site is listed only with a key
+    setState(() {});
+  }
 
   List<Widget> _appearance() => [
     ListTile(
