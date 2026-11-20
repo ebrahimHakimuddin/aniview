@@ -23,6 +23,9 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.ForwardingRenderer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import io.flutter.embedding.engine.FlutterEngine
@@ -65,6 +68,7 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
                 "rate" -> done(result) { entry?.player?.setPlaybackSpeed(call.argument<Double>("rate")!!.toFloat()) }
                 "subtitle" -> done(result) { entry?.subtitle(call.argument<String>("track")!!) }
                 "audio" -> done(result) { entry?.audio(call.argument<String>("track")!!) }
+                "subdelay" -> done(result) { entry?.subtitleDelay(call.argument<Number>("ms")!!.toLong()) }
                 "quality" -> done(result) {
                     entry?.quality(call.argument<Number>("height")!!.toInt(), call.argument<Boolean>("exact") ?: false)
                 }
@@ -97,7 +101,7 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
 
         // Decoder fallback: a chip that can't decode the stream in hardware tries the next decoder instead of failing.
         val player: ExoPlayer = ExoPlayer.Builder(context)
-            .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+            .setRenderersFactory(DelayedTextRenderers(context) { textDelayUs }.setEnableDecoderFallback(true))
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     // Up to two minutes ahead, as far as memory allows: fewer stalls on slow hosts.
@@ -249,6 +253,21 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
         }
 
         /** "off", "auto" (the stream's default), or a track id from [textTracks]. */
+        /** How much later (positive) or earlier the subtitles show than the picture, in microseconds: the text
+         *  renderer reads the clock shifted by it (see [DelayedText]). Set on the main thread, read on playback's. */
+        @Volatile
+        var textDelayUs = 0L
+
+        private val resync = Runnable { player.seekTo(player.currentPosition) }
+
+        /** Shifts the subtitles by [ms]. The cues already passed (or not read yet) come back with a seek in place,
+         *  once the person stops stepping. */
+        fun subtitleDelay(ms: Long) {
+            textDelayUs = ms * 1000
+            handler.removeCallbacks(resync)
+            handler.postDelayed(resync, 600)
+        }
+
         fun subtitle(track: String) {
             val builder = player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -367,3 +386,28 @@ class ExoPlayers(private val context: Context, engine: FlutterEngine) {
     }
 }
 
+/** Media3's renderers, with the text renderer reading the clock [Entry.textDelayUs] behind (or ahead of) the picture's:
+ *  subtitles out of step with the video, from the stream, the file or beside it, are moved into step. */
+@UnstableApi
+private class DelayedTextRenderers(
+    context: Context,
+    private val delayUs: () -> Long,
+) : DefaultRenderersFactory(context) {
+    override fun buildTextRenderers(
+        context: Context,
+        output: TextOutput,
+        outputLooper: Looper,
+        extensionRendererMode: Int,
+        out: ArrayList<Renderer>,
+    ) {
+        val start = out.size
+        super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+        for (i in start until out.size) out[i] = DelayedText(out[i], delayUs)
+    }
+}
+
+@UnstableApi
+private class DelayedText(renderer: Renderer, private val delayUs: () -> Long) : ForwardingRenderer(renderer) {
+    override fun render(positionUs: Long, elapsedRealtimeUs: Long) =
+        super.render(positionUs - delayUs(), elapsedRealtimeUs)
+}

@@ -381,4 +381,85 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('subtitles are moved into step from the panel, while it plays', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({'resume': false});
+    await Settings.load();
+    final previous = configureQuality;
+    configureQuality = (_, _) async => const [];
+    addTearDown(() => configureQuality = previous);
+    final backend = _Recording();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(),
+        home: PlayerScreen(
+          media: {
+            'id': 7007010,
+            'title': {'romaji': 'Fixture'},
+          },
+          source: SourceFixture(),
+          episodes: [Episode(1, ref: '1')],
+          index: 0,
+          dub: false,
+          backend: backend,
+        ),
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await tester.tap(find.byIcon(Icons.subtitles_outlined).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Adjust timing…'));
+    await tester.pumpAndSettle();
+    expect(find.text('Subtitle timing · in sync'), findsOneWidget);
+    // The list paused the video; the panel plays it on, to watch the subtitles move.
+    expect(backend.calls.last, 'play');
+
+    await tester.tap(find.text('+0.5 s'));
+    await tester.tap(find.text('+0.1 s'));
+    await tester.pump();
+    expect(find.text('Subtitle timing · +0.6 s'), findsOneWidget);
+    expect(backend.delays.last, 600);
+    await tester.tap(find.text('−0.5 s'));
+    await tester.tap(find.text('−0.5 s'));
+    await tester.pump();
+    expect(find.text('Subtitle timing · −0.4 s'), findsOneWidget);
+    expect(backend.delays.last, -400);
+
+    // The controls stay up with it.
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Subtitle timing · −0.4 s'), findsOneWidget);
+    expect(find.byIcon(Icons.subtitles_outlined), findsWidgets);
+
+    await tester.tap(find.text('Reset'));
+    await tester.pump();
+    expect(backend.delays.last, 0);
+    await tester.tap(find.byTooltip('Done').last);
+    await tester.pump();
+    expect(find.textContaining('Subtitle timing'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
+}
+
+class _Recording extends Backend {
+  final calls = <String>[];
+  final delays = <int>[];
+  @override
+  Future<void> call(String method, Map<String, Object?> args) {
+    calls.add(method);
+    if (method == 'subdelay') delays.add(args['ms']! as int);
+    final done = super.call(method, args);
+    if (method == 'open') {
+      emit({
+        'tracks': [
+          {'id': '0:0', 'title': 'English', 'language': 'eng'},
+        ],
+      });
+    }
+    return done;
+  }
 }
