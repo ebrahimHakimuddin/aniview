@@ -300,9 +300,22 @@ String oneVariant(String master, {int maxHeight = 0}) {
   final audio = lines.where(
     (l) => isAudio(l) && l.contains('GROUP-ID="$group"'),
   );
-  final pick =
-      audio.where((l) => l.contains('DEFAULT=YES')).firstOrNull ??
-      audio.firstOrNull;
+  // A site may list each language once per encode; the one whose address is most like the variant's is its own.
+  int shared(String l) {
+    final a = RegExp(r'URI="([^"]+)"').firstMatch(l)?[1] ?? '';
+    final v = lines[uri];
+    var n = 0;
+    while (n < a.length && n < v.length && a[n] == v[n]) {
+      n++;
+    }
+    return n;
+  }
+
+  final defaults = audio.where((l) => l.contains('DEFAULT=YES')).toList();
+  final pick = (defaults.isNotEmpty ? defaults : audio.toList()).fold<String?>(
+    null,
+    (best, l) => best == null || shared(l) > shared(best) ? l : best,
+  );
   return [
     for (final (i, l) in lines.indexed)
       if (i == inf ||
