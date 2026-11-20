@@ -132,6 +132,10 @@ jobs:
           - os: macos-15
             target: macos
             out: AniView-*macos.dmg
+          # Built in tool/appimage.Dockerfile's Debian, so it runs on systems older than the runner.
+          - os: ubuntu-latest
+            target: linux
+            out: AniView*-x86_64.AppImage
           # Unsigned; AltStore, SideStore or Sideloadly re-sign it on install (docs/ios.md).
           - os: xcode-27
             target: ios
@@ -166,6 +170,10 @@ jobs:
           print('Party relay configuration verified')
           PY
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
+          if [ "${{ matrix.target }}" = linux ]; then
+            exec bash tool/appimage_container.sh --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" \
+              --dart-define-from-file=dart_defines.env ${ANIVIEW_BETA:+--dart-define=ANIVIEW_BETA=true}
+          fi
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env \
             ${ANIVIEW_BETA:+--dart-define=ANIVIEW_BETA=true}
         env:
@@ -249,8 +257,8 @@ jobs:
             gh release create "$tag" --draft --target "$EXPECTED_SHA" --title "AniView $version" --notes-file notes.md
           fi
           gh run download "$RUN_ID" --pattern 'aniview-*' --dir packages
-          mapfile -d '' assets < <(find packages -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.ipa' \) -print0)
-          test "${#assets[@]}" -ge 3 || { echo 'Expected Windows, macOS and iOS packages'; exit 1; }
+          mapfile -d '' assets < <(find packages -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.ipa' -o -name '*.AppImage' \) -print0)
+          test "${#assets[@]}" -ge 4 || { echo 'Expected Windows, macOS, iOS and Linux packages'; exit 1; }
           gh release upload "$tag" "${assets[@]}" --clobber
           gh release view "$tag" --json isDraft --jq .isDraft | grep -qx true
           echo 'Draft packages uploaded. Native verification and explicit approval are required before publication.' >> "$GITHUB_STEP_SUMMARY"
