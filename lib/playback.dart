@@ -30,6 +30,16 @@ enum ErrorAction { ignore, reload, nextServer }
 /// spot, which skip applies, when to offer or start the next episode, and where a held left/right on a TV remote
 /// lands. Fed positions and events; the player screen acts on its answers.
 class PlaybackSession {
+  /// The furthest the subtitles move from the picture either way: a minute.
+  static const maxSubtitleDelay = Duration(minutes: 1);
+
+  /// [delay] within [maxSubtitleDelay] either way.
+  static Duration clampSubtitleDelay(Duration delay) => delay > maxSubtitleDelay
+      ? maxSubtitleDelay
+      : delay < -maxSubtitleDelay
+      ? -maxSubtitleDelay
+      : delay;
+
   PlaybackSession(
     this.episodes,
     this.index, {

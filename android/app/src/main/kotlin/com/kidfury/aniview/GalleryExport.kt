@@ -50,15 +50,16 @@ object GalleryExport {
     }
 
     // ponytail: MediaStore paths need Android 10+; older phones would need the storage permission flow
-    /** Copies the MP4 [video] into the gallery as [name]; returns the copy's address, to delete it by later. */
+    /** Copies [video] (an MP4, or a torrent's MKV) into the gallery as [name]; returns the copy's address, to delete it by later. */
     fun save(context: Context, video: File, name: String): String {
         if (Build.VERSION.SDK_INT < 29) throw IllegalStateException("Saving to the gallery needs Android 10 or newer")
         val resolver = context.contentResolver
+        val mkv = video.extension.equals("mkv", ignoreCase = true)
         val uri = resolver.insert(
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
             ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.DISPLAY_NAME, if (mkv) "$name.mkv" else "$name.mp4")
+                put(MediaStore.Video.Media.MIME_TYPE, if (mkv) "video/x-matroska" else "video/mp4")
                 put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/AniView")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             },

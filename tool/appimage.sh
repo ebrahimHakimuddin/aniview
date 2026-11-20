@@ -73,7 +73,11 @@ done
 # "usr////lib/wpe-webkit-2.0": as long as the system path, with slashes making up the difference.
 relative="usr$(printf '/%.0s' $(seq $((${#helpers} - 21))))lib/wpe-webkit-2.0"
 FROM="$helpers" TO="$relative" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/g' "$app/usr/lib/$(basename "$wpe")"
-OUTPUT=$out "$deploy/squashfs-root/AppRun" --appdir "$app" --output appimage
+# linuxdeploy gives the static rqbit an rpath, which makes it crash: put back the untouched copy, and pack with the
+# appimage plugin alone, since another linuxdeploy pass would patch it again.
+cp build/linux/x64/release/bundle/rqbit "$app/usr/bin/rqbit"
+OUTPUT=$out "$deploy/squashfs-root/usr/bin/linuxdeploy-plugin-appimage" --appdir "$app"
+"$app/usr/bin/rqbit" --version >/dev/null
 if grep -q "$helpers" "$app/usr/lib/$(basename "$wpe")"; then
   echo 'the bundled WebKit still looks for its programs on the system' >&2
   exit 1

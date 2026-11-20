@@ -114,6 +114,10 @@ Future<String> postJson(
   return response.body;
 }
 
+/// [request] (a form, a multipart upload) sent and answered in full.
+Future<http.Response> send(http.BaseRequest request) async =>
+    http.Response.fromStream(await httpClient.send(request).timeout(patience));
+
 Future<String> fetch(String url, {Map<String, String>? headers}) =>
     const HttpNet().text(url, headers: headers);
 

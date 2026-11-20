@@ -43,7 +43,6 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      - run: flutter test test/survey_test.dart --dart-define=RYBBIT_SITE_ID=ci-test --dart-define=ANIVIEW_BETA=true
       - run: python3 tool/test_native_verification.py
       - run: python3 tool/check_macos_bundle.py
       - run: python3 tool/check_ios_bundle.py
@@ -161,6 +160,10 @@ jobs:
           if host != 'https://rybbit.clouderp.co.tz' or not site:
               raise SystemExit('Release requires the production Rybbit host and a configured site ID')
           print('Rybbit release configuration verified')
+          relay = values.get('PARTY_RELAY', '').strip().strip('"\'')
+          if relay != 'wss://aniview.ebrahim.co.tz':
+              raise SystemExit('Release requires PARTY_RELAY=wss://aniview.ebrahim.co.tz in DART_DEFINES')
+          print('Party relay configuration verified')
           PY
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env \
@@ -191,6 +194,13 @@ jobs:
               /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $name" "$plist"
             codesign --force --deep --sign - --entitlements macos/Runner/Release.entitlements "dmg/$name.app"
           fi
+          # rqbit, the torrent engine run beside the app (lib/torrent.dart; pinned like linux/CMakeLists.txt): signed
+          # to inherit the app's sandbox, as a sandboxed app's helper must be, then the app signed again over it.
+          curl -fsSL -o rqbit https://github.com/ikatson/rqbit/releases/download/v9.1.0/rqbit-osx-universal
+          echo "de978a3ddd9732181745a76d054faccd4df3e3caaae98e487292fea6637f1f73  rqbit" | shasum -a 256 -c -
+          install -m 755 rqbit "dmg/$name.app/Contents/MacOS/rqbit"
+          codesign --force --sign - --entitlements macos/Runner/Rqbit.entitlements "dmg/$name.app/Contents/MacOS/rqbit"
+          codesign --force --sign - --entitlements macos/Runner/Release.entitlements "dmg/$name.app"
           python3 tool/check_macos_bundle.py "dmg/$name.app"
           ln -s /Applications dmg/Applications
           hdiutil create -volname "$name" -srcfolder dmg -ov -format UDZO "$file"

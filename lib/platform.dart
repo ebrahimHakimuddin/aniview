@@ -106,6 +106,16 @@ class AndroidApp {
     }
   }
 
+  /// Whether the device has a touchscreen: a box driven only by a remote has none. True off Android.
+  static Future<bool> hasTouchscreen() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await _app.invokeMethod<bool>('touch') ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// Opens [url] in the browser or whichever app handles it.
   static Future<void> open(String url) async {
     if (Platform.isIOS) return IosApp.open(url);

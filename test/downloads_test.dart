@@ -9,6 +9,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('a Matroska file is told from an MP4', () {
+    expect(isMatroska([0x1A, 0x45, 0xDF, 0xA3, 0x01]), isTrue);
+    expect(isMatroska([0, 0, 0, 0x20, ...'ftyp'.codeUnits]), isFalse);
+    expect(isMatroska([0x1A]), isFalse);
+  });
+
+  test('one stream per resolution is picked by the download quality', () {
+    VideoStream stream(String label) => VideoStream(label, label, const {});
+    final sized = [stream('SEV 1080p'), stream('SEV 720p'), stream('SEV 360p')];
+    String? pick(List<VideoStream> s, int cap) => withinQuality(s, cap)?.label;
+    expect(pick(sized, 0), 'SEV 1080p');
+    expect(pick(sized, 480), 'SEV 360p');
+    expect(pick(sized, 720), 'SEV 720p');
+    expect(pick(sized.sublist(0, 1), 240), 'SEV 1080p'); // one: what there is
+    expect(
+      pick(sized.sublist(0, 2), 240),
+      'SEV 720p',
+    ); // none fits: the smallest
+    expect(
+      pick([stream('VidStreaming'), stream('BirdStream')], 480),
+      'VidStreaming',
+    );
+  });
+
   test('gallery export chooses exactly one destination', () {
     expect(downloadExport(false, ''), DownloadExport.private);
     expect(downloadExport(false, 'chosen'), DownloadExport.private);

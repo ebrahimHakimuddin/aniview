@@ -115,6 +115,26 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
+# rqbit, the torrent engine AniView runs beside itself to stream torrents peer to peer (lib/torrent.dart), pinned
+# to a release and checked against its hash.
+set(RQBIT_VERSION "9.1.0")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+  set(RQBIT_ASSET "rqbit-linux-arm64")
+  set(RQBIT_SHA256 "5247a363df062f429e53661b7242373bf70603e93efc4d0b459017e6fd209def")
+else()
+  set(RQBIT_ASSET "rqbit-linux-amd64")
+  set(RQBIT_SHA256 "921061a82ee6a6b26754c6367886b5b6b4ce5916d3edd5db79c6cd5f2c23499f")
+endif()
+set(RQBIT "${CMAKE_BINARY_DIR}/rqbit-${RQBIT_VERSION}-${RQBIT_SHA256}")
+if(NOT EXISTS "${RQBIT}")
+  file(DOWNLOAD
+    "https://github.com/ikatson/rqbit/releases/download/v${RQBIT_VERSION}/${RQBIT_ASSET}"
+    "${RQBIT}.part" EXPECTED_HASH SHA256=${RQBIT_SHA256} TLS_VERIFY ON)
+  file(RENAME "${RQBIT}.part" "${RQBIT}")
+endif()
+install(PROGRAMS "${RQBIT}" DESTINATION "${CMAKE_INSTALL_PREFIX}" RENAME rqbit
+  COMPONENT Runtime)
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

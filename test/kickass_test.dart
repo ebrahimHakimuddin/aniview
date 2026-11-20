@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:aniview/downloads.dart';
 import 'package:aniview/hls_proxy.dart';
 import 'package:aniview/sources.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,6 +27,32 @@ void main() {
     expect(oneVariant(selected), contains('en.m3u8'));
     expect(selectPlaylistAudio(master, null), master);
     expect(() => selectPlaylistAudio(master, 'fra'), throwsFormatException);
+  });
+
+  test('the audio kept is the variant\'s own encode of the language', () {
+    const master =
+        '#EXTM3U\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="s",LANGUAGE="jpn",DEFAULT=YES,URI="aa01/playlist.m3u8"\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="s",LANGUAGE="eng",URI="aa02/playlist.m3u8"\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="s",LANGUAGE="jpn",DEFAULT=YES,URI="bb01/playlist.m3u8"\n'
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="s",LANGUAGE="eng",URI="bb02/playlist.m3u8"\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=1280x720,AUDIO="s"\naa00/playlist.m3u8\n'
+        '#EXT-X-STREAM-INF:BANDWIDTH=200,RESOLUTION=1920x1080,AUDIO="s"\nbb00/playlist.m3u8\n';
+    String audioOf(String m) =>
+        RegExp(r'TYPE=AUDIO[^\n]*URI="([^"]+)"').allMatches(m).single[1]!;
+    expect(audioOf(oneVariant(master)), 'bb01/playlist.m3u8');
+    expect(audioOf(oneVariant(master, maxHeight: 720)), 'aa01/playlist.m3u8');
+    expect(
+      audioOf(oneVariant(selectPlaylistAudio(master, 'eng'), maxHeight: 720)),
+      'aa02/playlist.m3u8',
+    );
+    final (local, files, _) = localizePlaylist(
+      '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="k"\n#EXTINF:6,\n//cdn.test/000.jpg\n',
+      Uri.parse('https://hls.test/aa02/playlist.m3u8'),
+      prefix: 'aud',
+    );
+    expect(local, contains('aud00000.ts'));
+    expect(files.keys, ['audkey0.bin', 'aud00000.ts']);
   });
 
   test('ranked KickAssAnime is supported, including the old domain', () {

@@ -43,6 +43,9 @@ among built-in sources because its verification frequently blocks playback; it r
 Any of these can be left out: without AniList's client id there's no AniList sign-in, without MyAnimeList's no fallback and no MyAnimeList sign-in,
 without a Rybbit site id no analytics. Analytics defaults to `https://rybbit.clouderp.co.tz`;
 override it with `--dart-define=RYBBIT_HOST=https://…` when using another Rybbit instance.
+`--dart-define=PARTY_RELAY=wss://…` makes our own watch party relay ([docs/party-relay.md](docs/party-relay.md)) the
+first default relay, with the public Nostr relays after it as fallback; without it parties use only the public ones.
+Release builds take it from `dart_defines.env` (locally) or the `DART_DEFINES` secret (CI), like the other defines.
 
 ## Release
 
@@ -188,20 +191,3 @@ id, so no API key ships in the APK. Users can turn it off in Settings → About.
 - Intro/outro/recap skip times: [AniSkip](https://api.aniskip.com), falling back to the site's own times
 - Some hosts disguise segments as PNGs; a localhost proxy (`lib/hls_proxy.dart`) strips the prefix for FFmpeg
 
-### Subscription survey
-
-The US$1/month survey appears after the version overview until answered. Submit is its only action;
-there is no “Not now” button. On TV, the D-pad moves focus between options without changing the answer;
-OK selects an answer, and Down past the final option reaches Submit. The startup update check finishes
-before the survey opens. Back, Escape, and outside taps cannot dismiss it, including while sending or
-after a failed request. Previously dismissed surveys appear again; a confirmed answer disables further submissions. It only
-appears when analytics is configured and enabled. Each choice is a separate Rybbit event, directly selectable
-in the dashboard's event-name filter: `subscription_poll_stable_pay`, `subscription_poll_stable_donate`, or
-`subscription_poll_stable_dealbreaker`. Test builds use `beta` instead of `stable` in those names. The properties
-`poll_id=subscription_1usd_v1`, `answer=pay|donate|dealbreaker`, and `channel=beta|stable` are also retained.
-`subscription_poll_beta_shown` / `subscription_poll_stable_shown` count openings, including manual reopenings.
-Beta 4 resets the beta-only local survey state so testers can submit to the new event names.
-
-An answer is saved as completed only after Rybbit returns a successful acknowledgement. Failed requests can
-be retried. This is an informal poll: reinstalling or retrying after a lost acknowledgement can produce
-duplicate events; compare unique installations as well as event counts.

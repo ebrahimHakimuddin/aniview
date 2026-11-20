@@ -15,9 +15,17 @@ bool isTv = false;
 /// Whether the device itself is a TV (what pairing and the TV launcher go by), whatever layout is chosen.
 bool deviceIsTv = false;
 
+/// Whether the device has a touchscreen; a TV box that doesn't say it's a TV still has none.
+bool deviceHasTouch = true;
+
+/// Whether this is driven by a remote, whatever the layout: a TV, or a box without a touchscreen. What can only be
+/// dragged (reordering) needs buttons there.
+bool get remoteOnly => isTv || deviceIsTv || !deviceHasTouch;
+
 /// The TV layout when the device is a TV, unless [layout] ('phone' or 'tv') says otherwise.
 Future<void> detectTv({String layout = 'auto'}) async {
   deviceIsTv = await AndroidApp.isTv();
+  deviceHasTouch = await AndroidApp.hasTouchscreen();
   applyLayout(layout);
 }
 

@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -862,7 +863,10 @@ class Downloads extends ChangeNotifier {
           streams
               .where((s) => d.source == 'Jellyfin' && !s.isHls)
               .firstOrNull ??
-          streams.where((s) => s.isHls && s.audios.isEmpty).firstOrNull ??
+          withinQuality(
+            streams.where((s) => s.isHls && s.audios.isEmpty),
+            Settings.downloadQuality,
+          ) ??
           streams.where((s) => s.audios.isEmpty).firstOrNull ??
           (throw Exception('No downloadable servers for this episode'));
       if (d.storagePath == null && !await _dir(d).exists()) {
@@ -1029,12 +1033,15 @@ class Downloads extends ChangeNotifier {
     if (total != null && have < total) {
       throw const HttpException('The download was cut short');
     }
-    if (!isVideoFile(await _head(part))) {
+    final head = await _head(part);
+    if (!isVideoFile(head)) {
       await part.delete();
       throw Exception("This server didn't send a video");
     }
-    await part.rename('${dir.path}/$video');
-    d.video = video;
+    // A torrent's episode is mostly Matroska: named as what it is, not passed off as an MP4.
+    final saved = isMatroska(head) ? '${d.name}.mkv' : video;
+    await part.rename('${dir.path}/$saved');
+    d.video = saved;
     return true;
   }
 
@@ -1046,19 +1053,46 @@ class Downloads extends ChangeNotifier {
   ) async {
     var url = Uri.parse(stream.url);
     var playlist = await fetch('$url', headers: stream.headers);
+    // The local master and the playlists it names, when the audio is a rendition of its own.
+    String? master, videoLocal, audioLocal;
+    var (local, files, length) = localizePlaylist(playlist, url);
     if (playlist.contains('#EXT-X-STREAM-INF')) {
-      // ponytail: audio in a rendition of its own isn't saved, so it's refused rather than saved silent; save the
-      // default rendition beside the variant, under a local master playlist, if a site needs it
-      if (RegExp(r'#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI=')
-          .hasMatch(playlist)) {
-        throw Exception("Downloads from this site aren't supported yet");
-      }
-      url = url.resolve(
-        bestVariant(playlist, maxHeight: Settings.downloadQuality),
+      // The variant for the quality setting, and its audio in the stream's language (refused when it has none,
+      // rather than saved in the wrong one).
+      final one = oneVariant(
+        selectPlaylistAudio(playlist, stream.audioLanguage),
+        maxHeight: Settings.downloadQuality,
+      ).split('\n');
+      final inf = one.firstWhere((l) => l.startsWith('#EXT-X-STREAM-INF'));
+      final variant = url.resolve(
+        one.firstWhere((l) => l.isNotEmpty && !l.startsWith('#')),
       );
-      playlist = await fetch('$url', headers: stream.headers);
+      final audio = one
+          .where(
+            (l) => l.startsWith('#EXT-X-MEDIA:') && l.contains('TYPE=AUDIO'),
+          )
+          .map((l) => (l, RegExp(r'URI="([^"]+)"').firstMatch(l)?[1]))
+          .where((a) => a.$2 != null)
+          .firstOrNull;
+      playlist = await fetch('$variant', headers: stream.headers);
+      (local, files, length) = localizePlaylist(playlist, variant);
+      if (audio case (final line, final uri?)) {
+        final audioUrl = url.resolve(uri);
+        final (audioPlaylist, audioFiles, _) = localizePlaylist(
+          await fetch('$audioUrl', headers: stream.headers),
+          audioUrl,
+          prefix: 'aud',
+        );
+        files = {...files, ...audioFiles};
+        (videoLocal, audioLocal) = (local, audioPlaylist);
+        master = [
+          '#EXTM3U',
+          line.replaceFirst(RegExp(r'URI="[^"]+"'), 'URI="audio.m3u8"'),
+          inf,
+          'video.m3u8',
+        ].join('\n');
+      }
     }
-    final (local, files, length) = localizePlaylist(playlist, url);
     await prepareHlsFiles(dir, '${d.source}\n${d.ref}');
     final queue = files.entries.toList().iterator;
     var done = 0;
@@ -1071,7 +1105,10 @@ class Downloads extends ChangeNotifier {
           if (_queue.cancelled) throw _Cancelled();
           final file = File('${dir.path}/$name');
           if (!await file.exists()) {
-            final bytes = await _fetchWithRetry('$remote', stream.headers);
+            // A key the site's player works out itself (AnimeStream's wrapped key.bin) is saved as it unwraps.
+            final bytes = name.endsWith('.bin') && stream.key != null
+                ? stream.key!
+                : await _fetchWithRetry('$remote', stream.headers);
             final part = File('${file.path}.part');
             await part.writeAsBytes(
               name.endsWith('.ts') ? stripToTs(bytes) : bytes,
@@ -1092,7 +1129,11 @@ class Downloads extends ChangeNotifier {
     }
 
     await Future.wait([for (var i = 0; i < 4; i++) worker()]);
-    await File('${dir.path}/index.m3u8').writeAsString(local);
+    if (master != null) {
+      await File('${dir.path}/video.m3u8').writeAsString(videoLocal!);
+      await File('${dir.path}/audio.m3u8').writeAsString(audioLocal!);
+    }
+    await File('${dir.path}/index.m3u8').writeAsString(master ?? local);
     return length;
   }
 
@@ -1171,6 +1212,14 @@ bool isPlaylist(List<int> head) => utf8
 
 /// Whether a file starts like a video players open: MP4/MOV, Matroska/WebM, MPEG-TS, AVI or FLV.
 @visibleForTesting
+bool isMatroska(List<int> head) =>
+    head.length >= 4 &&
+    head[0] == 0x1A &&
+    head[1] == 0x45 &&
+    head[2] == 0xDF &&
+    head[3] == 0xA3;
+
+@visibleForTesting
 bool isVideoFile(List<int> head) {
   bool at(int i, List<int> bytes) =>
       head.length >= i + bytes.length &&
@@ -1206,6 +1255,10 @@ Future<void> prepareHlsFiles(Directory dir, String origin) async {
 
 class _Cancelled implements Exception {}
 
+/// A rate-limited segment's wait unit (seconds in the app); replaced in tests.
+@visibleForTesting
+Duration segmentRetryWait = const Duration(seconds: 1);
+
 Future<Uint8List> _fetchWithRetry(
   String url,
   Map<String, String> headers,
@@ -1213,9 +1266,15 @@ Future<Uint8List> _fetchWithRetry(
   for (var attempt = 1; ; attempt++) {
     try {
       return await fetchBytes(url, headers: headers);
-    } catch (_) {
-      if (attempt == 3) rethrow;
-      await Future.delayed(Duration(seconds: attempt));
+    } catch (e) {
+      // A CDN's rate limit (KickAssAnime's turns away a fast download partway) needs longer: 5, 10, 20, 40, 60s.
+      final limited = e is HttpException && e.message == 'HTTP 429';
+      if (attempt == (limited ? 6 : 3)) rethrow;
+      await Future.delayed(
+        limited
+            ? segmentRetryWait * min(5 << (attempt - 1), 60)
+            : Duration(seconds: attempt),
+      );
     }
   }
 }
@@ -1258,8 +1317,9 @@ String bestVariant(String master, {int maxHeight = 0}) {
 /// and the total length from #EXTINF.
 (String, Map<String, Uri>, Duration) localizePlaylist(
   String playlist,
-  Uri base,
-) {
+  Uri base, {
+  String prefix = 'seg',
+}) {
   final out = StringBuffer();
   final files = <String, Uri>{};
   var seconds = 0.0;
@@ -1268,7 +1328,7 @@ String bestVariant(String master, {int maxHeight = 0}) {
     final line = raw.trim();
     if (line.isEmpty) continue;
     if (!line.startsWith('#')) {
-      final name = 'seg${(segments++).toString().padLeft(5, '0')}.ts';
+      final name = '$prefix${(segments++).toString().padLeft(5, '0')}.ts';
       files[name] = base.resolve(line);
       out.writeln(name);
       continue;
@@ -1278,7 +1338,8 @@ String bestVariant(String master, {int maxHeight = 0}) {
     }
     out.writeln(
       line.replaceAllMapped(RegExp(r'URI="([^"]+)"'), (m) {
-        final name = 'key${keys++}.bin';
+        // The video's keys keep the names saved before audio renditions were.
+        final name = '${prefix == 'seg' ? '' : prefix}key${keys++}.bin';
         files[name] = base.resolve(m[1]!);
         return 'URI="$name"';
       }),
@@ -1292,3 +1353,17 @@ String formatBytes(int bytes) => bytes < 1 << 20
     : bytes < 1 << 30
     ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB'
     : '${(bytes / (1 << 30)).toStringAsFixed(2)} GB';
+
+/// Of [streams], the first, unless they're one per resolution (animepahe's "SEV 1080p", "SEV 720p"): then the
+/// sharpest no taller than [maxHeight] (0 for any), else the smallest.
+@visibleForTesting
+VideoStream? withinQuality(Iterable<VideoStream> streams, int maxHeight) {
+  int? height(VideoStream s) =>
+      int.tryParse(RegExp(r'\b(\d{3,4})p\b').firstMatch(s.label)?[1] ?? '');
+  final sized = [
+    for (final s in streams)
+      if (height(s) != null) s,
+  ]..sort((a, b) => height(b)!.compareTo(height(a)!));
+  if (maxHeight == 0 || sized.length < 2) return streams.firstOrNull;
+  return sized.where((s) => height(s)! <= maxHeight).firstOrNull ?? sized.last;
+}

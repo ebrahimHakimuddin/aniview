@@ -583,15 +583,15 @@ extension _DeskDetails on _DetailsScreenState {
                           AnimatedOpacity(
                             opacity: hovered && !picking ? 1 : 0,
                             duration: motionMs(context, 120),
-                            child: const ColoredBox(
-                              color: Color(0x66000000),
+                            child: ColoredBox(
+                              color: const Color(0x66000000),
                               child: Center(
                                 child: CircleAvatar(
                                   radius: 22,
-                                  backgroundColor: Colors.white,
+                                  backgroundColor: scheme.primary,
                                   child: Icon(
                                     Icons.play_arrow_rounded,
-                                    color: Colors.black,
+                                    color: scheme.onPrimary,
                                     size: 30,
                                   ),
                                 ),

@@ -1428,7 +1428,9 @@ class _FocusCardState extends State<FocusCard> {
           ),
           foregroundDecoration: BoxDecoration(
             borderRadius: radius,
-            border: focused ? Border.all(color: Colors.white, width: 3) : null,
+            border: focused
+                ? Border.all(color: scheme.onSurface, width: 3)
+                : null,
           ),
           child: ClipRRect(
             borderRadius: radius,
