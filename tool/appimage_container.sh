@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Builds the Linux release and packs AniView-x86_64.AppImage inside the container of tool/appimage.Dockerfile, so the
 # AppImage runs on systems older than this one. Arguments go to `flutter build linux --release` (the dart defines);
-# ANIVIEW_BETA is passed on. Needs Docker and fvm. The source and this machine's Flutter are copied in, so build/,
-# .dart_tool/ and the SDK here stay untouched.
+# ANIVIEW_BETA is passed on. Needs Docker, and fvm or Flutter on PATH (CI). The source and this machine's Flutter are
+# copied in, so build/, .dart_tool/ and the SDK here stay untouched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-flutter=$(fvm flutter --version --machine | sed -n 's/.*"flutterRoot": *"\([^"]*\)".*/\1/p')
+if command -v fvm >/dev/null; then host_flutter=(fvm flutter); else host_flutter=(flutter); fi
+flutter=$("${host_flutter[@]}" --version --machine | sed -n 's/.*"flutterRoot": *"\([^"]*\)".*/\1/p')
 test -d "$flutter"
 mkdir -p "${PUB_CACHE:-$HOME/.pub-cache}"
 docker build -t aniview-appimage -f tool/appimage.Dockerfile tool
