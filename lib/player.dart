@@ -1571,11 +1571,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   bottom: isTv ? 48 : (controls ? _deskBarHeight : 32),
                   child: ExcludeFocus(
                     excluding: isTv,
+                    // The theme's accent, as the app's other main actions.
                     child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                      ),
                       onPressed: () => player.seek(skip.end),
                       icon: const Icon(Icons.fast_forward_rounded),
                       label: Text(

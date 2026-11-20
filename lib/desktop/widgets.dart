@@ -468,10 +468,6 @@ class _HoverOverlay extends StatelessWidget {
               preferBelow: false,
               child: IconButton.filled(
                 iconSize: 32,
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: Colors.black,
-                ),
                 onPressed: onPlay,
                 icon: const Icon(Icons.play_arrow_rounded),
               ),
@@ -797,12 +793,12 @@ class _ResumeCard extends StatelessWidget {
                         child: AnimatedOpacity(
                           opacity: hovered ? 1 : .0,
                           duration: motionMs(context, 140),
-                          child: const CircleAvatar(
+                          child: CircleAvatar(
                             radius: 24,
-                            backgroundColor: Colors.white,
+                            backgroundColor: scheme.primary,
                             child: Icon(
                               Icons.play_arrow_rounded,
-                              color: Colors.black,
+                              color: scheme.onPrimary,
                               size: 32,
                             ),
                           ),
