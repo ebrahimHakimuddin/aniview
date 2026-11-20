@@ -250,6 +250,71 @@ void main() {
     });
   });
 
+  testWidgets(
+    'a hold picks episodes, a show\'s header all of them, for one delete',
+    (t) async {
+      SharedPreferences.setMockInitialValues({});
+      await Settings.load();
+      _seed(t);
+      await t.pumpWidget(
+        MaterialApp(theme: buildTheme(), home: const DownloadsScreen()),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('Downloads'), findsOneWidget);
+
+      await t.longPress(find.text('Episode 2'));
+      await t.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+      expect(
+        find.text('Downloads'),
+        findsNothing,
+      ); // the bar stands in for the title
+      expect(
+        find.byTooltip('Delete'),
+        findsNothing,
+      ); // rows lose their own buttons
+
+      // While picking a tap picks, rather than playing.
+      await t.tap(find.text('Episode 1').first);
+      await t.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+      await t.tap(find.text('Episode 1').first);
+      await t.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+
+      // A show's header picks all of its episodes, and again unpicks them.
+      await t.tap(find.text('Beta'));
+      await t.pumpAndSettle();
+      expect(find.text('3 selected'), findsOneWidget);
+      await t.tap(find.text('Beta'));
+      await t.pumpAndSettle();
+      expect(find.text('1 selected'), findsOneWidget);
+
+      // Picking the failed one offers a retry; All picks everything the filter shows.
+      await t.tap(find.text('Episode 3'));
+      await t.pumpAndSettle();
+      expect(find.byTooltip('Retry 1'), findsOneWidget);
+      await t.tap(find.text('All'));
+      await t.pumpAndSettle();
+      expect(find.text('5 selected'), findsOneWidget);
+
+      await t.tap(find.byTooltip('Delete 5'));
+      await t.pumpAndSettle();
+      expect(find.text('Delete 5 downloads?'), findsOneWidget);
+      await t.tap(find.text('Cancel'));
+      await t.pumpAndSettle();
+      expect(find.text('5 selected'), findsOneWidget);
+      expect(Downloads.instance.items, hasLength(5));
+
+      // Back ends picking rather than leaving.
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(find.text('Downloads'), findsOneWidget);
+      expect(find.textContaining('selected'), findsNothing);
+      expect(t.takeException(), isNull);
+    },
+  );
+
   group('desktop downloads, while one downloads', () {
     Future<Download> open(WidgetTester t) async {
       final oldDesktop = isDesktop;
