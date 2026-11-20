@@ -87,6 +87,7 @@ class MainActivity : FlutterActivity() {
                         (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType ==
                             Configuration.UI_MODE_TYPE_TELEVISION,
                     )
+                    "touch" -> result.success(packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN))
                     "abi" -> result.success(Build.SUPPORTED_ABIS.first())
                     // 0 is the three-button bar, 1 two-button, 2 gestures; phones from before the setting have buttons.
                     "navigationMode" -> result.success(
