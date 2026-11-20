@@ -66,9 +66,18 @@ void main() {
       'AnimeStream|https://anime.uniquestream.net',
       'ani.pm|https://ani.pm',
     ]);
-    expect(sites.map((s) => s.name), ['AnimeStream', 'ani.pm']);
+    expect(sites.map((s) => s.name), ['AnimeStream', 'ani.pm', 'Anikoto']);
     expect(sites.whereType<AnimeStream>(), hasLength(1));
-    expect(sourcesFromRanking([]).single, isA<AnimeStream>());
+    expect(sourcesFromRanking([]).map((s) => s.name), [
+      'Anikoto',
+      'AnimeStream',
+    ]);
+  });
+
+  test('Anikoto stays when the ranking drops it', () {
+    final sites = sourcesFromRanking(['ani.pm|https://ani.pm']);
+    expect(sites.map((s) => s.name), ['ani.pm', 'Anikoto', 'AnimeStream']);
+    expect(sites[1].base, 'https://anikototv.to');
   });
 
   test('loads the top sites once, and afresh after a failed load', () async {

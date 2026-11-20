@@ -256,7 +256,7 @@ Future<void> clearMatches() async {
   }
 }
 
-/// Supported ranked sites, followed by AnimeStream when absent from the ranking.
+/// Supported ranked sites, followed by Anikoto and AnimeStream when absent from the ranking.
 /// animepahe remains available for saved episodes and manual use, marked unstable.
 Future<List<Source>> topSources() async => sourcesFromRanking(_topSites);
 
@@ -273,6 +273,10 @@ List<Source> sourcesFromRanking(Iterable<String> ranking) {
         _ => null,
       },
   ];
+  // Kept when everythingmoe stops ranking them: Anikoto left its list in November 2026 while still working.
+  if (!sites.any((source) => source is Anikoto)) {
+    sites.add(Anikoto('Anikoto', 'https://anikototv.to'));
+  }
   if (!sites.any((source) => source is AnimeStream)) {
     sites.add(AnimeStream('AnimeStream', 'https://anime.uniquestream.net'));
   }
