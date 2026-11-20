@@ -21,7 +21,7 @@ void main() {
     });
     await Settings.load();
     await tester.pumpWidget(const MaterialApp(home: HomeScreen()));
-    // Past Home's first-frame checks (updates, what's new, the survey), which wait on real I/O.
+    // Past Home's first-frame checks (updates, what's new), which wait on real I/O.
     for (var i = 0; i < 5; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 200)),

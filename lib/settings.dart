@@ -14,7 +14,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
-import 'survey.dart';
 import 'subtitle_appearance.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
@@ -533,14 +532,6 @@ class Settings {
         ? location.replaceFirst('primary:', 'Internal storage/')
         : location.replaceFirst(':', '/');
   }
-
-  static const _subscriptionSurveyKey = isBetaBuild
-      ? 'subscription_survey_beta_v2'
-      : 'subscription_survey_v1';
-  static String? get subscriptionSurveyState =>
-      _prefs.getString(_subscriptionSurveyKey);
-  static Future<bool> setSubscriptionSurveyState(String state) =>
-      _prefs.setString(_subscriptionSurveyKey, state);
 
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);

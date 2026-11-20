@@ -161,6 +161,10 @@ jobs:
           if host != 'https://rybbit.clouderp.co.tz' or not site:
               raise SystemExit('Release requires the production Rybbit host and a configured site ID')
           print('Rybbit release configuration verified')
+          relay = values.get('PARTY_RELAY', '').strip().strip('"\'')
+          if relay != 'wss://aniview.ebrahim.co.tz':
+              raise SystemExit('Release requires PARTY_RELAY=wss://aniview.ebrahim.co.tz in DART_DEFINES')
+          print('Party relay configuration verified')
           PY
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
           flutter build ${{ matrix.target }} --release --dart-define=TOP_SITES="$(dart tool/top_sites.dart)" --dart-define-from-file=dart_defines.env \
