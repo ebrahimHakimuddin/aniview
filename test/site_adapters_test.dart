@@ -82,6 +82,41 @@ void main() {
       expect(dub.single.url, 'https://cdn.test/dub/index.m3u8');
     });
 
+    test('kwik\'s rate limit is waited out, remembered answers are reused, and a refusal is the error', () async {
+      AnimePahe.retryWait = Duration.zero;
+      final asked = <String>[];
+      var refuse = 1; // kwik's next answers that are HTTP 429
+      final site = AnimePahe(
+        'animepahe',
+        'https://pahe.test',
+        cleared: FakeNet({
+          '/play/show/a': '<button data-src="https://kwik.limit/e/a" data-audio="jpn" data-resolution="720">x</button>',
+          '/play/show/b': '<button data-src="https://kwik.limit/e/b" data-audio="jpn" data-resolution="720">x</button>',
+        }),
+        net: _Kwik((url) {
+          asked.add(url);
+          if (refuse-- > 0) {
+            throw HttpException('HTTP 429', uri: Uri.parse(url));
+          }
+          return "var s='https://cdn.test/a/index.m3u8'";
+        }),
+      );
+      final a = Episode(1, ref: 'show/a');
+      expect(
+        (await site.streams({}, a, dub: false)).single.url,
+        'https://cdn.test/a/index.m3u8',
+      );
+      expect(asked, ['https://kwik.limit/e/a', 'https://kwik.limit/e/a']);
+      // Asked again (a download after the listing), the player page isn't.
+      expect(await site.streams({}, a, dub: false), hasLength(1));
+      expect(asked, hasLength(2));
+      refuse = 3;
+      await expectLater(
+        site.streams({}, Episode(2, ref: 'show/b'), dub: false),
+        throwsA(isA<HttpException>()),
+      );
+    });
+
     test(
       'matches a search result whose page links the show\'s AniList id',
       () async {
@@ -258,6 +293,24 @@ void main() {
       },
     );
 
+    test('lists episodes by the whole route id', () async {
+      final site = AniPm(
+        'ani.pm',
+        'https://anipm.test',
+        net: FakeNet({
+          '/api/anime/series/show-6351-fjkxuq': jsonEncode({
+            'episodes': [
+              {'number': 1, 'title': 'One'},
+            ],
+          }),
+        }),
+      );
+      final [episode] = await site.episodesOf(
+        'settlar/show-6351-fjkxuq|154587|52991',
+      );
+      expect(episode.ref, 'settlar/show-6351-fjkxuq');
+    });
+
     test('has no dub when it would answer the sub instead', () async {
       final site = AniPm(
         'ani.pm',
@@ -371,6 +424,35 @@ void main() {
         );
       },
     );
+
+    test(
+      'a title with typographic quotes matches the site\'s plain ones',
+      () async {
+        final site = AnimeStream(
+          'AnimeStream',
+          'https://as.test',
+          net: FakeNet({
+            '/search?query=': jsonEncode({
+              'series': [
+                {'content_id': 'S', 'title': "Frieren: Beyond Journey's End"},
+              ],
+            }),
+            '/series/S': jsonEncode({
+              'seasons': [
+                {'content_id': 's1', 'season_number': 1, 'mal_id': 'None'},
+              ],
+            }),
+          }),
+        );
+        expect(
+          await site.match({
+            'idMal': 52991,
+            'title': {'english': 'Frieren: Beyond Journey’s End'},
+          }),
+          'S/s1',
+        );
+      },
+    );
   });
 
   group('CloudflareNet', () {
@@ -381,46 +463,38 @@ void main() {
           asked.add('$uri');
           return (200, Uint8List.fromList(utf8.encode('hello')));
         },
-        verify: (_) async => fail('no check was due'),
+        browse: (_, _) async => fail('no browser load was due'),
       );
       expect(await net.text('https://pahe.test/api?m=x'), 'hello');
       expect(asked, ['https://pahe.test/api?m=x']);
     });
 
     test(
-      'opens the site in the browser once, then asks again, when refused',
+      'a request the site refuses is answered by the browser\'s page',
       () async {
-        final statuses = [403, 200];
-        final verified = <String>[];
+        final browsed = <String>[];
         final net = CloudflareNet(
-          request: (_, _) async => (statuses.removeAt(0), Uint8List(0)),
-          verify: (origin) async => verified.add(origin),
+          request: (_, _) async => (403, Uint8List(0)),
+          browse: (url, referer) async {
+            browsed.add('$url from $referer');
+            return 'the page';
+          },
         );
-        await net.bytes('https://pahe.test/anime/x');
-        expect(verified, ['https://pahe.test/']);
-      },
-    );
-
-    test(
-      'gives up with the status when the browser doesn\'t clear it',
-      () async {
-        var verified = 0;
-        final net = CloudflareNet(
-          request: (_, _) async => (503, Uint8List(0)),
-          verify: (_) async => verified++,
+        expect(
+          await net.text(
+            'https://pahe.test/play/x',
+            headers: {'Referer': 'https://pahe.test/'},
+          ),
+          'the page',
         );
-        await expectLater(
-          net.text('https://pahe.test/x'),
-          throwsA(isA<HttpException>()),
-        );
-        expect(verified, 1);
+        expect(browsed, ['https://pahe.test/play/x from https://pahe.test/']);
       },
     );
 
     test('lets the browser\'s Cloudflare challenge through', () async {
       final net = CloudflareNet(
         request: (_, _) async => (403, Uint8List(0)),
-        verify: (origin) async => throw CloudflareChallenge(origin),
+        browse: (url, _) async => throw CloudflareChallenge(url),
       );
       await expectLater(
         net.text('https://pahe.test/x'),
@@ -428,4 +502,15 @@ void main() {
       );
     });
   });
+}
+
+class _Kwik implements Net {
+  _Kwik(this.answer);
+  final String Function(String url) answer;
+  @override
+  Future<String> text(String url, {Map<String, String>? headers}) async =>
+      answer(url);
+  @override
+  Future<Uint8List> bytes(String url, {Map<String, String>? headers}) =>
+      throw UnimplementedError();
 }

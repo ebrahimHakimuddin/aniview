@@ -50,6 +50,9 @@ class ExoPlayerState {
 
   /// The speed last set (by [ExoPlayer.setRate] or [ExoPlayer.applyRate]).
   double rate = 1;
+
+  /// How much later (positive) or earlier the subtitles show than the picture (see [ExoPlayer.setSubtitleDelay]).
+  Duration subtitleDelay = Duration.zero;
 }
 
 /// Asked before the person's own play, pause, seek or speed change takes effect; false stops it (see
@@ -402,6 +405,11 @@ class _MediaKitBackend extends PlayerBackend {
           'auto' => mk.SubtitleTrack.auto(),
           final id => mpv.state.tracks.subtitle.firstWhere((t) => t.id == id),
         });
+      case 'subdelay':
+        await (mpv.platform as mk.NativePlayer).setProperty(
+          'sub-delay',
+          '${(args['ms']! as int) / 1000}',
+        );
       case 'audio':
         await mpv.setAudioTrack(switch (args['track']) {
           'auto' => mk.AudioTrack.auto(),
@@ -743,7 +751,7 @@ class ExoPlayer {
       ..subtitles = const []
       ..audios = const [];
     cues.value = '';
-    return _call('open', {
+    final opened = _call('open', {
       'url': url,
       'headers': headers ?? const {},
       'hls': hls,
@@ -755,6 +763,10 @@ class ExoPlayer {
         for (final a in audios) {'url': a.url, 'label': a.label},
       ],
     });
+    // The shift stays across episodes, and onto a fallen-back backend that hasn't had it.
+    return state.subtitleDelay == Duration.zero
+        ? opened
+        : opened.then((_) => setSubtitleDelay(state.subtitleDelay));
   }
 
   /// [open]s [url] and settles it once it has loaded: lands on [start] when the stream ignored it, shows the
@@ -883,6 +895,13 @@ class ExoPlayer {
   Future<void> setSubtitleTrack(SubtitleTrack track) {
     if (track == SubtitleTrack.off) cues.value = '';
     return _call('subtitle', {'track': track.id});
+  }
+
+  /// Shows the subtitles [delay] later than the picture (earlier when negative), whichever track is on: for
+  /// subtitles out of step with the video. The person's own, never sent to a party.
+  Future<void> setSubtitleDelay(Duration delay) {
+    state.subtitleDelay = delay;
+    return _call('subdelay', {'ms': delay.inMilliseconds});
   }
 
   Future<void> setAudioTrack(SubtitleTrack track) =>

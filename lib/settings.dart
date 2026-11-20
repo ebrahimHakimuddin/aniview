@@ -14,7 +14,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analytics.dart';
-import 'survey.dart';
 import 'subtitle_appearance.dart';
 import 'anilist.dart' show SearchFilters;
 import 'changelog.dart';
@@ -28,6 +27,7 @@ import 'jellyfin.dart';
 import 'jellyseerr.dart';
 import 'notifications.dart';
 import 'sources.dart';
+import 'torrent.dart';
 import 'pairing.dart';
 import 'party_transport.dart' show NostrTransport;
 import 'party.dart' show partyNameLength;
@@ -467,6 +467,44 @@ class Settings {
   static set jellyseerrCookie(String v) =>
       _prefs.setString('jellyseerr_cookie', v);
 
+  /// Whether shows are also found on Nyaa and played as torrents (see torrent.dart): off until the user opts in.
+  static bool get torrents =>
+      (_loaded ? _prefs.getBool('torrents') : null) ?? false;
+  static set torrents(bool v) => _prefs.setBool('torrents', v);
+
+  /// Debrid API keys; a torrent plays through the first one that has it cached, else peer to peer. Empty is unset.
+  static String get torboxKey =>
+      (_loaded ? _prefs.getString('torbox_key') : null) ?? '';
+  static set torboxKey(String v) => _prefs.setString('torbox_key', v);
+  static String get realDebridKey =>
+      (_loaded ? _prefs.getString('real_debrid_key') : null) ?? '';
+  static set realDebridKey(String v) => _prefs.setString('real_debrid_key', v);
+
+  /// The release group whose torrent last played for each show (keyed by its AniList id), which torrent.dart ranks
+  /// first for its other episodes. The most recent 200 shows.
+  static String? torrentGroup(String show) => _torrentGroups[show];
+  static void rememberTorrentGroup(String show, String group) {
+    final groups = _torrentGroups
+      ..remove(show)
+      ..[show] = group;
+    while (groups.length > 200) {
+      groups.remove(groups.keys.first);
+    }
+    _prefs.setString('torrent_groups', jsonEncode(groups));
+  }
+
+  static Map<String, String> get _torrentGroups {
+    try {
+      return {
+        ...(jsonDecode(
+          (_loaded ? _prefs.getString('torrent_groups') : null) ?? '{}',
+        ) as Map).cast<String, String>(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
   /// Whether the show's main button and the player's next episode pass over filler (see filler.dart).
   static bool get skipFiller => _prefs.getBool('skip_filler') ?? false;
   static set skipFiller(bool v) => _prefs.setBool('skip_filler', v);
@@ -494,14 +532,6 @@ class Settings {
         ? location.replaceFirst('primary:', 'Internal storage/')
         : location.replaceFirst(':', '/');
   }
-
-  static const _subscriptionSurveyKey = isBetaBuild
-      ? 'subscription_survey_beta_v2'
-      : 'subscription_survey_v1';
-  static String? get subscriptionSurveyState =>
-      _prefs.getString(_subscriptionSurveyKey);
-  static Future<bool> setSubscriptionSurveyState(String state) =>
-      _prefs.setString(_subscriptionSurveyKey, state);
 
   static bool get analytics => _prefs.getBool('analytics') ?? true;
   static set analytics(bool v) => _prefs.setBool('analytics', v);

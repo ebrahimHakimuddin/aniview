@@ -367,7 +367,10 @@ void main() {
       find.byTooltip('Remove ${NostrTransport.defaultRelays[1]}'),
     );
     await settle(tester);
-    expect(Settings.partyRelays, hasLength(3));
+    expect(
+      Settings.partyRelays,
+      hasLength(NostrTransport.defaultRelays.length),
+    );
     expect(
       Settings.partyRelays,
       isNot(contains(NostrTransport.defaultRelays[1])),

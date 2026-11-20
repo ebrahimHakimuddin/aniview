@@ -188,6 +188,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final _hintNote = ValueNotifier<({String text, IconData? icon})?>(null);
   bool controls = true, locked = false;
 
+  /// Whether the subtitle timing panel is up (see [_SubtitleSync]); the controls stay up with it.
+  bool _syncing = false;
+
   /// Whether the video was playing when a hold paused it, to play it again on release.
   bool heldPlaying = false;
 
@@ -562,6 +565,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (event is KeyDownEvent) {
         _stepSpeed(key == LogicalKeyboardKey.bracketRight ? 1 : -1);
       }
+    } else if (key == LogicalKeyboardKey.keyZ ||
+        key == LogicalKeyboardKey.keyX) {
+      // As in mpv: Z shows the subtitles sooner, X later.
+      _shiftSubtitles(
+        Duration(milliseconds: key == LogicalKeyboardKey.keyX ? 100 : -100),
+      );
     } else if (key == LogicalKeyboardKey.keyT) {
       if (event is KeyDownEvent) {
         _onTop = !_onTop;
@@ -857,13 +866,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
       current?.subtitles ?? const [],
       player.state.subtitles,
     );
+    final delay = player.state.subtitleDelay;
     return _Choice(
       'Subtitles',
-      options,
+      {
+        ...options,
+        // Not a track: opens the timing panel, for subtitles out of step with the video.
+        if (subtitle != 'Off')
+          _syncOption: delay == Duration.zero
+              ? 'Adjust timing…'
+              : 'Adjust timing (${subtitleDelayLabel(delay)})…',
+      },
       options.entries.where((e) => e.value == subtitle).firstOrNull?.key ??
           'off',
       (picked) async {
         switch (picked) {
+          case _syncOption:
+            _openSync();
           case Subtitle s:
             if (await player.showSubtitleFile(s.label) && mounted) {
               setState(() => subtitle = s.label);
@@ -977,6 +996,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() => subtitle = label);
   }
 
+  static const _syncOption = 'sync';
+
+  /// Opens the subtitle timing panel over the playing video, with the controls up under it.
+  void _openSync() {
+    _hideTimer?.cancel();
+    setState(() {
+      _syncing = true;
+      controls = true;
+    });
+  }
+
+  void _closeSync() {
+    setState(() => _syncing = false);
+    _scheduleHide();
+  }
+
+  /// Moves the subtitles [step] later (earlier when negative), or back in step with [reset].
+  void _shiftSubtitles(Duration step, {bool reset = false}) {
+    final delay = reset
+        ? Duration.zero
+        : PlaybackSession.clampSubtitleDelay(player.state.subtitleDelay + step);
+    player.setSubtitleDelay(delay);
+    setState(() {});
+    if (!_syncing) {
+      _hint(
+        'Subtitles ${subtitleDelayLabel(delay)}',
+        icon: Icons.subtitles_outlined,
+      );
+    }
+  }
+
   void _onPosition(Duration position) {
     session.progressed(position);
     _checkWatched(position, player.state.duration);
@@ -1075,7 +1125,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _scheduleHide() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && player.state.playing && !_overControls) {
+      if (mounted && player.state.playing && !_overControls && !_syncing) {
         setState(() => controls = false);
       }
     });
@@ -1194,6 +1244,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // With the controls hidden, the remote's keys go to the player itself (see _onKey).
     if ((isTv || isDesktop) &&
         !controls &&
+        !_syncing &&
         !_keys.hasPrimaryFocus &&
         !_typing) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1520,11 +1571,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   bottom: isTv ? 48 : (controls ? _deskBarHeight : 32),
                   child: ExcludeFocus(
                     excluding: isTv,
+                    // The theme's accent, as the app's other main actions.
                     child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                      ),
                       onPressed: () => player.seek(skip.end),
                       icon: const Icon(Icons.fast_forward_rounded),
                       label: Text(
@@ -1535,6 +1583,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ?_tvReactions(),
               ..._chatBar(),
+              if (_syncing && error == null)
+                Align(
+                  key: const ValueKey('sync'),
+                  alignment: const Alignment(0, .3),
+                  child: _SubtitleSync(
+                    delay: player.state.subtitleDelay,
+                    onStep: _shiftSubtitles,
+                    onReset: () => _shiftSubtitles(Duration.zero, reset: true),
+                    onClose: _closeSync,
+                  ),
+                ),
               if (error != null) _errorView(),
             ],
           ),
@@ -2846,4 +2905,97 @@ class _Choice<T> {
   final Map<T, String> options;
   final T selected;
   final Future<void> Function(T) pick;
+}
+
+/// [delay] as the timing panel and hints show it: "+0.3 s", "−1.2 s", "In sync".
+String subtitleDelayLabel(Duration delay) {
+  if (delay == Duration.zero) return 'in sync';
+  final seconds = (delay.inMilliseconds.abs() / 1000).toStringAsFixed(1);
+  return '${delay.isNegative ? '−' : '+'}$seconds s';
+}
+
+/// Moves the subtitles into step with the picture while it plays: later when they come too early, earlier when
+/// they come late, a tenth or half a second at a time.
+class _SubtitleSync extends StatelessWidget {
+  const _SubtitleSync({
+    required this.delay,
+    required this.onStep,
+    required this.onReset,
+    required this.onClose,
+  });
+
+  final Duration delay;
+  final void Function(Duration step) onStep;
+  final VoidCallback onReset, onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    Widget step(int ms, String label, {bool autofocus = false}) => TextButton(
+      autofocus: autofocus,
+      style: TextButton.styleFrom(
+        foregroundColor: Colors.white,
+        minimumSize: const Size(56, 44),
+      ),
+      onPressed: () => onStep(Duration(milliseconds: ms)),
+      child: Text(label),
+    );
+    return FocusScope(
+      child: Material(
+        // Dark in every theme: it sits on the video, and its text is white.
+        color: Colors.black.withValues(alpha: .8),
+        borderRadius: BorderRadius.circular(radiusLarge),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Subtitle timing · ${subtitleDelayLabel(delay)}',
+                    style: text.titleSmall?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(width: 16),
+                  if (delay != Duration.zero)
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: onReset,
+                      child: const Text('Reset'),
+                    ),
+                  IconButton(
+                    tooltip: 'Done',
+                    color: Colors.white,
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              Text(
+                isDesktop
+                    ? 'Subtitles too early: + (X). Too late: − (Z).'
+                    : 'Subtitles too early: +. Too late: −.',
+                style: text.bodySmall?.copyWith(color: Colors.white70),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  step(-500, '−0.5 s'),
+                  step(-100, '−0.1 s'),
+                  const SizedBox(width: 8),
+                  step(100, '+0.1 s', autofocus: true),
+                  step(500, '+0.5 s'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

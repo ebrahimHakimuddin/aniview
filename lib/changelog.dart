@@ -6,21 +6,46 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-const changelogVersion = '2.6.1';
+const changelogVersion = '2.7.0';
 
 /// One change worth telling the person about: a short [title] and a sentence of [body].
 typedef ChangelogEntry = ({IconData icon, String title, String body});
 
 const changelogHighlights = <ChangelogEntry>[
   (
-    icon: Icons.tv_rounded,
-    title: 'Complete the survey with your remote',
-    body: 'Use the D-pad to move between answers, press OK to select, then move down to Submit. Moving focus keeps your chosen answer.',
+    icon: Icons.groups_rounded,
+    title: 'Watch parties',
+    body: 'Start a party, share the invite or its QR code, and everyone plays, pauses and seeks together, with chat and reactions. Bring the TV in from your phone.',
   ),
   (
-    icon: Icons.system_update_rounded,
-    title: 'Updates before the survey',
-    body: 'The startup update check finishes before the survey appears, so TV users can install an available update first.',
+    icon: Icons.hub_rounded,
+    title: 'Torrents',
+    body: 'Find releases on Nyaa, with SeaDex’s best picks first. Stream them through TorBox or Real-Debrid, or straight from peers on desktop. The group you played last is remembered for each show.',
+  ),
+  (
+    icon: Icons.auto_awesome_rounded,
+    title: 'Anime4K upscaling',
+    body: 'Sharpen lower-resolution episodes in the player, on desktop and Android.',
+  ),
+  (
+    icon: Icons.subtitles_rounded,
+    title: 'Subtitle timing',
+    body: 'Subtitles out of step with the video? Shift them earlier or later while it plays, from Subtitles → Adjust timing.',
+  ),
+  (
+    icon: Icons.checklist_rounded,
+    title: 'Pick several downloads',
+    body: 'Long-press a download to select more, then delete them or retry the failed ones together.',
+  ),
+  (
+    icon: Icons.tune_rounded,
+    title: 'Settings, regrouped',
+    body: 'Settings opens on a short list of groups, each on its own page.',
+  ),
+  (
+    icon: Icons.bolt_rounded,
+    title: 'Faster, and fixed',
+    body: 'Home, search, the player and downloads redraw far less. Every source plays and downloads again, Anikoto is back, and posters stay cached between launches.',
   ),
 ];
 

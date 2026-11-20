@@ -64,7 +64,6 @@ void main() {
         'skip_filler': true,
         'jellyfin_device': 'dev1',
         'download_folder': 'content://tree/primary:Movies',
-        'subscription_survey_v1': 'answered',
         'analytics': false,
         'install_id': 'abc',
         'remote_keys': ['k1'],
@@ -126,11 +125,6 @@ void main() {
       expect(Settings.skipFiller, isTrue);
       expect(Settings.jellyfinDevice, 'dev1');
       expect(Settings.downloadFolder, 'content://tree/primary:Movies');
-      // The beta asks under its own key, so its answer doesn't stand for the stable app's.
-      expect(
-        Settings.subscriptionSurveyState,
-        isBetaBuild ? isNull : 'answered',
-      );
       expect(Settings.analytics, isFalse);
       expect(Settings.installId, 'abc');
       expect(Settings.remoteKeys, ['k1']);

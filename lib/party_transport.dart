@@ -1,4 +1,5 @@
-/// The watch party's real transport: a room's messages, end-to-end encrypted, through public Nostr relays.
+/// The watch party's real transport: a room's messages, end-to-end encrypted, through Nostr relays: our own
+/// first when the build has one (`PARTY_RELAY`), public ones as fallback.
 ///
 /// A room is a 12-character code ([PartyRoom]) that friends share. From it, scrypt and labelled hashes derive an
 /// AES key and a relay tag ([PartyKeys]); relays only ever see the tag and ciphertext. Each message is a NIP-01
@@ -235,12 +236,15 @@ class NostrTransport implements PartyTransport {
     });
   }
 
-  /// Relays seen accepting and delivering ephemeral events at 4 a second.
+  /// Our own relay (tool/party_relay.dart) when the build sets `PARTY_RELAY`, then public relays as fallback:
+  /// ones seen accepting and delivering ephemeral events at 4 a second.
   static const defaultRelays = [
+    if (_ownRelay != '') _ownRelay,
     'wss://relay.primal.net',
     'wss://relay.snort.social',
     'wss://relay.nostr.net',
   ];
+  static const _ownRelay = String.fromEnvironment('PARTY_RELAY');
 
   final PartyRoom room;
   final WebSocketConnector _connect;

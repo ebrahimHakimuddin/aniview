@@ -78,8 +78,8 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
         for (final (i, (section, shown)) in sections.indexed)
           SwitchListTile(
             key: ValueKey(section),
-            // Dragging needs touch; a remote moves rows with buttons.
-            secondary: !isTv
+            // Dragging needs touch; a remote moves rows with buttons (on a TV box in the phone layout too).
+            secondary: !remoteOnly
                 ? ReorderableDragStartListener(
                     index: i,
                     child: const Padding(

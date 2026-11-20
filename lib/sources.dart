@@ -13,6 +13,7 @@ import 'metadata.dart';
 import 'net.dart';
 import 'platform.dart';
 import 'settings.dart';
+import 'torrent.dart';
 
 export 'net.dart';
 
@@ -36,7 +37,14 @@ class Sites {
         final (installed, loaded) = await extensions;
         if (!loaded) _current = null;
         // The user's own server first: what's there is theirs to watch.
-        return [?Jellyfin.saved(), ...sites, ...installed];
+        return [
+          ?Jellyfin.saved(),
+          ...sites,
+          if (Settings.torrents &&
+              (Debrid.saved.isNotEmpty || PeerEngine.available))
+            TorrentSource(),
+          ...installed,
+        ];
       }).catchError((Object e) {
         _current = null;
         throw e;
@@ -248,7 +256,7 @@ Future<void> clearMatches() async {
   }
 }
 
-/// Supported ranked sites, followed by AnimeStream when absent from the ranking.
+/// Supported ranked sites, followed by Anikoto and AnimeStream when absent from the ranking.
 /// animepahe remains available for saved episodes and manual use, marked unstable.
 Future<List<Source>> topSources() async => sourcesFromRanking(_topSites);
 
@@ -265,6 +273,10 @@ List<Source> sourcesFromRanking(Iterable<String> ranking) {
         _ => null,
       },
   ];
+  // Kept when everythingmoe stops ranking them: Anikoto left its list in November 2026 while still working.
+  if (!sites.any((source) => source is Anikoto)) {
+    sites.add(Anikoto('Anikoto', 'https://anikototv.to'));
+  }
   if (!sites.any((source) => source is AnimeStream)) {
     sites.add(AnimeStream('AnimeStream', 'https://anime.uniquestream.net'));
   }
@@ -713,7 +725,8 @@ class AniPm extends Source {
   Future<List<Episode>> episodesOf(String id) async {
     final show = id.split('|').first;
     final json = jsonDecode(
-      await net.text('$base/api/anime/series/${show.split('-').last}'),
+      // By its route id ("frieren-…-6351-fjkxuq"); the code at its end alone is no longer found.
+      await net.text('$base/api/anime/series/${show.split('/').last}'),
     );
     return [
       for (final e in json['episodes'] as List? ?? const [])
@@ -871,7 +884,12 @@ class AnimeStream extends Source {
 
   @override
   Future<String?> match(Map media) async {
-    final titles = {for (final t in _searchTitles(media)) t.toLowerCase()};
+    // AniList's typographic quotes ("Journey’s") against the site's plain ones.
+    String key(String t) => t
+        .toLowerCase()
+        .replaceAll(RegExp('[‘’]'), "'")
+        .replaceAll(RegExp('[“”]'), '"');
+    final titles = {for (final t in _searchTitles(media)) key(t)};
     // Its search knows a series by the first season's title; "… 2nd Season" finds nothing.
     final suffix = RegExp(
       r'[\s:]*(\d+(st|nd|rd|th) Season|Season \d+|Part \d+)$',
@@ -892,7 +910,7 @@ class AnimeStream extends Source {
                       s['mal_id'] == '${media['idMal']}',
                 )
                 .firstOrNull ??
-            (titles.contains(r.title.toLowerCase())
+            (titles.contains(key(r.title))
                 ? seasons.where((s) => s['season_number'] == 1).firstOrNull
                 : null);
         if (season != null) return '${r.id}/${season['content_id']}';
@@ -965,6 +983,33 @@ class AnimePahe extends Source {
     : cleared = cleared ?? CloudflareNet();
 
   final Net cleared, net;
+
+  /// kwik's playlist for each of its players, found in the last half hour: kwik turns away more than a few player
+  /// pages a minute (HTTP 429), and a download asks again for the servers of an episode just listed.
+  static final _playlists = <Uri, (String, DateTime)>{};
+
+  Future<String?> _playlistOf(Uri kwik) async {
+    if (_playlists[kwik] case (final m3u8, final at)
+        when DateTime.now().difference(at) < const Duration(minutes: 30)) {
+      return m3u8;
+    }
+    for (var attempt = 0; ; attempt++) {
+      try {
+        final html = await net.text('$kwik', headers: {'Referer': '$base/'});
+        final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
+            .firstMatch(unpack(html))?[0];
+        if (m3u8 != null) _playlists[kwik] = (m3u8, DateTime.now());
+        return m3u8;
+      } on HttpException catch (e) {
+        if (e.message != 'HTTP 429' || attempt == 2) rethrow;
+        await Future<void>.delayed(retryWait * (attempt + 1));
+      }
+    }
+  }
+
+  /// How long a rate-limited request waits before its next try (times the try); replaced in tests.
+  @visibleForTesting
+  static Duration retryWait = const Duration(seconds: 5);
 
   @override
   String get label => '$name · Unstable';
@@ -1050,24 +1095,26 @@ class AnimePahe extends Source {
               int.tryParse(a['resolution'] ?? '') ?? 0,
             ),
           );
+    Object? failure;
     final resolved = await Future.wait(
       buttons.map((button) async {
         try {
           final kwik = Uri.parse(button['src']!);
-          final html = await net.text('$kwik', headers: {'Referer': '$base/'});
-          final m3u8 = RegExp(r'''https?://[^'"\\\s]+\.m3u8[^'"\\\s]*''')
-              .firstMatch(unpack(html))?[0];
+          final m3u8 = await _playlistOf(kwik);
           if (m3u8 == null) return null;
           return VideoStream(
             '${button['fansub'] ?? 'Kwik'} ${button['resolution']}p',
             m3u8,
             {'Referer': '${kwik.origin}/', 'User-Agent': userAgent},
           );
-        } catch (_) {
+        } catch (e) {
+          failure ??= e;
           return null;
         }
       }),
     );
+    // Every server failing is that failure (kwik's rate limit, say), not an episode without servers.
+    if (resolved.every((s) => s == null) && failure != null) throw failure!;
     return resolved.nonNulls.toList();
   }
 }
