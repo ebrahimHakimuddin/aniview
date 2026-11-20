@@ -1526,22 +1526,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       trailing: const Icon(Icons.chevron_right_rounded),
       onTap: () => showChangelog(context),
     ),
-    if (Analytics.available && Settings.analytics)
-      ListTile(
-        leading: const Icon(Icons.poll_outlined),
-        title: const Text('AniView’s future'),
-        subtitle: Text(
-          Settings.subscriptionSurveyState == 'answered'
-              ? 'Thanks for sharing your thoughts'
-              : 'Share your thoughts on a US\$1 monthly subscription',
-        ),
-        onTap: Settings.subscriptionSurveyState == 'answered'
-            ? null
-            : () async {
-                await showSubscriptionSurvey(context);
-                if (mounted) setState(() {});
-              },
-      ),
     if (Analytics.available)
       SwitchListTile(
         title: const Text('Share anonymous usage stats'),
