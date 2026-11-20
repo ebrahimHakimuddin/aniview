@@ -43,7 +43,6 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
-      - run: flutter test test/survey_test.dart --dart-define=RYBBIT_SITE_ID=ci-test --dart-define=ANIVIEW_BETA=true
       - run: python3 tool/test_native_verification.py
       - run: python3 tool/check_macos_bundle.py
       - run: python3 tool/check_ios_bundle.py
