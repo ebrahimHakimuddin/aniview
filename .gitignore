@@ -21,3 +21,7 @@ dart_defines.*.env
 *.p12
 *.p8
 .DS_Store
+
+# Built releases kept locally, and Python caches from tool/
+/output/
+__pycache__/
