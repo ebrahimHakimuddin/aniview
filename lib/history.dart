@@ -40,11 +40,19 @@ class WatchHistory {
     return [for (final r in await _read()) WatchRecord(r)];
   }
 
+  /// The entries as last read or written, with the text they came from: the player saves its spot every 10 s,
+  /// and decoding all of history (every show's details) each time was work on the UI thread for nothing.
+  static (String, List<Map<String, dynamic>>)? _parsed;
+
   static Future<List<Map<String, dynamic>>> _read() async {
     final raw = (await SharedPreferences.getInstance()).getString(_key);
-    return raw == null
-        ? []
-        : (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+    if (raw == null) return [];
+    if (_parsed case (final text, final entries) when text == raw) {
+      return [...entries];
+    }
+    final entries = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+    _parsed = (raw, entries);
+    return [...entries];
   }
 
   static Future<WatchRecord?> of(Map media) async =>
@@ -160,10 +168,9 @@ class WatchHistory {
   static Future<void> clear() => _write(const []);
 
   static Future<void> _write(List<Map<String, dynamic>> entries) async {
-    await (await SharedPreferences.getInstance()).setString(
-      _key,
-      jsonEncode(entries),
-    );
+    final raw = jsonEncode(entries);
+    _parsed = (raw, [...entries]);
+    await (await SharedPreferences.getInstance()).setString(_key, raw);
     syncWatchNext([for (final e in entries) WatchRecord(e)]);
   }
 }

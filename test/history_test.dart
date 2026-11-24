@@ -31,6 +31,17 @@ void main() {
     await Settings.load();
   });
 
+  test('history read again once what is stored changes', () async {
+    await _play(_episodes(3), 0, _min * 5);
+    expect((await WatchHistory.all()).single.episode, 1);
+    // Written by something else (a restore, another build): not the copy kept from the last write.
+    await (await SharedPreferences.getInstance()).setString(
+      'watch_history',
+      '[{"media":{"id":2,"title":{"userPreferred":"Other"}},"source":"Site","episode":7,"position":0,"dub":false}]',
+    );
+    expect((await WatchHistory.all()).single.episode, 7);
+  });
+
   test(
     'a show saved before its AniList id was known is still found after',
     () async {
