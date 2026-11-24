@@ -36,6 +36,12 @@ void applyLayout(String layout) {
     'phone' => false,
     _ => deviceIsTv,
   };
+  // A remote shows what has focus. Flutter only switches to that after a key from a real input device; keys a TV
+  // box gets from the TV's own remote over HDMI-CEC come from Android's virtual keyboard, which it ignores, so list
+  // rows would never show focus.
+  FocusManager.instance.highlightStrategy = remoteOnly
+      ? FocusHighlightStrategy.alwaysTraditional
+      : FocusHighlightStrategy.automatic;
   restoreOrientation();
 }
 

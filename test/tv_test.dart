@@ -8,6 +8,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets('a remote-only device always shows what has focus', (t) async {
+    addTearDown(() {
+      deviceHasTouch = true;
+      applyLayout('phone');
+    });
+    deviceHasTouch = false; // a box in the phone layout, driven by a remote (or the TV's own over HDMI-CEC)
+    applyLayout('phone');
+    expect(
+      FocusManager.instance.highlightStrategy,
+      FocusHighlightStrategy.alwaysTraditional,
+    );
+    deviceHasTouch = true;
+    applyLayout('phone');
+    expect(
+      FocusManager.instance.highlightStrategy,
+      FocusHighlightStrategy.automatic,
+    );
+  });
+
   test("the launcher's row is rewritten only when its cards change", () {
     Map<String, Object?> card({
       int position = 0,
