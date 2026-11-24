@@ -86,21 +86,25 @@ class HomeFeed extends ChangeNotifier {
   /// Where you stopped in each show, newest first; on-device, so it's there even when AniList isn't.
   late Future<List<WatchRecord>> history = source.history();
 
-  /// A week back and a week ahead of the shows you follow, in one request (AniList allows 30 a minute).
-  late Future<List<Map>> _airing = _loadAiring();
+  /// A week back and a week ahead of the shows you follow, in one request (AniList allows 30 a minute). Asked for
+  /// only once something shows what's built on it: a request nobody reads fails unseen (and uncaught) offline.
+  Future<List<Map>>? _airingLoad;
+  Future<List<Map>> get _airing => _airingLoad ??= _shown(_loadAiring());
 
-  /// The newest episode out this past week of each show you're watching or watched recently.
-  late Future<List<Map>> released = _released();
+  /// The newest episode out this past week of each show you're watching or watched recently; asked for the first
+  /// time it's shown (not every layout has the row).
+  Future<List<Map>>? _releasedLoad;
+  Future<List<Map>> get released => _releasedLoad ??= _shown(_released());
 
   /// The week ahead of the shows you're watching or planning and the ones you watched recently, or signed out,
   /// of the popular shows airing now; loaded the first time Schedule is shown.
   Future<List<Map>>? _scheduleLoad;
-  Future<List<Map>> get schedule => _scheduleLoad ??= _schedule();
+  Future<List<Map>> get schedule => _scheduleLoad ??= _shown(_schedule());
 
   /// The popular, all-show schedule for the second Schedule tab.
   Future<List<Map>>? _allScheduleLoad;
   Future<List<Map>> get allSchedule =>
-      _allScheduleLoad ??= source.airingPopular();
+      _allScheduleLoad ??= _shown(source.airingPopular());
 
   /// What's new on the Jellyfin server, as AniList shows; empty when none is connected. Asked again once another
   /// server (or none) is signed in to in Settings.
@@ -119,6 +123,10 @@ class HomeFeed extends ChangeNotifier {
   /// Your totals, for Me; loaded the first time it's shown.
   Future<Map<String, dynamic>?>? _stats;
   Future<Map<String, dynamic>?> get stats => _stats ??= source.stats();
+
+  /// [load], whose failure is for the page that shows it: a row is built (and reads its future) before it's
+  /// scrolled to and listens, as the TV home's rows are, so a failure offline would otherwise go uncaught.
+  static Future<T> _shown<T>(Future<T> load) => load..ignore();
 
   Future<List<Map>> _loadAiring() async =>
       source.airingAround(await _followed(['CURRENT', 'PLANNING']));
@@ -156,10 +164,13 @@ class HomeFeed extends ChangeNotifier {
     _fetched = _now();
     if (_library != null) _library = source.lists(all: true);
     lists = _lists();
-    _airing = _loadAiring();
-    released = _released();
-    if (_scheduleLoad != null) _scheduleLoad = _schedule();
-    if (_allScheduleLoad != null) _allScheduleLoad = source.airingPopular();
+    // Asked again when next read: the pages showing them rebuild on this change.
+    _airingLoad = null;
+    _releasedLoad = null;
+    if (_scheduleLoad != null) _scheduleLoad = _shown(_schedule());
+    if (_allScheduleLoad != null) {
+      _allScheduleLoad = _shown(source.airingPopular());
+    }
   }
 
   /// After a show was opened or another page picked: history is re-read (on-device, cheap). Lists and airing are

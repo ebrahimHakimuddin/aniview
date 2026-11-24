@@ -34,8 +34,12 @@ class _Source implements HomeSource {
   Future<List<Map>> airingAround(Iterable<int> ids) async {
     calls.add('around');
     asked.add(ids);
+    if (offline) throw Exception('offline');
     return around;
   }
+
+  /// AniList can't be reached: what airs fails.
+  bool offline = false;
 
   @override
   Future<List<Map>> airingPopular() async {
@@ -161,6 +165,22 @@ void main() {
         expect(source.count('library'), 2); // home's lists come from it
       },
     );
+
+    test('what airs is asked only once shown, so offline it fails where it is read', () async {
+      source.offline = true;
+      feed.reload(force: true);
+      await pumpEventQueue(); // an error nobody reads would fail the test here
+      expect(source.count('around'), 0);
+
+      // Read by a row not scrolled to yet, which doesn't listen: still not uncaught.
+      feed.released;
+      await pumpEventQueue();
+      await expectLater(feed.released, throwsException); // the row, once shown
+      expect(source.count('around'), 1);
+      feed.reload(force: true);
+      await pumpEventQueue();
+      expect(source.count('around'), 1); // until read again
+    });
 
     test("home's lists come from My list's once it is loaded", () async {
       await feed.library;
