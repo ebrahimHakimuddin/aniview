@@ -1526,6 +1526,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       trailing: const Icon(Icons.chevron_right_rounded),
       onTap: () => showChangelog(context),
     ),
+    if (SupportHub.available)
+      ListTile(
+        leading: const Icon(Icons.feedback_outlined),
+        title: const Text('Feedback'),
+        subtitle: const Text(
+          'Report a bug or request a feature, and follow it',
+        ),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+        ),
+      ),
     if (Analytics.available)
       SwitchListTile(
         title: const Text('Share anonymous usage stats'),

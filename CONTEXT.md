@@ -72,3 +72,7 @@ pure rules on what they hold: a schedule day, the home list rows, and what a rem
 **Filler** (`lib/filler.dart`, `Filler`): which episodes are filler or mixed, from Anime Filler List, matched by the show's
 English or romaji title (its own name before another show's bracketed one). Marked on the episode list; with
 **Skip filler** on, the up next episode, the main action and the player's next episode pass over filler.
+
+**Feedback** (`lib/feedback.dart`, `SupportHub`): bug reports and feature requests, sent from Settings → Feedback to the
+support hub's ticket API with the build's `SUPPORT_HUB_KEY` (the row is hidden without one). The hub answers each with
+a **track token** kept on-device, which reads back its triage (status, released version, note) for "Sent from this device".
