@@ -350,7 +350,7 @@ class _PartyPanelState extends State<PartyPanel> {
   Future<void> _leave() async {
     if (session.isHost && !await confirmEndParty(context)) return;
     widget.onLeave?.call();
-    await session.leave();
+    session.leave().ignore(); // ends at once; the goodbye goes out behind the screen closing
     if (mounted) Navigator.maybePop(context);
   }
 

@@ -43,6 +43,10 @@ class FakeRelay {
   final _subs = <WebSocket, Map<String, Map>>{};
   RelayMode mode = RelayMode.good;
 
+  /// How long an event takes to be accepted; one whose sender's connection closes meanwhile is dropped, as the
+  /// public relays do.
+  Duration acceptDelay = Duration.zero;
+
   /// Sockets ever accepted, REQs ever received, and events delivered to subscribers.
   int connections = 0, reqs = 0, delivered = 0;
 
@@ -60,6 +64,12 @@ class FakeRelay {
         }
         subs[sub] = filter;
         _write(socket, jsonEncode(['EOSE', sub]));
+      case ['EVENT', final Map event] when acceptDelay > Duration.zero:
+        Future<void>.delayed(acceptDelay, () {
+          if (!_subs.containsKey(socket)) return; // gone before it was taken
+          _write(socket, jsonEncode(['OK', event['id'], true, '']));
+          inject(event);
+        });
       case ['EVENT', final Map event]:
         final ok = mode != RelayMode.reject;
         _write(
@@ -360,6 +370,30 @@ void main() {
       expect(inA.messages, [msg(b, 'back')]);
       expect(a.usable.value, 1);
       expect(b.usable.value, 1);
+    });
+
+    test('closing right after a send waits for the relay to take it', () async {
+      final r = await relay()
+        ..acceptDelay = const Duration(milliseconds: 300);
+      final a = join([r]), b = join([r]);
+      final inB = Inbox(b);
+      await connected([r], 2);
+      final bye = msg(a, 'bye');
+      await a.send(bye);
+      await a.close();
+      await until(() => inB.messages.isNotEmpty);
+      expect(inB.messages, [bye]);
+    });
+
+    test('closing gives up on a relay that never answers', () async {
+      final r = await relay()
+        ..acceptDelay = const Duration(seconds: 30);
+      final a = join([r]);
+      await connected([r], 1);
+      await a.send(msg(a, 'bye'));
+      final sw = Stopwatch()..start();
+      await a.close();
+      expect(sw.elapsed, lessThan(NostrTransport.flushPatience * 1.5));
     });
 
     test('an event delivered by two relays arrives once', () async {

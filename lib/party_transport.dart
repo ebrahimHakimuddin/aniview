@@ -285,25 +285,27 @@ class NostrTransport implements PartyTransport {
     final keys = _keys ?? await room.keys;
     if (_closed) return;
     final now = _clock();
-    final frame = jsonEncode([
-      'EVENT',
-      _key.event(
-        createdAt: now ~/ 1000,
-        kind: partyEventKind,
-        tags: [
-          ['d', keys.tag],
-        ],
-        content: base64.encode(seal(keys.key, message)),
-      ),
-    ]);
+    final event = _key.event(
+      createdAt: now ~/ 1000,
+      kind: partyEventKind,
+      tags: [
+        ['d', keys.tag],
+      ],
+      content: base64.encode(seal(keys.key, message)),
+    );
+    final frame = jsonEncode(['EVENT', event]);
     _recent
       ..removeWhere((e) => now - e.$1 > 5000)
       ..add((now, frame));
     if (_recent.length > 32) _recent.removeAt(0);
     for (final relay in _relays) {
-      relay.write(frame);
+      relay.write(frame, event: event['id'] as String);
     }
   }
+
+  /// How long [close] gives the relays to take what was just sent (a goodbye): a public relay drops an event
+  /// whose connection closes before it has accepted it.
+  static const flushPatience = Duration(milliseconds: 1500);
 
   @override
   Future<void> close() async {
@@ -431,11 +433,23 @@ class _Relay {
     }
   }
 
-  void write(String frame) {
+  /// Sends [frame]; an [event]'s id is kept until the relay answers it (see [close]).
+  void write(String frame, {String? event}) {
+    final socket = _socket;
+    if (socket == null) return;
     try {
-      _socket?.add(frame);
+      socket.add(frame);
+      if (event != null) {
+        _unanswered.add(event);
+        // A relay that never answers: only the latest few matter for a goodbye.
+        if (_unanswered.length > 32) _unanswered.remove(_unanswered.first);
+      }
     } catch (_) {}
   }
+
+  /// Events sent on this connection that the relay hasn't answered `OK` to yet.
+  final _unanswered = <String>{};
+  Completer<void>? _answered;
 
   void markUsable() {
     _backoff = const Duration(seconds: 1);
@@ -461,7 +475,13 @@ class _Relay {
     switch (frame) {
       case ['EVENT', final String sub, final Object? event] when sub == _sub:
         _t._onEvent(this, event);
-      case ['OK', _, false, ...] || ['NOTICE', ...] || ['AUTH', ...]:
+      case ['OK', final String id, final bool ok, ...]:
+        if (_unanswered.remove(id) && _unanswered.isEmpty) {
+          _answered?.complete();
+          _answered = null;
+        }
+        if (!ok) _unusable();
+      case ['NOTICE', ...] || ['AUTH', ...]:
         _unusable();
       case ['CLOSED', final String sub, ...] when sub == _sub:
         _unusable(); // our subscription is gone: start over
@@ -472,6 +492,7 @@ class _Relay {
   void _lost(WebSocket socket) {
     if (_socket != socket) return;
     _socket = null;
+    _unanswered.clear(); // sent again from [NostrTransport._recent] on the next connection
     _unusable();
     _scheduleRetry();
   }
@@ -489,7 +510,15 @@ class _Relay {
   Future<void> close() async {
     _retry?.cancel();
     final socket = _socket;
+    // What was just sent (a goodbye) is taken before the connection goes, or given up on after a while.
+    if (socket != null && _unanswered.isNotEmpty) {
+      await (_answered ??= Completer()).future.timeout(
+        NostrTransport.flushPatience,
+        onTimeout: () {},
+      );
+    }
     _socket = null;
+    _unanswered.clear();
     usable = false;
     await socket?.close().catchError((_) {});
   }

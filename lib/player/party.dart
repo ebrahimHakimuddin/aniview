@@ -109,7 +109,7 @@ extension _PlayerParty on _PlayerScreenState {
   Future<void> _leaveHosting() async {
     if (!await confirmEndParty(context) || !mounted) return;
     _partyLeaving = true;
-    await _partySession?.leave();
+    _partySession?.leave().ignore(); // ends at once; the goodbye goes out behind the player closing
     if (mounted) Navigator.pop(context);
   }
 
