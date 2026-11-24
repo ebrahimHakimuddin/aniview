@@ -2056,7 +2056,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
           Focus(
             onFocusChange: (v) {
-              if (v) _tvLabel.value = 'Seek · ◀ ▶';
+              if (v) _tvLabel.value = 'Seek · Left or right';
             },
             onKeyEvent: (_, event) {
               final key = event.logicalKey;
