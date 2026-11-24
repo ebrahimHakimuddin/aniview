@@ -241,7 +241,7 @@ class NostrTransport implements PartyTransport {
   static const defaultRelays = [
     if (_ownRelay != '') _ownRelay,
     'wss://relay.primal.net',
-    'wss://relay.snort.social',
+    'wss://nos.lol',
     'wss://relay.nostr.net',
   ];
   static const _ownRelay = String.fromEnvironment('PARTY_RELAY');
