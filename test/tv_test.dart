@@ -8,6 +8,37 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test("the launcher's row is rewritten only when its cards change", () {
+    Map<String, Object?> card({
+      int position = 0,
+      String episode = '3',
+      int at = 0,
+    }) => {
+      'id': 1,
+      'title': 'Show',
+      'episode': episode,
+      'image': 'cover',
+      'position': position,
+      'duration': 1440000,
+      'at': at,
+    };
+    final playing = watchNextShown([card(position: 61000, at: 1)]);
+    // The player's save 10 s later, saved at another time: the same cards.
+    expect(watchNextShown([card(position: 71000, at: 2)]), playing);
+    expect(
+      watchNextShown([card(position: 121000)]),
+      isNot(playing),
+    ); // a minute on
+    expect(
+      watchNextShown([card(position: 1000)]),
+      isNot(watchNextShown([card()])),
+    );
+    expect(
+      watchNextShown([card(episode: '4')]),
+      isNot(watchNextShown([card()])),
+    );
+  });
+
   testWidgets('OK taps on release and long-presses when held', (tester) async {
     var taps = 0, longPresses = 0;
     await tester.pumpWidget(

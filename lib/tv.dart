@@ -171,27 +171,63 @@ Future<void> listenTv({
   } catch (_) {} // not on Android
 }
 
-/// Mirrors watch history (newest first) into the TV launcher's Continue watching row.
+/// Mirrors watch history (newest first) into the TV launcher's Continue watching row. The launcher's row is
+/// rewritten whole (every card deleted and added again, in the TV provider's process), so it's sent only when what
+/// it shows changes: not for the player's save every 10 s, nor Home asking again on every tab, while a spot moves
+/// within the same minute.
 Future<void> syncWatchNext(List<WatchRecord> history) async {
   if (!isTv) return;
   final now = DateTime.now().millisecondsSinceEpoch;
-  try {
-    await _tv.invokeMethod('watchNext', [
-      for (final (i, r) in history.take(10).indexed)
-        if (r.show.onAniList)
-          {
-            'id': r.show.id,
-            'title': r.show.title,
-            'episode': '${r.episode}',
-            'image': r.show.cover,
-            'position': r.position.inMilliseconds,
-            'duration': r.duration?.inMilliseconds,
-            // Entries saved before this was recorded keep their order.
-            'at': r.savedAt ?? now - i * 60000,
-          },
-    ]);
-  } catch (_) {} // not on Android
+  final cards = [
+    for (final (i, r) in history.take(10).indexed)
+      if (r.show.onAniList)
+        {
+          'id': r.show.id,
+          'title': r.show.title,
+          'episode': '${r.episode}',
+          'image': r.show.cover,
+          'position': r.position.inMilliseconds,
+          'duration': r.duration?.inMilliseconds,
+          // Entries saved before this was recorded keep their order.
+          'at': r.savedAt ?? now - i * 60000,
+        },
+  ];
+  final shown = watchNextShown(cards);
+  if (shown == _watchNextSent) return;
+  _watchNextSent = shown;
+  // One at a time: the platform side runs each on its own thread, and two rewrites at once could leave cards twice.
+  _watchNextSending = _watchNextSending.then((_) async {
+    try {
+      await _tv.invokeMethod('watchNext', cards);
+    } catch (_) {
+      _watchNextSent =
+          null; // not on Android, or it failed: the next one tries again
+    }
+  });
+  await _watchNextSending;
 }
+
+String? _watchNextSent;
+Future<void> _watchNextSending = Future.value();
+
+/// What the launcher's cards show, the same while only a spot within its minute or the save time moves (a card
+/// saved before [WatchRecord.savedAt] was recorded gets a new one each time). A spot of zero (the next episode
+/// queued) stays apart from any other.
+@visibleForTesting
+String watchNextShown(List<Map<String, Object?>> cards) => [
+  for (final c in cards)
+    [
+      c['id'],
+      c['title'],
+      c['episode'],
+      c['image'],
+      c['duration'],
+      switch (c['position'] as int) {
+        0 => 0,
+        final p => p ~/ 60000 + 1,
+      },
+    ].join('\u0000'),
+].join('\n');
 
 /// The show whose card has D-pad focus, for the TV home's immersive backdrop.
 final focusedMedia = ValueNotifier<Map?>(null);
