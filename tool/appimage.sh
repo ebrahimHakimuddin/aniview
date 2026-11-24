@@ -73,6 +73,12 @@ done
 # "usr////lib/wpe-webkit-2.0": as long as the system path, with slashes making up the difference.
 relative="usr$(printf '/%.0s' $(seq $((${#helpers} - 21))))lib/wpe-webkit-2.0"
 FROM="$helpers" TO="$relative" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/g' "$app/usr/lib/$(basename "$wpe")"
+# Flutter's plugins keep the build's own directory as their runpath, so they find their libraries on the system
+# before the AppImage's: the video plugin would load the host's libmpv beside the bundled one, and two libmpvs in one
+# process seek wrong or crash. Point them at the bundle and the bundled libraries instead.
+for plugin in "$app"/usr/bin/lib/*.so; do
+  if [ -n "$("$patchelf" --print-rpath "$plugin")" ]; then "$patchelf" --set-rpath '$ORIGIN:$ORIGIN/../../lib' "$plugin"; fi
+done
 # linuxdeploy gives the static rqbit an rpath, which makes it crash: put back the untouched copy, and pack with the
 # appimage plugin alone, since another linuxdeploy pass would patch it again.
 cp build/linux/x64/release/bundle/rqbit "$app/usr/bin/rqbit"
@@ -82,6 +88,13 @@ if grep -q "$helpers" "$app/usr/lib/$(basename "$wpe")"; then
   echo 'the bundled WebKit still looks for its programs on the system' >&2
   exit 1
 fi
+# Nothing may look for its libraries in a directory that only the machine that built it has.
+for elf in "$app"/usr/bin/aniview "$app"/usr/bin/lib/*.so; do
+  if "$patchelf" --print-rpath "$elf" | tr ':' '\n' | grep -v '^$ORIGIN' | grep .; then
+    echo "$elf still looks for libraries outside the AppImage" >&2
+    exit 1
+  fi
+done
 # Every bundled library must be findable inside the AppImage.
 if grep -rl --include='*.so*' -e '' "$app/usr/lib" | xargs -r "$patchelf" --print-needed | grep '^/'; then
   echo 'a bundled library still links another by full path' >&2
