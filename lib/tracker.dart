@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -453,6 +454,7 @@ class Tracker {
       'forwardOnly': forwardOnly,
     };
     media['mediaListEntry'] = {'progress': progress, 'status': status};
+    _entryChanged.add(media);
     final p = account;
     if (p == null) return true;
     if (!await _push(p, job)) {
@@ -530,7 +532,14 @@ class Tracker {
       }
     }
     media['mediaListEntry'] = null;
+    _entryChanged.add(media);
   }
+
+  static final _entryChanged = StreamController<Map>.broadcast(sync: true);
+
+  /// A show whose list entry was just saved or removed. The player can hold its own copy of a show (one read
+  /// back from watch history), so pages showing another copy listen here to bring theirs up to date.
+  static Stream<Map> get entryChanged => _entryChanged.stream;
 
   static Future<int>? _syncing;
 

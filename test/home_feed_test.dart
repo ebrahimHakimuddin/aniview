@@ -1,6 +1,8 @@
+import 'package:aniview/anilist.dart';
 import 'package:aniview/history.dart';
 import 'package:aniview/home_feed.dart';
 import 'package:aniview/settings.dart';
+import 'package:aniview/tracker.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Source implements HomeSource {
@@ -108,6 +110,57 @@ void main() {
       expect(source.count('lists'), 3);
       expect(source.count('history'), 2);
     });
+
+    test(
+      "a save on the player's copy of a show reaches the lists' copy",
+      () async {
+        Tracker.accounts =
+            const []; // nothing to send to; the save still lands on-device
+        addTearDown(
+          () => Tracker.accounts = const [Tracker.anilist, Tracker.mal],
+        );
+        final listed = {
+          ..._show(7),
+          'idMal': 70,
+          'mediaListEntry': {'progress': 3, 'status': 'CURRENT', 'score': 8},
+        };
+        source.lists_ = {
+          'CURRENT': [listed],
+          'PLANNING': [],
+        };
+        await feed.lists;
+        await feed.library;
+        var heard = 0;
+        feed.addListener(() => heard++);
+
+        // Continue watching plays the copy kept in watch history, not the one on Home.
+        final copy = {..._show(7), 'idMal': 70};
+        await Tracker.save(copy, 4, forwardOnly: true);
+        await pumpEventQueue();
+
+        expect(Show(listed).progress, 4);
+        expect(
+          listed['mediaListEntry']['score'],
+          8,
+        ); // the rest of the entry stays
+        expect(heard, 1);
+        feed.reload();
+        await feed.lists;
+        expect(
+          source.count('library'),
+          1,
+        ); // still watching: nothing to refetch
+
+        await Tracker.save(copy, 12, status: 'COMPLETED');
+        await pumpEventQueue();
+        expect(listed['mediaListEntry']['status'], 'COMPLETED');
+        feed.reload(
+          checkStale: true,
+        ); // it moved list: the next look asks again
+        await feed.lists;
+        expect(source.count('library'), 2); // home's lists come from it
+      },
+    );
 
     test("home's lists come from My list's once it is loaded", () async {
       await feed.library;

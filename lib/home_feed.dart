@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'anilist.dart';
@@ -52,7 +54,12 @@ class HomeFeed extends ChangeNotifier {
     this.source = const LiveHomeSource(),
     DateTime Function() now = DateTime.now,
   }) : _now = now,
-       _fetched = now();
+       _fetched = now() {
+    _entries = Tracker.entryChanged.listen(_entryChanged);
+  }
+
+  late final StreamSubscription<Map> _entries;
+  bool _disposed = false;
 
   /// How long fetched lists and airing are good for; see [reload].
   static const staleAfter = Duration(minutes: 1);
@@ -165,6 +172,44 @@ class HomeFeed extends ChangeNotifier {
       _fetchLists();
     }
     notifyListeners();
+  }
+
+  /// A save made on another copy of a show (the player's, read back from watch history) reaches the copies in
+  /// the lists here. A show that moved to another list (completed, say) moves once the lists are next asked.
+  Future<void> _entryChanged(Map media) async {
+    final entry = media['mediaListEntry'] as Map?;
+    var patched = false, moved = false;
+    for (final loaded in [lists, _library]) {
+      final Map<String, List> byStatus;
+      try {
+        if (loaded == null) continue;
+        byStatus = await loaded;
+      } catch (_) {
+        continue; // its own error state shows
+      }
+      for (final MapEntry(key: status, value: shows) in byStatus.entries) {
+        for (final m in shows) {
+          if (m is! Map || identical(m, media) || !Show(m).sameAs(media)) {
+            continue;
+          }
+          m['mediaListEntry'] = entry == null
+              ? null
+              : {...?m['mediaListEntry'] as Map?, ...entry};
+          patched = true;
+          if (entry?['status'] != status) moved = true;
+        }
+      }
+    }
+    if (_disposed || !patched) return;
+    if (moved) _fetched = _now().subtract(staleAfter * 2);
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _entries.cancel();
+    super.dispose();
   }
 
   /// Pull to refresh: everything is asked again. Completes once the home rows have answered (each shows its
