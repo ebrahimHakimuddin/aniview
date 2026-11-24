@@ -190,11 +190,20 @@ class _SkeletonState extends State<Skeleton>
 }
 
 class ErrorState extends StatelessWidget {
-  const ErrorState(this.error, {super.key, this.onRetry, this.compact = false});
+  const ErrorState(
+    this.error, {
+    super.key,
+    this.onRetry,
+    this.compact = false,
+    this.inset = true,
+  });
 
   final Object error;
   final VoidCallback? onRetry;
   final bool compact;
+
+  /// Compact: whether it keeps the page's side margin itself; off where its parent already has it.
+  final bool inset;
 
   String get _retryLabel =>
       error is CloudflareChallenge ? 'Verify' : 'Try again';
@@ -204,7 +213,10 @@ class ErrorState extends StatelessWidget {
     final message = friendlyError(error);
     if (compact) {
       return Padding(
-        padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: inset ? side : 0,
+          vertical: 8,
+        ),
         child: Material(
           color: scheme.errorContainer.withValues(alpha: .35),
           borderRadius: BorderRadius.circular(nested(8)), // its button's inset

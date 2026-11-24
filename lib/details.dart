@@ -971,6 +971,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       return ErrorState(
         sitesError!,
         compact: true,
+        inset: false, // always inside the header's own margin
         onRetry: () {
           setState(() => sitesError = null);
           _loadSites();
@@ -1137,7 +1138,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
   /// The synopsis, a few lines until tapped; focusable so a remote can open it too.
   /// Its outline is drawn around the text as laid out, so it grows with it (an ink highlight kept the size it
   /// had before the text expanded).
-  Widget _about(String description) => InkWell(
+  Widget _about(String description) => Transform.translate(
+    // Its padding, so the text starts where the rest of the page does.
+    offset: const Offset(-8, 0),
+    child: _aboutBox(description),
+  );
+
+  Widget _aboutBox(String description) => InkWell(
     borderRadius: BorderRadius.circular(radiusLarge),
     focusColor: Colors.transparent,
     onFocusChange: (v) => setState(() => aboutFocused = v),
