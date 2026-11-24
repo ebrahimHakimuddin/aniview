@@ -286,6 +286,7 @@ class _ExtensionsScreenState extends State<ExtensionsScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
+      automaticallyImplyLeading: !isTv,
       title: const Text('Extensions'),
       actions: [
         IconButton(

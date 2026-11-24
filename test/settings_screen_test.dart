@@ -218,7 +218,7 @@ void main() {
           await tester.tap(tile);
           await settle(tester);
           await scrollToEnd();
-          await tester.pageBack();
+          await tester.binding.handlePopRoute(); // Back: a TV has no back button
           await settle(tester);
         }
       }
@@ -288,7 +288,7 @@ void main() {
             expect(find.text(r), findsOneWidget, reason: r);
           }
           seen.addAll(here);
-          await tester.pageBack();
+          await tester.binding.handlePopRoute(); // Back: a TV has no back button
           await settle(tester);
           expect(find.text(group), findsOneWidget);
         }

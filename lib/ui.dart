@@ -170,6 +170,10 @@ ThemeData buildTheme() {
     highlightColor: Colors.transparent,
     pageTransitionsTheme: pageTransitions,
     appBarTheme: AppBarTheme(
+      // TV: no back button (every remote has Back), so the title starts at the safe-area margin with the page, and
+      // the actions end there.
+      titleSpacing: isTv ? side : null,
+      actionsPadding: isTv ? EdgeInsets.only(right: side - 8) : null,
       backgroundColor: scheme.surface,
       surfaceTintColor: Colors.transparent,
       scrolledUnderElevation: 0,
@@ -394,6 +398,8 @@ ThemeData _buildMaterialTheme() {
     focusColor: isTv ? colors.primary.withValues(alpha: .24) : null,
     pageTransitionsTheme: pageTransitions,
     appBarTheme: AppBarTheme(
+      titleSpacing: isTv ? side : null,
+      actionsPadding: isTv ? EdgeInsets.only(right: side - 8) : null,
       backgroundColor: colors.surface,
       systemOverlayStyle: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,

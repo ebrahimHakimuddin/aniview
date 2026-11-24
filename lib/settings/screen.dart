@@ -435,6 +435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final group = _shown.where((g) => g.$1 == widget.group).firstOrNull;
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
         title: Text(group?.$2 ?? 'Settings'),
         toolbarHeight: isTv ? 72 : 64,
         titleSpacing: side,

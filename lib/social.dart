@@ -6,6 +6,7 @@ import 'sources.dart';
 import 'states.dart';
 import 'tracker.dart';
 import 'ui.dart';
+import 'tv.dart';
 
 /// AniList's social side on a show's page (phones): its forum threads, each episode's discussion, and where the
 /// people you follow are with it.
@@ -239,6 +240,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final signedIn = Tracker.anilistSignedIn;
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
         title: Text(
           threadTitle(widget.thread),
           maxLines: 2,

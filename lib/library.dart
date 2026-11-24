@@ -467,6 +467,7 @@ class _RecentlyWatchedScreenState extends State<RecentlyWatchedScreen> {
       appBar: picking.active
           ? null
           : AppBar(
+              automaticallyImplyLeading: !isTv,
               title: const Text('Recently watched'),
               toolbarHeight: isTv ? 72 : 64,
               titleSpacing: side,

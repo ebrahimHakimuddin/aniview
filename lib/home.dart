@@ -985,6 +985,7 @@ class _HomeFeed extends StatelessWidget {
           slivers: [
             // Stays put while the page scrolls; over the featured art until it scrolls away.
             SliverAppBar(
+              automaticallyImplyLeading: !isTv,
               pinned: true,
               titleSpacing: side,
               // Full-contrast icons: they sit over the featured art until it scrolls away.

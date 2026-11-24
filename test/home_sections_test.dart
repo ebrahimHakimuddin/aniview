@@ -41,12 +41,8 @@ void main() {
     addTearDown(() => isTv = false);
     await openSections(t);
     final first = order();
-    // From Back, down to the second row's buttons, then across to Move down.
-    for (var i = 0; i < 3; i++) {
-      await t.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await t.pumpAndSettle();
-    }
-    await t.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    // It opens on the first row's Move down; down to the second row's.
+    await t.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await t.pumpAndSettle();
     final focused = FocusManager.instance.primaryFocus!.context!;
     expect(

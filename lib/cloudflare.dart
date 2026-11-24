@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'net.dart';
+import 'tv.dart';
 
 /// How a person is asked to pass a site's Cloudflare check: true once it's passed. The caller decides what that means
 /// (a verification page, nothing at all in the background), so what runs the task needn't have a screen to show it on.
@@ -203,6 +204,7 @@ class _ChallengePageState extends State<_ChallengePage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
+      automaticallyImplyLeading: !isTv,
       title: Text('Verifying ${widget.uri.host}'),
       actions: [
         TextButton(

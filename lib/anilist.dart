@@ -675,7 +675,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.title)),
+    appBar: AppBar(automaticallyImplyLeading: !isTv, title: Text(widget.title)),
     body: InAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(widget.url)),
       initialSettings: InAppWebViewSettings(useShouldOverrideUrlLoading: true),

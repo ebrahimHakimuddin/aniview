@@ -139,6 +139,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   title: _selectionBar(shown),
                 )
               : AppBar(
+                  automaticallyImplyLeading: !isTv,
                   title: const Text('Downloads'),
                   toolbarHeight: isTv ? 72 : 64,
                   titleSpacing: side,

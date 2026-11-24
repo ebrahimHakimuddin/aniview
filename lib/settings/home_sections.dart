@@ -26,6 +26,7 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
 
   Widget _page(BuildContext context) => Scaffold(
     appBar: AppBar(
+      automaticallyImplyLeading: !isTv,
       title: const Text('Home sections'),
       actions: [
         TextButton(
@@ -97,11 +98,15 @@ class _HomeSectionsScreenState extends State<_HomeSectionsScreen> {
                       ])
                         IconButton(
                           tooltip: label,
-                          icon: Icon(icon),
-                          // Kept enabled at the ends: disabling the focused button would drop the remote's focus.
-                          color: to < 0 || to >= sections.length
-                              ? scheme.onSurface.withValues(alpha: .3)
-                              : null,
+                          // A remote starts on the first row's Move down, not on Reset up in the corner.
+                          autofocus: i == 0 && to == 1,
+                          // Kept enabled at the ends, only faded: disabling the focused button would drop the
+                          // remote's focus. The icon fades rather than taking a colour of its own, so it still
+                          // shows on the focused button's fill.
+                          icon: Opacity(
+                            opacity: to < 0 || to >= sections.length ? .38 : 1,
+                            child: Icon(icon),
+                          ),
                           onPressed: () {
                             if (to < 0 || to >= sections.length) return;
                             sections.insert(to, sections.removeAt(i));

@@ -485,7 +485,10 @@ class _TvPairScreenState extends State<TvPairScreen> {
     final paired = Settings.remoteKeys.length;
     final signedIn = Tracker.signedIn;
     return Scaffold(
-      appBar: AppBar(title: const Text('Pair your phone')),
+      appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
+        title: const Text('Pair your phone'),
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
@@ -919,6 +922,7 @@ class _PhoneRemoteScreenState extends State<PhoneRemoteScreen> {
     final saved = paired[tv];
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
         title: Text(saved == null ? 'Pair a TV' : saved['name'] as String),
         bottom: scanning || pairing
             ? const PreferredSize(

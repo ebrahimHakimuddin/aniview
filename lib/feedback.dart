@@ -202,6 +202,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     final text = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
         title: const Text('Feedback'),
         actions: [
           if (_sent.isNotEmpty)
@@ -354,7 +355,10 @@ class _TicketFormState extends State<_TicketForm> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(_bug ? 'Report a bug' : 'Request a feature')),
+    appBar: AppBar(
+      automaticallyImplyLeading: !isTv,
+      title: Text(_bug ? 'Report a bug' : 'Request a feature'),
+    ),
     body: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 640),

@@ -1283,6 +1283,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           slivers: [
             // Marquee: the cover as full-bleed key art, fading into the page under the title.
             SliverAppBar(
+              automaticallyImplyLeading: !isTv,
               pinned: true,
               stretch: true,
               expandedHeight: height * .5,
