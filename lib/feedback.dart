@@ -85,7 +85,7 @@ const _severities = {
   'critical': 'The app is unusable',
 };
 
-/// Settings → Feedback: send a bug report or a feature request.
+/// Settings → About → Feedback: send a bug report or a feature request.
 class FeedbackScreen extends StatefulWidget {
   const FeedbackScreen({super.key});
 

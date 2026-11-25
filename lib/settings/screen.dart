@@ -1531,9 +1531,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ListTile(
         leading: const Icon(Icons.feedback_outlined),
         title: const Text('Feedback'),
-        subtitle: const Text(
-          'Report a bug or request a feature, and follow it',
-        ),
+        subtitle: const Text('Report a bug or request a feature'),
         trailing: const Icon(Icons.chevron_right_rounded),
         onTap: () => Navigator.push(
           context,
