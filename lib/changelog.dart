@@ -28,19 +28,9 @@ const changelogHighlights = <ChangelogEntry>[
     body: 'Sharpen lower-resolution episodes in the player, on desktop and Android.',
   ),
   (
-    icon: Icons.subtitles_rounded,
-    title: 'Subtitle timing',
-    body: 'Subtitles out of step with the video? Shift them earlier or later while it plays, from Subtitles → Adjust timing.',
-  ),
-  (
-    icon: Icons.checklist_rounded,
-    title: 'Pick several downloads',
-    body: 'Long-press a download to select more, then delete them or retry the failed ones together.',
-  ),
-  (
     icon: Icons.tune_rounded,
-    title: 'Settings, regrouped',
-    body: 'Settings opens on a short list of groups, each on its own page.',
+    title: 'UI/UX enhancements',
+    body: 'Sync subtitles from the player, select several downloads at once, and find settings in tidy groups.',
   ),
   (
     icon: Icons.bolt_rounded,

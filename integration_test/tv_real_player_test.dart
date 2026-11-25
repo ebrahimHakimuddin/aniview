@@ -58,8 +58,6 @@ void main() {
       'welcome': false,
       'resume': false,
       'analytics': false,
-      'subscription_survey_v1': 'answered',
-      'subscription_survey_beta_v2': 'answered',
     });
     await Settings.load();
     await detectTv(layout: Settings.layout);

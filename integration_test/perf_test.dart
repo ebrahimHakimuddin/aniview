@@ -89,9 +89,7 @@ void main() {
       'welcome': false,
       'resume': false,
       'desktop_download_folder': downloads.path,
-      'analytics': false, // no survey, no events
-      'subscription_survey_v1': 'answered',
-      'subscription_survey_beta_v2': 'answered',
+      'analytics': false, // no events
     });
     await Settings.load();
     await detectTv(layout: Settings.layout);
@@ -1580,7 +1578,7 @@ Future<void> _wait(Duration d) => Future<void>.delayed(d);
 Future<void> _openApp(WidgetTester tester) async {
   await tester.pumpWidget(App(key: UniqueKey()));
   await _wait(const Duration(milliseconds: 2500));
-  // A dialog at startup (what's new, a survey) would sit over every scenario.
+  // A dialog at startup (what's new) would sit over every scenario.
   for (var i = 0; i < 3 && find.byType(Dialog).evaluate().isNotEmpty; i++) {
     Navigator.of(tester.element(find.byType(Dialog).first)).pop();
     await _wait(const Duration(milliseconds: 400));
