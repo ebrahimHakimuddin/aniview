@@ -11,9 +11,8 @@ import 'states.dart';
 import 'tv.dart';
 import 'ui.dart';
 
-/// Bug reports and feature requests, sent to the support hub's ticket API, and their triage read back. The key is
-/// built into the app and can only send; each ticket's status is read with the token the hub returned for it, which
-/// only this device holds.
+/// Bug reports and feature requests, sent to the support hub's ticket API. The key is built into the app and can only
+/// send.
 class SupportHub {
   static const _key = String.fromEnvironment('SUPPORT_HUB_KEY');
   static const _host = String.fromEnvironment(
@@ -24,16 +23,6 @@ class SupportHub {
   static bool get available => _key.isNotEmpty;
 
   static Map<String, String> get _auth => {'Authorization': 'Bearer $_key'};
-
-  /// What this device sent, newest first: `id`, `token`, `type`, `title`, `sentAt` and, once read, the hub's
-  /// `status`, `releasedIn`, `duplicateOfId` and `note`.
-  static List<Map<String, dynamic>> get sent => [
-    for (final s in Settings.sentFeedback)
-      jsonDecode(s) as Map<String, dynamic>,
-  ];
-
-  static set _sent(List<Map<String, dynamic>> v) =>
-      Settings.sentFeedback = [for (final t in v) jsonEncode(t)];
 
   /// Sends a ticket; [fields] are the hub's optional fields (`steps`, `severity`, `problem`, `reporterEmail`…).
   static Future<void> send({
@@ -67,49 +56,8 @@ class SupportHub {
     if (response.statusCode != 201) {
       throw Exception(sendProblem(response.statusCode, response.body));
     }
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    _sent = [
-      {
-        'id': body['id'],
-        'token': body['token'],
-        'type': type,
-        'title': title,
-        'sentAt': DateTime.now().millisecondsSinceEpoch,
-        'status': 'new',
-      },
-      ...sent,
-    ];
     Analytics.event('feedback_sent', {'type': type});
   }
-
-  /// Reads the hub's latest triage of everything sent from here and saves it.
-  static Future<void> refresh() async {
-    final tokens = [for (final t in sent) t['token'] as String?].nonNulls;
-    if (tokens.isEmpty) return;
-    // shortcut: only the newest 50 are read (the hub's limit per call);
-    // page through when people send more.
-    final uri = Uri.parse('$_host/api/v1/tickets')
-        .replace(queryParameters: {'token': tokens.take(50).toList()});
-    final response = await http
-        .get(uri, headers: _auth)
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw HttpException('${response.statusCode}', uri: uri);
-    }
-    final tickets = (jsonDecode(response.body) as Map)['tickets'] as List;
-    _sent = withTriage(sent, tickets.cast());
-  }
-}
-
-/// [sent] with each ticket's fields from the hub's answer laid over it, matched by token.
-List<Map<String, dynamic>> withTriage(
-  List<Map<String, dynamic>> sent,
-  List<Map<String, dynamic>> triage,
-) {
-  final byToken = {for (final t in triage) t['token']: t};
-  return [
-    for (final t in sent) {...t, ...?byToken[t['token']]},
-  ];
 }
 
 /// What to tell the person when the hub refused a ticket.
@@ -129,17 +77,6 @@ String sendProblem(int status, String body) {
   };
 }
 
-/// The hub's status, as the person who sent the ticket would put it.
-String triageLabel(Map<String, dynamic> t) => switch (t['status']) {
-  'triaged' => 'Accepted',
-  'in_progress' => 'Being worked on',
-  'released' =>
-    '${t['type'] == 'bug' ? 'Fixed' : 'Added'} in version ${t['releasedIn']}',
-  'wont_do' => 'Closed without a change',
-  'duplicate' => 'Already reported, as #${t['duplicateOfId']}',
-  _ => 'Received',
-};
-
 const _severities = {
   '': 'Not sure',
   'low': 'Minor: a small annoyance',
@@ -148,7 +85,7 @@ const _severities = {
   'critical': 'The app is unusable',
 };
 
-/// Settings → Feedback: send a bug report or a feature request, and follow the ones sent before.
+/// Settings → Feedback: send a bug report or a feature request.
 class FeedbackScreen extends StatefulWidget {
   const FeedbackScreen({super.key});
 
@@ -157,31 +94,10 @@ class FeedbackScreen extends StatefulWidget {
 }
 
 class _FeedbackScreenState extends State<FeedbackScreen> {
-  var _sent = SupportHub.sent;
-  Object? _error;
-  var _loading = false;
-
   @override
   void initState() {
     super.initState();
     Analytics.screen('/settings/feedback', title: 'Feedback');
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    setState(() => _loading = true);
-    try {
-      await SupportHub.refresh();
-      _error = null;
-    } catch (e) {
-      _error = e;
-    }
-    if (mounted) {
-      setState(() {
-        _loading = false;
-        _sent = SupportHub.sent;
-      });
-    }
   }
 
   Future<void> _write(String type) async {
@@ -190,7 +106,6 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
       MaterialPageRoute(builder: (_) => _TicketForm(type)),
     );
     if (sent != true || !mounted) return;
-    setState(() => _sent = SupportHub.sent);
     showSuccess(
       context,
       type == 'bug' ? 'Thanks, the bug is reported' : 'Thanks, idea sent',
@@ -199,70 +114,32 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: !isTv,
         title: const Text('Feedback'),
-        actions: [
-          if (_sent.isNotEmpty)
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: _loading ? null : _refresh,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-        ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: EdgeInsets.only(
-            bottom: 32 + MediaQuery.paddingOf(context).bottom,
-          ),
-          children: [
-            ListTile(
-              autofocus: isTv,
-              leading: const Icon(Icons.bug_report_outlined),
-              title: const Text('Report a bug'),
-              subtitle: const Text('Something broke or doesn\'t work right'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => _write('bug'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.lightbulb_outline_rounded),
-              title: const Text('Request a feature'),
-              subtitle: const Text('An idea that would make AniView better'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => _write('feature'),
-            ),
-            if (_sent.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.fromLTRB(side, 24, side, 4),
-                child: Text(
-                  'Sent from this device',
-                  style: text.titleSmall?.copyWith(color: scheme.primary),
-                ),
-              ),
-            if (_error != null && _sent.isNotEmpty)
-              ErrorState(_error!, compact: true, onRetry: _refresh),
-            for (final t in _sent)
-              ListTile(
-                leading: Icon(
-                  t['type'] == 'bug'
-                      ? Icons.bug_report_outlined
-                      : Icons.lightbulb_outline_rounded,
-                ),
-                title: Text('${t['title']}'),
-                subtitle: Text(
-                  [
-                    '#${t['id']} · ${triageLabel(t)}',
-                    if ('${t['note'] ?? ''}'.isNotEmpty) '${t['note']}',
-                  ].join('\n'),
-                ),
-                isThreeLine: '${t['note'] ?? ''}'.isNotEmpty,
-              ),
-          ],
+      body: ListView(
+        padding: EdgeInsets.only(
+          bottom: 32 + MediaQuery.paddingOf(context).bottom,
         ),
+        children: [
+          ListTile(
+            autofocus: isTv,
+            leading: const Icon(Icons.bug_report_outlined),
+            title: const Text('Report a bug'),
+            subtitle: const Text('Something broke or doesn\'t work right'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _write('bug'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.lightbulb_outline_rounded),
+            title: const Text('Request a feature'),
+            subtitle: const Text('An idea that would make AniView better'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => _write('feature'),
+          ),
+        ],
       ),
     );
   }
@@ -410,8 +287,7 @@ class _TicketFormState extends State<_TicketForm> {
             Padding(
               padding: EdgeInsets.fromLTRB(side, 4, side, 0),
               child: Text(
-                'Your $appName version and device model are sent with it. '
-                'Its status shows in Feedback.',
+                'Your $appName version and device model are sent with it.',
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: scheme.onSurfaceVariant),
               ),

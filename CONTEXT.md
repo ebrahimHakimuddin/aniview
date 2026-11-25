@@ -74,5 +74,5 @@ English or romaji title (its own name before another show's bracketed one). Mark
 **Skip filler** on, the up next episode, the main action and the player's next episode pass over filler.
 
 **Feedback** (`lib/feedback.dart`, `SupportHub`): bug reports and feature requests, sent from Settings → Feedback to the
-support hub's ticket API with the build's `SUPPORT_HUB_KEY` (the row is hidden without one). The hub answers each with
-a **track token** kept on-device, which reads back its triage (status, released version, note) for "Sent from this device".
+support hub's ticket API with the build's `SUPPORT_HUB_KEY` (the row is hidden without one). Send-only:
+nothing about a ticket is kept on the device or read back.

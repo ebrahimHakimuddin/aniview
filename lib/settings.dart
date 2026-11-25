@@ -589,12 +589,6 @@ class Settings {
     [for (final (section, shown) in v) '${shown ? '' : '-'}${section.name}'],
   );
 
-  /// Bug reports and feature requests sent from this device, newest first, each a JSON object (see feedback.dart).
-  static List<String> get sentFeedback =>
-      _prefs.getStringList('sent_feedback') ?? const [];
-  static set sentFeedback(List<String> v) =>
-      _prefs.setStringList('sent_feedback', v);
-
   /// The name shown to the others in a watch party; empty until set, when the signed-in tracker's name stands in.
   static String get partyName => _prefs.getString('party_name') ?? '';
   static set partyName(String v) => _prefs.setString('party_name', v.trim());
