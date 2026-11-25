@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'analytics.dart';
+import 'changelog.dart' show discordUrl;
 import 'platform.dart';
 import 'settings.dart';
 import 'states.dart';
@@ -54,9 +55,37 @@ class SupportHub {
       await request.send().timeout(const Duration(seconds: 30)),
     );
     if (response.statusCode != 201) {
-      throw Exception(sendProblem(response.statusCode, response.body));
+      throw FeedbackRefused(
+        sendProblem(response.statusCode, response.body),
+        fieldProblems(response.statusCode, response.body),
+      );
     }
     Analytics.event('feedback_sent', {'type': type});
+  }
+}
+
+/// The hub refused a ticket: [message] for the person, and [fields] naming what was wrong with each field it objected to.
+class FeedbackRefused implements Exception {
+  const FeedbackRefused(this.message, [this.fields = const {}]);
+
+  final String message;
+  final Map<String, String> fields;
+
+  @override
+  String toString() => message;
+}
+
+/// The hub's objection to each field of a refused ticket (a 400), by field name; empty for any other refusal.
+Map<String, String> fieldProblems(int status, String body) {
+  if (status != 400) return const {};
+  try {
+    final fields = (jsonDecode(body) as Map)['fields'] as Map;
+    return {
+      for (final MapEntry(:key, :value) in fields.entries)
+        if (value is List && value.isNotEmpty) '$key': '${value.first}',
+    };
+  } catch (_) {
+    return const {};
   }
 }
 
@@ -77,12 +106,12 @@ String sendProblem(int status, String body) {
   };
 }
 
+/// How bad a bug is, as the hub names it and as the person would put it; none picked means they're not sure.
 const _severities = {
-  '': 'Not sure',
-  'low': 'Minor: a small annoyance',
-  'medium': 'Gets in the way',
-  'high': 'Stops something from working',
-  'critical': 'The app is unusable',
+  'low': 'Minor',
+  'medium': 'Annoying',
+  'high': 'Broken',
+  'critical': 'Unusable',
 };
 
 /// Settings → About → Feedback: send a bug report or a feature request.
@@ -112,34 +141,148 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     );
   }
 
+  Future<void> _discord() async {
+    try {
+      await AndroidApp.open(discordUrl);
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: !isTv,
         title: const Text('Feedback'),
       ),
-      body: ListView(
-        padding: EdgeInsets.only(
-          bottom: 32 + MediaQuery.paddingOf(context).bottom,
-        ),
+      body: _Centered(
         children: [
-          ListTile(
+          Text('Help shape $appName', style: text.headlineSmall),
+          const SizedBox(height: 8),
+          Text(
+            'Bug reports and ideas go straight to the developer, and every one is read.',
+            style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 24),
+          _Choice(
+            icon: Icons.bug_report_rounded,
+            title: 'Report a bug',
+            body: 'Something broke or won\'t play',
             autofocus: isTv,
-            leading: const Icon(Icons.bug_report_outlined),
-            title: const Text('Report a bug'),
-            subtitle: const Text('Something broke or doesn\'t work right'),
-            trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => _write('bug'),
           ),
-          ListTile(
-            leading: const Icon(Icons.lightbulb_outline_rounded),
-            title: const Text('Request a feature'),
-            subtitle: const Text('An idea that would make AniView better'),
-            trailing: const Icon(Icons.chevron_right_rounded),
+          const SizedBox(height: 12),
+          _Choice(
+            icon: Icons.lightbulb_rounded,
+            title: 'Request a feature',
+            body: 'An idea to make $appName better',
             onTap: () => _write('feature'),
           ),
+          if (!isTv) ...[
+            const SizedBox(height: 24),
+            Center(
+              child: TextButton.icon(
+                onPressed: _discord,
+                icon: const Icon(Icons.forum_rounded),
+                label: const Text('Rather talk it through? Join the Discord'),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// A page's content in one column, no wider than a form reads well, with the page's margins.
+class _Centered extends StatelessWidget {
+  const _Centered({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 640),
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          side,
+          16,
+          side,
+          32 + MediaQuery.paddingOf(context).bottom,
+        ),
+        children: children,
+      ),
+    ),
+  );
+}
+
+/// One kind of feedback to send: a card with its icon on the accent's tint, what it's for, and where it leads.
+class _Choice extends StatelessWidget {
+  const _Choice({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.onTap,
+    this.autofocus = false,
+  });
+
+  final IconData icon;
+  final String title, body;
+  final VoidCallback onTap;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Panel(
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(16)),
+      ),
+      child: InkWell(
+        autofocus: autofocus,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: .14),
+                  borderRadius: BorderRadius.circular(radiusLarge),
+                ),
+                child: Icon(icon, color: scheme.primary),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      body,
+                      style: text.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -159,10 +302,25 @@ class _TicketFormState extends State<_TicketForm> {
   final _description = TextEditingController();
   final _more = TextEditingController();
   final _email = TextEditingController();
-  var _severity = '';
+  String? _severity;
   var _sending = false;
 
+  /// The hub's objection to each field, by the hub's field name, from the last refused send.
+  var _problems = const <String, String>{};
+
   bool get _bug => widget.type == 'bug';
+  String get _moreField => _bug ? 'steps' : 'problem';
+
+  bool get _ready =>
+      _title.text.trim().isNotEmpty && _description.text.trim().isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in [_title, _description]) {
+      c.addListener(() => setState(() {}));
+    }
+  }
 
   @override
   void dispose() {
@@ -173,44 +331,47 @@ class _TicketFormState extends State<_TicketForm> {
   }
 
   Future<void> _send() async {
-    if (_title.text.trim().isEmpty || _description.text.trim().isEmpty) {
-      showError(
-        context,
-        _bug
-            ? 'Give the bug a title and say what happened'
-            : 'Give the idea a title and describe it',
-      );
-      return;
-    }
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _problems = const {};
+    });
     try {
       await SupportHub.send(
         type: widget.type,
         title: _title.text.trim(),
         description: _description.text.trim(),
         fields: {
-          _bug ? 'steps' : 'problem': _more.text,
-          'severity': _severity,
+          _moreField: _more.text,
+          'severity': _severity ?? '',
           'reporterEmail': _email.text,
         },
       );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _sending = false);
-      showError(context, e);
+      final fields = e is FeedbackRefused ? e.fields : const <String, String>{};
+      final shown = {'title', 'description', _moreField, 'reporterEmail'};
+      setState(() {
+        _sending = false;
+        _problems = fields;
+      });
+      // A problem shown under its field needs no snackbar too.
+      if (!fields.keys.any(shown.contains)) showError(context, e);
     }
   }
 
   Widget _field(
     TextEditingController controller,
     String label, {
+    required String name,
     String? hint,
+    String? helper,
     int lines = 1,
     TextInputType? keyboard,
+    IconData? icon,
     bool autofocus = false,
   }) => Padding(
-    padding: EdgeInsets.symmetric(horizontal: side, vertical: 8),
+    padding: const EdgeInsets.only(bottom: 16),
     child: TextField(
       controller: controller,
       autofocus: autofocus,
@@ -224,90 +385,119 @@ class _TicketFormState extends State<_TicketForm> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        helperText: helper,
+        errorText: _problems[name],
+        prefixIcon: icon == null ? null : Icon(icon),
         alignLabelWithHint: lines > 1,
-        border: const OutlineInputBorder(),
       ),
     ),
   );
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      automaticallyImplyLeading: !isTv,
-      title: Text(_bug ? 'Report a bug' : 'Request a feature'),
-    ),
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: ListView(
-          padding: EdgeInsets.only(
-            top: 8,
-            bottom: 32 + MediaQuery.paddingOf(context).bottom,
-          ),
-          children: [
-            _field(
-              _title,
-              'Title',
-              hint: _bug ? 'Episode 3 won\'t play on Anikoto' : null,
-              autofocus: !isTv,
-            ),
-            _field(
-              _description,
-              _bug ? 'What happened' : 'What would you like',
-              lines: 4,
-            ),
-            _field(
-              _more,
-              _bug
-                  ? 'Steps to make it happen (optional)'
-                  : 'What it would help with (optional)',
-              lines: 3,
-            ),
-            if (_bug)
-              ListTile(
-                contentPadding: EdgeInsets.symmetric(horizontal: side),
-                title: const Text('How bad is it'),
-                subtitle: Text(_severities[_severity]!),
-                enabled: !_sending,
-                onTap: () async {
-                  final picked = await pickOne(
-                    context,
-                    'How bad is it',
-                    _severities,
-                    _severity,
-                  );
-                  if (picked != null) setState(() => _severity = picked);
-                },
-              ),
-            _field(
-              _email,
-              'Email, if you\'d like a reply (optional)',
-              keyboard: TextInputType.emailAddress,
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(side, 4, side, 0),
-              child: Text(
-                'Your $appName version and device model are sent with it.',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(side, 24, side, 0),
-              child: FilledButton.icon(
-                onPressed: _sending ? null : _send,
-                icon: _sending
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.send_rounded),
-                label: const Text('Send'),
-              ),
-            ),
-          ],
-        ),
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final quiet = text.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    return Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: !isTv,
+        title: Text(_bug ? 'Report a bug' : 'Request a feature'),
       ),
-    ),
-  );
+      body: _Centered(
+        children: [
+          Text(
+            _bug
+                ? 'Tell me what went wrong, and I\'ll look into it.'
+                : 'What would make $appName better for you?',
+            style: text.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 24),
+          _field(
+            _title,
+            'Title',
+            name: 'title',
+            hint: _bug
+                ? 'Episode 3 won\'t play on Anikoto'
+                : 'Download a whole season at once',
+            autofocus: !isTv,
+          ),
+          _field(
+            _description,
+            _bug ? 'What happened' : 'Describe the idea',
+            name: 'description',
+            hint: _bug
+                ? 'What you expected, and what you saw instead'
+                : 'How it would work',
+            lines: 4,
+          ),
+          _field(
+            _more,
+            _bug
+                ? 'Steps to make it happen (optional)'
+                : 'What it would help with (optional)',
+            name: _moreField,
+            lines: 3,
+          ),
+          if (_bug) ...[
+            Text('How bad is it?', style: text.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final MapEntry(:key, :value) in _severities.entries)
+                  ChoiceChip(
+                    label: Text(value),
+                    selected: _severity == key,
+                    onSelected: _sending
+                        ? null
+                        : (on) => setState(() => _severity = on ? key : null),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
+          ],
+          _field(
+            _email,
+            'Email (optional)',
+            name: 'reporterEmail',
+            helper: 'Only if you\'d like a reply',
+            keyboard: TextInputType.emailAddress,
+            icon: Icons.alternate_email_rounded,
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: buttonHeight,
+            child: FilledButton.icon(
+              onPressed: _sending || !_ready ? null : _send,
+              icon: _sending
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send_rounded),
+              label: Text(_sending ? 'Sending' : 'Send'),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                size: 16,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Your $appName version and device model are sent along.',
+                  style: quiet,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
