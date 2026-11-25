@@ -168,6 +168,9 @@ jobs:
           if relay != 'wss://aniview.ebrahim.co.tz':
               raise SystemExit('Release requires PARTY_RELAY=wss://aniview.ebrahim.co.tz in DART_DEFINES')
           print('Party relay configuration verified')
+          if not values.get('SUPPORT_HUB_KEY', '').strip().strip('"\''):
+              raise SystemExit('Release requires SUPPORT_HUB_KEY in DART_DEFINES, or Settings → Feedback is hidden')
+          print('Support hub configuration verified')
           PY
           if [ "${{ matrix.target }}" = ios ]; then exec bash tool/ios_ipa.sh; fi
           if [ "${{ matrix.target }}" = linux ]; then
